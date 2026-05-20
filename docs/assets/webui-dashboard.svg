@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="StackChan Local desktop WebUI dashboard example">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#0b1014"/>
+      <stop offset="1" stop-color="#131a1f"/>
+    </linearGradient>
+    <style>
+      .title{font:700 32px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#eef4f5}
+      .label{font:600 15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#a8b7bd}
+      .value{font:700 20px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#eef4f5}
+      .small{font:500 13px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#91a2a9}
+      .panel{fill:#172024;stroke:#2a373d;stroke-width:1.2}
+      .line{stroke:#2f4249;stroke-width:1}
+    </style>
+  </defs>
+  <rect width="1280" height="760" rx="0" fill="url(#bg)"/>
+  <text x="40" y="58" class="title">StackChan Local</text>
+  <text x="40" y="86" class="small">localhost:8788 hardware dashboard</text>
+
+  <g transform="translate(520 32)">
+    <rect x="0" y="0" width="102" height="34" rx="17" fill="#12382f" stroke="#43d5b0"/>
+    <text x="18" y="22" class="small" fill="#43d5b0">Online</text>
+    <rect x="116" y="0" width="138" height="34" rx="17" fill="#123042" stroke="#6cb6ff"/>
+    <text x="134" y="22" class="small" fill="#6cb6ff">Face tracking</text>
+    <rect x="268" y="0" width="82" height="34" rx="17" fill="#2a2412" stroke="#e3b341"/>
+    <text x="291" y="22" class="small" fill="#e3b341">4 FPS</text>
+    <rect x="364" y="0" width="92" height="34" rx="17" fill="#142b23" stroke="#74d99f"/>
+    <text x="386" y="22" class="small" fill="#74d99f">82%</text>
+    <rect x="470" y="0" width="112" height="34" rx="17" fill="#192127" stroke="#3d525b"/>
+    <text x="491" y="22" class="small">Wi-Fi -61</text>
+  </g>
+
+  <g transform="translate(40 118)">
+    <rect class="panel" x="0" y="0" width="760" height="570" rx="10"/>
+    <rect x="24" y="24" width="712" height="534" rx="8" fill="#0f161a"/>
+    <rect x="92" y="62" width="576" height="432" rx="6" fill="#202b31"/>
+    <path d="M92 360 C190 300 280 380 380 330 C486 275 552 340 668 286 L668 494 L92 494 Z" fill="#26383e"/>
+    <circle cx="400" cy="270" r="132" fill="#364a52"/>
+    <circle cx="358" cy="246" r="16" fill="#11181b"/>
+    <circle cx="442" cy="246" r="16" fill="#11181b"/>
+    <path d="M354 318 Q400 355 446 318" fill="none" stroke="#101719" stroke-width="12" stroke-linecap="round"/>
+    <rect x="268" y="126" width="264" height="286" rx="4" fill="none" stroke="#43d5b0" stroke-width="4"/>
+    <line x1="400" y1="245" x2="400" y2="305" stroke="#e3b341" stroke-width="3"/>
+    <line x1="370" y1="275" x2="430" y2="275" stroke="#e3b341" stroke-width="3"/>
+    <text x="36" y="526" class="small">target x 0.51 y 0.47 confidence 0.82 latency 43ms</text>
+  </g>
+
+  <g transform="translate(830 118)">
+    <rect class="panel" x="0" y="0" width="410" height="570" rx="10"/>
+    <g transform="translate(20 20)">
+      <rect x="0" y="0" width="370" height="42" rx="8" fill="#11181c"/>
+      <rect x="4" y="4" width="84" height="34" rx="7" fill="#24343a"/>
+      <text x="18" y="26" class="small" fill="#eef4f5">Overview</text>
+      <text x="110" y="26" class="small">Hardware</text>
+      <text x="206" y="26" class="small">Tuning</text>
+      <text x="286" y="26" class="small">Logs</text>
+    </g>
+    <g transform="translate(24 88)">
+      <text x="0" y="0" class="value">Device</text>
+      <rect x="0" y="20" width="362" height="86" rx="8" fill="#11181c"/>
+      <text x="18" y="52" class="label">Firmware</text>
+      <text x="250" y="52" class="small">0.1.0-local</text>
+      <text x="18" y="84" class="label">Session</text>
+      <text x="250" y="84" class="small">sc-8f3a</text>
+
+      <text x="0" y="146" class="value">Hardware</text>
+      <rect x="0" y="166" width="174" height="82" rx="8" fill="#11181c"/>
+      <text x="16" y="198" class="label">IMU</text>
+      <text x="16" y="226" class="small">roll -2.1 pitch 4.8</text>
+      <rect x="188" y="166" width="174" height="82" rx="8" fill="#11181c"/>
+      <text x="204" y="198" class="label">Servos</text>
+      <text x="204" y="226" class="small">yaw 12 pitch 38</text>
+
+      <text x="0" y="288" class="value">Tuning</text>
+      <rect x="0" y="310" width="362" height="100" rx="8" fill="#11181c"/>
+      <text x="18" y="344" class="label">Yaw PID</text>
+      <rect x="116" y="333" width="216" height="8" rx="4" fill="#2d3a40"/>
+      <rect x="116" y="333" width="154" height="8" rx="4" fill="#6cb6ff"/>
+      <text x="18" y="382" class="label">Completion</text>
+      <text x="252" y="382" class="small">TTS on, light on</text>
+
+      <text x="0" y="454" class="value">Logs</text>
+      <rect x="0" y="474" width="362" height="54" rx="8" fill="#11181c"/>
+      <text x="18" y="506" class="small">13:20 command trackFace ack 42ms</text>
+    </g>
+  </g>
+</svg>

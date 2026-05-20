@@ -1,0 +1,13 @@
+{
+  "$id": "https://stackchan.local/schemas/envelope.schema.json",
+  "description": "Canonical StackChan Local protocol envelope. The TypeScript source in protocol/src/schemas.ts is the runtime schema used by tests and desktop validation.",
+  "oneOf": [
+    { "$ref": "https://stackchan.local/schemas/handshake.schema.json" },
+    { "$ref": "https://stackchan.local/schemas/daemon-hello.schema.json" },
+    { "$ref": "https://stackchan.local/schemas/robot-command.schema.json" },
+    { "$ref": "https://stackchan.local/schemas/robot-event.schema.json" },
+    { "$ref": "https://stackchan.local/schemas/heartbeat.schema.json" },
+    { "$ref": "https://stackchan.local/schemas/error.schema.json" }
+  ]
+}
+

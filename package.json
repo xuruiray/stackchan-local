@@ -1,0 +1,26 @@
+{
+  "name": "stackchan-local-workspace",
+  "version": "0.1.0",
+  "description": "Local-first desktop daemon and firmware overlay for a Codex-connected StackChan robot.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "desktop",
+    "protocol"
+  ],
+  "scripts": {
+    "build": "npm run build -w protocol && npm run build -w desktop",
+    "typecheck": "npm run typecheck -w protocol && npm run typecheck -w desktop",
+    "test": "npm run test -w protocol && npm run test -w desktop",
+    "dev": "npm run dev -w desktop",
+    "mcp": "npm run mcp -w desktop",
+    "vision:install": "python3 -m pip install -r desktop/requirements-vision.txt"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}
