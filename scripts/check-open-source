@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "== workspace status =="
+git status --short
+
+echo "== secret scan =="
+if rg -n \
+  "V[O]LCENGINE_TTS_API_KEY=.\\S|O[P]ENAI_API_KEY=.\\S|GITHUB_TOKEN=.\\S|s[k]-proj-|s[k]-live-|s[k]-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}" \
+  . \
+  --glob '!node_modules/**' \
+  --glob '!firmware/build/**' \
+  --glob '!firmware/managed_components/**' \
+  --glob '!desktop/models/**' \
+  --glob '!scripts/check-open-source' \
+  --glob '!logs/**'; then
+  echo "Potential secret found. Review the matches above." >&2
+  exit 1
+fi
+
+echo "== ignored artifact check =="
+if git ls-files | rg '(^\.env$|\.playwright-cli|desktop/models/.*\.task$|logs/|firmware/build|node_modules|firmware/sdkconfig$)'; then
+  echo "Generated or local-only files are tracked. Remove them before publishing." >&2
+  exit 1
+fi
+
+echo "== package checks =="
+npm run typecheck
+npm test
+
+echo "== firmware local-only guard =="
+if [[ -f firmware/build/compile_commands.json ]]; then
+  scripts/check-firmware-local-only
+else
+  echo "Skipping firmware local-only guard; run npm run firmware:build first."
+fi
+
+echo "Open-source readiness checks passed."

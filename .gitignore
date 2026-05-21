@@ -12,6 +12,7 @@ logs/
 output/
 .playwright-cli/
 desktop/dist/
+desktop/models/*.task
 protocol/dist/
 firmware/build/
 firmware/components/

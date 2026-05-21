@@ -9,6 +9,7 @@
 #include <lvgl.h>
 #include <mooncake.h>
 #include <mutex>
+#include <string>
 
 class AppLocalCompanion : public mooncake::AppAbility {
 public:
@@ -25,10 +26,19 @@ private:
         char* data_ptr   = nullptr;
     };
 
+    struct PendingReactData {
+        bool update_flag = false;
+        std::string emotion;
+        uint32_t duration_ms = 2000;
+        std::string avatar_json;
+        std::string rgb_json;
+    };
+
     std::mutex _mutex;
     HandlerData _ble_avatar_data;
     HandlerData _ble_motion_data;
     HandlerData _ble_rgb_data;
+    PendingReactData _ws_react_data;
     lv_obj_t* _touch_layer = nullptr;
     lv_obj_t* _status_label = nullptr;
     lv_obj_t* _pairing_panel = nullptr;

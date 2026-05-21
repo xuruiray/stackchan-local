@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
 
 using namespace mooncake;
 using namespace stackchan;
@@ -24,12 +25,11 @@ namespace {
 constexpr uint32_t kIdleSettleMs = 2500;
 constexpr uint32_t kCommandQuietMs = 6500;
 constexpr uint32_t kDanceQuietMs = 10000;
-constexpr uint32_t kFaceTrackingApplyIntervalMs = 120;
+constexpr uint32_t kFaceTrackingApplyIntervalMs = 80;
 constexpr uint32_t kOfflineIdleShutdownMs = 60000;
-constexpr int kFaceTrackingYawMin = -600;
-constexpr int kFaceTrackingYawMax = 600;
-constexpr int kFaceTrackingPitchMin = 100;
-constexpr int kFaceTrackingPitchMax = 700;
+constexpr int kFaceTrackingSearchYaw = 0;
+constexpr int kFaceTrackingSearchPitch = 260;
+constexpr int kFaceTrackingSearchSpeedMin = 420;
 
 float clamp_float(float value, float min_value, float max_value)
 {
@@ -46,6 +46,26 @@ bool should_hide_bottom_status(LocalCompanionState state)
         default:
             return false;
     }
+}
+
+avatar::Emotion emotion_from_string(std::string_view emotion)
+{
+    if (emotion == "happy" || emotion == "love") {
+        return avatar::Emotion::Happy;
+    }
+    if (emotion == "sad") {
+        return avatar::Emotion::Sad;
+    }
+    if (emotion == "angry") {
+        return avatar::Emotion::Angry;
+    }
+    if (emotion == "sleepy") {
+        return avatar::Emotion::Sleepy;
+    }
+    if (emotion == "thinking" || emotion == "surprised") {
+        return avatar::Emotion::Doubt;
+    }
+    return avatar::Emotion::Neutral;
 }
 }  // namespace
 
@@ -144,6 +164,16 @@ void AppLocalCompanion::onOpen()
         stackchan.addModifier(std::make_unique<SpeakingModifier>(2000));
     });
 
+    GetHAL().onWsReactMessage.connect([&](const WsReactMessage_t& message) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _ws_react_data.update_flag = true;
+        _ws_react_data.emotion     = message.emotion;
+        _ws_react_data.duration_ms = message.durationMs;
+        _ws_react_data.avatar_json = message.avatarJson;
+        _ws_react_data.rgb_json    = message.rgbJson;
+        refresh_idle_activity(kCommandQuietMs);
+    });
+
     GetHAL().onWsDanceData.connect([&](std::string_view data) {
         {
             std::lock_guard<std::mutex> lock(_mutex);
@@ -200,6 +230,19 @@ void AppLocalCompanion::onRunning()
         _ble_rgb_data.data_ptr    = nullptr;
     }
 
+    if (_ws_react_data.update_flag) {
+        if (!_ws_react_data.avatar_json.empty()) {
+            GetStackChan().updateAvatarFromJson(_ws_react_data.avatar_json.c_str());
+        } else {
+            GetStackChan().addModifier(std::make_unique<TimedEmotionModifier>(
+                emotion_from_string(_ws_react_data.emotion), _ws_react_data.duration_ms));
+        }
+        if (!_ws_react_data.rgb_json.empty()) {
+            GetStackChan().updateNeonLightFromJson(_ws_react_data.rgb_json.c_str());
+        }
+        _ws_react_data = PendingReactData();
+    }
+
     sync_mode_visuals();
     sync_face_tracking();
     GetStackChan().update();
@@ -224,6 +267,7 @@ void AppLocalCompanion::onClose()
     GetHAL().onBleMotionData.clear();
     GetHAL().onBleRgbData.clear();
     GetHAL().onWsTextMessage.clear();
+    GetHAL().onWsReactMessage.clear();
     GetHAL().onWsDanceData.clear();
     if (_head_gesture_connection != 0) {
         GetHAL().onHeadPetGesture.disconnect(_head_gesture_connection);
@@ -375,6 +419,27 @@ void AppLocalCompanion::sync_face_tracking()
         _face_tracking_pid_ready = false;
         _face_tracking_integral_x = 0.0f;
         _face_tracking_integral_y = 0.0f;
+        if (!target.recenterOnLost || target.updatedAt == 0 || target.updatedAt == _last_face_tracking_update) {
+            if (!target.recenterOnLost) {
+                _last_face_tracking_update = target.updatedAt;
+            }
+            return;
+        }
+        const auto now = GetHAL().millis();
+        if (now - _last_face_tracking_apply < kFaceTrackingApplyIntervalMs) {
+            return;
+        }
+        auto& motion = GetStackChan().motion();
+        const int yaw_min = std::min(target.control.servoRange.yawMin, target.control.servoRange.yawMax);
+        const int yaw_max = std::max(target.control.servoRange.yawMin, target.control.servoRange.yawMax);
+        const int pitch_min = std::min(target.control.servoRange.pitchMin, target.control.servoRange.pitchMax);
+        const int pitch_max = std::max(target.control.servoRange.pitchMin, target.control.servoRange.pitchMax);
+        const int search_yaw = std::max(yaw_min, std::min(yaw_max, kFaceTrackingSearchYaw));
+        const int search_pitch = std::max(pitch_min, std::min(pitch_max, kFaceTrackingSearchPitch));
+        const int search_speed = std::max(kFaceTrackingSearchSpeedMin, std::min(1000, target.speed));
+        motion.moveWithSpeed(search_yaw, search_pitch, search_speed);
+        _last_face_tracking_update = target.updatedAt;
+        _last_face_tracking_apply = now;
         return;
     }
     if (target.updatedAt == 0 || target.updatedAt == _last_face_tracking_update) {
@@ -423,8 +488,12 @@ void AppLocalCompanion::sync_face_tracking()
     auto current = motion.getCurrentAngles();
     const int yaw_delta = static_cast<int>(yaw_delta_deg * 10.0f);
     const int pitch_delta = static_cast<int>(pitch_delta_deg * 10.0f);
-    const int next_yaw = std::max(kFaceTrackingYawMin, std::min(kFaceTrackingYawMax, current.x + yaw_delta));
-    const int next_pitch = std::max(kFaceTrackingPitchMin, std::min(kFaceTrackingPitchMax, current.y + pitch_delta));
+    const int yaw_min = std::min(target.control.servoRange.yawMin, target.control.servoRange.yawMax);
+    const int yaw_max = std::max(target.control.servoRange.yawMin, target.control.servoRange.yawMax);
+    const int pitch_min = std::min(target.control.servoRange.pitchMin, target.control.servoRange.pitchMax);
+    const int pitch_max = std::max(target.control.servoRange.pitchMin, target.control.servoRange.pitchMax);
+    const int next_yaw = std::max(yaw_min, std::min(yaw_max, current.x + yaw_delta));
+    const int next_pitch = std::max(pitch_min, std::min(pitch_max, current.y + pitch_delta));
     const int speed = std::max(0, std::min(1000, target.speed));
 
     motion.moveWithSpeed(next_yaw, next_pitch, speed);

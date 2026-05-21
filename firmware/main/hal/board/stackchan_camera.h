@@ -40,8 +40,10 @@ private:
         size_t length = 0;
     };
     std::vector<MmapBuffer> mmap_buffers_;
+#ifndef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
     std::string explain_url_;
     std::string explain_token_;
+#endif
     std::thread encoder_thread_;
 
 public:
@@ -51,6 +53,7 @@ public:
     virtual void SetExplainUrl(const std::string& url, const std::string& token);
     virtual bool Capture() override;
     bool StreamCaptures();
+    bool SetFrameSize(int width, int height);
 
     // 翻转控制函数
     virtual bool SetHMirror(bool enabled) override;

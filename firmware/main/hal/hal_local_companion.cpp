@@ -128,30 +128,6 @@ std::string iso_now()
     return std::string(buffer);
 }
 
-stackchan::avatar::Emotion emotion_from_string(const char* emotion)
-{
-    if (emotion == nullptr) {
-        return stackchan::avatar::Emotion::Neutral;
-    }
-    std::string value(emotion);
-    if (value == "happy" || value == "love") {
-        return stackchan::avatar::Emotion::Happy;
-    }
-    if (value == "sad") {
-        return stackchan::avatar::Emotion::Sad;
-    }
-    if (value == "angry") {
-        return stackchan::avatar::Emotion::Angry;
-    }
-    if (value == "sleepy") {
-        return stackchan::avatar::Emotion::Sleepy;
-    }
-    if (value == "thinking" || value == "surprised") {
-        return stackchan::avatar::Emotion::Doubt;
-    }
-    return stackchan::avatar::Emotion::Neutral;
-}
-
 LocalCompanionState mode_from_string(const char* mode)
 {
     if (mode == nullptr) {
@@ -230,6 +206,28 @@ void update_pid_axis(LocalFaceTrackingTarget::PidAxis& axis, ArduinoJson::JsonOb
     axis.kd = clamp_float(source["kd"] | axis.kd, 0.0f, 80.0f);
 }
 
+int clamp_int(int value, int min_value, int max_value)
+{
+    return std::max(min_value, std::min(max_value, value));
+}
+
+void update_servo_range(LocalFaceTrackingTarget::ServoRange& range, ArduinoJson::JsonObject source)
+{
+    if (source.isNull()) {
+        return;
+    }
+    range.yawMin   = clamp_int(source["yawMin"] | range.yawMin, -1800, 0);
+    range.yawMax   = clamp_int(source["yawMax"] | range.yawMax, 0, 1800);
+    range.pitchMin = clamp_int(source["pitchMin"] | range.pitchMin, -900, 1200);
+    range.pitchMax = clamp_int(source["pitchMax"] | range.pitchMax, -900, 1200);
+    if (range.yawMin > range.yawMax) {
+        std::swap(range.yawMin, range.yawMax);
+    }
+    if (range.pitchMin > range.pitchMax) {
+        std::swap(range.pitchMin, range.pitchMax);
+    }
+}
+
 void update_tracking_control(LocalFaceTrackingTarget::Control& control, ArduinoJson::JsonObject source)
 {
     if (source.isNull()) {
@@ -240,6 +238,7 @@ void update_tracking_control(LocalFaceTrackingTarget::Control& control, ArduinoJ
     control.outputLimitDeg = clamp_float(source["outputLimitDeg"] | control.outputLimitDeg, 1.0f, 45.0f);
     update_pid_axis(control.yaw, source["yaw"].as<ArduinoJson::JsonObject>());
     update_pid_axis(control.pitch, source["pitch"].as<ArduinoJson::JsonObject>());
+    update_servo_range(control.servoRange, source["servoRange"].as<ArduinoJson::JsonObject>());
 }
 
 bool ensure_mdns_started()
@@ -379,6 +378,14 @@ private:
     uint32_t _camera_stream_interval_ms = 250;
     uint32_t _camera_frame_id = 0;
     uint32_t _event_counter = 0;
+    std::mutex _camera_mutex;
+    int _camera_requested_width = 320;
+    int _camera_requested_height = 240;
+    int _camera_jpeg_quality = 20;
+    std::string _camera_fallback_reason;
+    bool _rgb_control_enabled = false;
+    std::string _rgb_control_color = "#000000";
+    float _rgb_control_brightness = 1.0f;
     hal_bridge::TouchPoint_t _last_screen_touch;
     HeadPetGesture _pending_head_touch = HeadPetGesture::None;
     int _head_touch_connection = -1;
@@ -523,20 +530,41 @@ private:
         }
 
         if (strcmp(kind, "react") == 0) {
-            auto& stackchan = GetStackChan();
-            stackchan.addModifier(std::make_unique<stackchan::TimedEmotionModifier>(
-                emotion_from_string(command["emotion"]), command["durationMs"] | 2000));
+            WsReactMessage_t message;
+            message.emotion    = command["emotion"].as<std::string>();
+            message.durationMs = command["durationMs"] | 2000;
 
             if (!command["avatarJson"].isNull()) {
-                std::string avatar_json;
-                ArduinoJson::serializeJson(command["avatarJson"], avatar_json);
-                stackchan.updateAvatarFromJson(avatar_json.c_str());
+                ArduinoJson::serializeJson(command["avatarJson"], message.avatarJson);
             }
             if (!command["rgbJson"].isNull()) {
-                std::string rgb_json;
-                ArduinoJson::serializeJson(command["rgbJson"], rgb_json);
-                stackchan.updateNeonLightFromJson(rgb_json.c_str());
+                ArduinoJson::serializeJson(command["rgbJson"], message.rgbJson);
             }
+            GetHAL().onWsReactMessage.emit(message);
+            send_command_ack(command_id, kind, nullptr, true, "accepted");
+            return;
+        }
+
+        if (strcmp(kind, "setRgb") == 0) {
+            const bool enabled = command["enabled"] | false;
+            const char* requested_color = command["color"] | "#000000";
+            std::string color = requested_color && strlen(requested_color) == 7 ? requested_color : "#000000";
+            if (!enabled) {
+                color = "#000000";
+            }
+
+            ArduinoJson::JsonDocument rgb;
+            rgb["leftRgbDuration"] = 0.12f;
+            rgb["rightRgbDuration"] = 0.12f;
+            rgb["leftRgbColor"] = color;
+            rgb["rightRgbColor"] = color;
+            std::string rgb_json;
+            ArduinoJson::serializeJson(rgb, rgb_json);
+            GetStackChan().updateNeonLightFromJson(rgb_json.c_str());
+
+            _rgb_control_enabled = enabled;
+            _rgb_control_color = color;
+            _rgb_control_brightness = clamp_float(command["brightness"] | 1.0f, 0.0f, 1.0f);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             return;
         }
@@ -557,12 +585,59 @@ private:
         }
 
         if (strcmp(kind, "cameraStream") == 0) {
-            _camera_stream_enabled = command["enabled"] | false;
+            const bool stream_enabled = command["enabled"] | false;
+            bool was_stream_enabled = false;
             int fps = command["fps"] | 4;
             fps = std::max(1, std::min(10, fps));
+            _camera_requested_width = std::max(1, command["width"] | _camera_requested_width);
+            _camera_requested_height = std::max(1, command["height"] | _camera_requested_height);
+            _camera_jpeg_quality = std::max(1, std::min(100, command["quality"] | _camera_jpeg_quality));
+            _camera_fallback_reason.clear();
+            const bool unsupported_resolution = _camera_requested_width * _camera_requested_height > 320 * 240;
+            if (unsupported_resolution) {
+                _camera_requested_width = 320;
+                _camera_requested_height = 240;
+                _camera_jpeg_quality = std::min(_camera_jpeg_quality, 35);
+                _camera_fallback_reason = "vga_disabled_for_stability";
+            }
             _camera_stream_interval_ms = 1000 / fps;
+
+            {
+                std::lock_guard<std::mutex> lock(_camera_mutex);
+                was_stream_enabled = _camera_stream_enabled;
+                _camera_stream_enabled = false;
+                auto camera = hal_bridge::board_get_camera();
+                if (camera) {
+                    const bool width_matches =
+                        camera->GetFrameWidth() <= 0 || camera->GetFrameWidth() == _camera_requested_width;
+                    const bool height_matches =
+                        camera->GetFrameHeight() <= 0 || camera->GetFrameHeight() == _camera_requested_height;
+                    if (!width_matches || !height_matches) {
+                        const bool resized = camera->SetFrameSize(_camera_requested_width, _camera_requested_height);
+                        const bool resized_width_matches =
+                            camera->GetFrameWidth() <= 0 || camera->GetFrameWidth() == _camera_requested_width;
+                        const bool resized_height_matches =
+                            camera->GetFrameHeight() <= 0 || camera->GetFrameHeight() == _camera_requested_height;
+                        if (!resized || !resized_width_matches || !resized_height_matches) {
+                            _camera_fallback_reason = "runtime_resolution_change_failed";
+                        }
+                    }
+                } else if (stream_enabled) {
+                    _camera_fallback_reason = "driver_unavailable";
+                }
+                _camera_stream_enabled = stream_enabled;
+            }
             if (!_camera_stream_enabled) {
                 _last_camera_frame_time = 0;
+            }
+            if (_camera_stream_enabled && !was_stream_enabled) {
+                std::lock_guard<std::mutex> lock(_face_tracking_mutex);
+                _face_tracking_target.updatedAt = GetHAL().millis();
+                _face_tracking_target.detected = false;
+                _face_tracking_target.reserved = true;
+                _face_tracking_target.recenterOnLost = true;
+                _face_tracking_target.speed = std::max(_face_tracking_target.speed, 420);
+                _face_tracking_hold_until = GetHAL().millis() + 3500;
             }
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             return;
@@ -628,14 +703,18 @@ private:
         update_tracking_control(_face_tracking_target.control, command["control"].as<ArduinoJson::JsonObject>());
 
         if (!detected) {
+            const char* reason = command["reason"] | "";
             _face_tracking_target.detected = false;
             _face_tracking_target.reserved = true;
+            _face_tracking_target.recenterOnLost =
+                strcmp(reason, "face_lost") == 0 || strcmp(reason, "tracking_enabled") == 0;
             _face_tracking_hold_until      = GetHAL().millis() + 3500;
             return;
         }
 
         _face_tracking_target.reserved    = true;
         _face_tracking_target.detected    = true;
+        _face_tracking_target.recenterOnLost = false;
         _face_tracking_target.centerX     = clamp_float(command["centerX"] | 0.5f, 0.0f, 1.0f);
         _face_tracking_target.centerY     = clamp_float(command["centerY"] | 0.5f, 0.0f, 1.0f);
         _face_tracking_target.confidence  = clamp_float(command["confidence"] | 0.0f, 0.0f, 1.0f);
@@ -807,21 +886,34 @@ private:
         _last_camera_frame_time = now;
 
         auto camera = hal_bridge::board_get_camera();
-        if (!camera || !camera->StreamCaptures() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
+        if (!camera) {
             return;
         }
 
         uint8_t* jpeg_data = nullptr;
         size_t jpeg_len    = 0;
-        if (!image_to_jpeg((uint8_t*)camera->GetFrameData(), camera->GetFrameSize(), camera->GetFrameWidth(),
-                           camera->GetFrameHeight(), (v4l2_pix_fmt_t)camera->GetFrameFormat(), 20, &jpeg_data, &jpeg_len)) {
-            if (jpeg_data) {
-                free(jpeg_data);
+        int frame_width    = 0;
+        int frame_height   = 0;
+        {
+            std::lock_guard<std::mutex> lock(_camera_mutex);
+            if (!_camera_stream_enabled) {
+                return;
             }
-            return;
+            if (!camera->StreamCaptures() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
+                return;
+            }
+            frame_width  = camera->GetFrameWidth();
+            frame_height = camera->GetFrameHeight();
+            if (!image_to_jpeg((uint8_t*)camera->GetFrameData(), camera->GetFrameSize(), frame_width, frame_height,
+                               (v4l2_pix_fmt_t)camera->GetFrameFormat(), _camera_jpeg_quality, &jpeg_data, &jpeg_len)) {
+                if (jpeg_data) {
+                    free(jpeg_data);
+                }
+                return;
+            }
         }
 
-        send_camera_frame(jpeg_data, jpeg_len, camera->GetFrameWidth(), camera->GetFrameHeight());
+        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height);
         free(jpeg_data);
     }
 
@@ -917,6 +1009,8 @@ private:
         const auto touch = hal_bridge::get_touch_point();
         const auto head_touch = GetHAL().getLocalHeadTouchSnapshot();
         const auto imu = GetHAL().getLocalImuSnapshot();
+        const auto mic = GetHAL().getMicLevelSnapshot();
+        const auto peripherals = GetHAL().getLocalPeripheralProbeSnapshot();
 
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "sensorSnapshot");
@@ -1002,38 +1096,148 @@ private:
 
         doc["event"]["peripherals"]["camera"]["available"] = camera != nullptr;
         doc["event"]["peripherals"]["camera"]["streaming"] = _camera_stream_enabled;
+        doc["event"]["peripherals"]["camera"]["requestedWidth"] = _camera_requested_width;
+        doc["event"]["peripherals"]["camera"]["requestedHeight"] = _camera_requested_height;
+        doc["event"]["peripherals"]["camera"]["quality"] = _camera_jpeg_quality;
         if (camera) {
             if (camera->GetFrameWidth() > 0) {
                 doc["event"]["peripherals"]["camera"]["width"] = camera->GetFrameWidth();
+                doc["event"]["peripherals"]["camera"]["actualWidth"] = camera->GetFrameWidth();
             }
             if (camera->GetFrameHeight() > 0) {
                 doc["event"]["peripherals"]["camera"]["height"] = camera->GetFrameHeight();
+                doc["event"]["peripherals"]["camera"]["actualHeight"] = camera->GetFrameHeight();
             }
             doc["event"]["peripherals"]["camera"]["fps"] =
                 _camera_stream_interval_ms > 0 ? (1000.0f / static_cast<float>(_camera_stream_interval_ms)) : 0.0f;
+            if (!_camera_fallback_reason.empty()) {
+                doc["event"]["peripherals"]["camera"]["fallbackReason"] = _camera_fallback_reason.c_str();
+            }
         } else {
             doc["event"]["peripherals"]["camera"]["reason"] = "driver_unavailable";
+            doc["event"]["peripherals"]["camera"]["fallbackReason"] = "driver_unavailable";
         }
 
         doc["event"]["peripherals"]["rgb"]["available"] = io_expander_available;
         doc["event"]["peripherals"]["rgb"]["count"] = io_expander_available ? 12 : 0;
+        doc["event"]["peripherals"]["rgb"]["enabled"] = _rgb_control_enabled;
+        doc["event"]["peripherals"]["rgb"]["color"] = _rgb_control_color.c_str();
+        doc["event"]["peripherals"]["rgb"]["brightness"] = _rgb_control_brightness;
+        doc["event"]["peripherals"]["rgb"]["driver"] = "neon-light";
+        if (!io_expander_available) {
+            doc["event"]["peripherals"]["rgb"]["reason"] = "io_expander_unavailable";
+        }
         doc["event"]["peripherals"]["rtc"]["available"] = true;
         doc["event"]["peripherals"]["rtc"]["timestamp"] = iso_now();
         doc["event"]["peripherals"]["rtc"]["timezone"] = GetHAL().getTimezone();
-        doc["event"]["peripherals"]["nfc"]["available"] = false;
-        doc["event"]["peripherals"]["nfc"]["reason"] = "driver_not_wired";
-        doc["event"]["peripherals"]["ir"]["available"] = false;
-        doc["event"]["peripherals"]["ir"]["reason"] = "driver_not_wired";
-        doc["event"]["peripherals"]["proximity"]["available"] = false;
-        doc["event"]["peripherals"]["proximity"]["reason"] = "driver_not_wired";
-        doc["event"]["peripherals"]["ambientLight"]["available"] = false;
-        doc["event"]["peripherals"]["ambientLight"]["reason"] = "driver_not_wired";
-        doc["event"]["peripherals"]["magnetometer"]["available"] = false;
-        doc["event"]["peripherals"]["magnetometer"]["reason"] = "driver_not_wired";
-        doc["event"]["peripherals"]["mic"]["available"] = true;
-        doc["event"]["peripherals"]["mic"]["channels"] = 1;
+
+        doc["event"]["peripherals"]["nfc"]["available"] = peripherals.nfcAvailable;
+        doc["event"]["peripherals"]["nfc"]["driver"] = peripherals.nfcDriver.c_str();
+        doc["event"]["peripherals"]["nfc"]["address"] = peripherals.nfcAddress;
+        if (!peripherals.nfcStatus.empty()) {
+            doc["event"]["peripherals"]["nfc"]["status"] = peripherals.nfcStatus.c_str();
+        }
+        if (!peripherals.nfcAvailable && !peripherals.nfcReason.empty()) {
+            doc["event"]["peripherals"]["nfc"]["reason"] = peripherals.nfcReason.c_str();
+        }
+
+        doc["event"]["peripherals"]["powerMonitor"]["available"] = peripherals.powerMonitorAvailable;
+        doc["event"]["peripherals"]["powerMonitor"]["driver"] = peripherals.powerMonitorDriver.c_str();
+        doc["event"]["peripherals"]["powerMonitor"]["address"] = peripherals.powerMonitorAddress;
+        if (peripherals.powerMonitorAvailable) {
+            doc["event"]["peripherals"]["powerMonitor"]["busVoltage"] = peripherals.powerMonitorBusVoltage;
+            doc["event"]["peripherals"]["powerMonitor"]["shuntVoltage"] = peripherals.powerMonitorShuntVoltage;
+            doc["event"]["peripherals"]["powerMonitor"]["current"] = peripherals.powerMonitorCurrent;
+            doc["event"]["peripherals"]["powerMonitor"]["power"] = peripherals.powerMonitorPower;
+        } else if (!peripherals.powerMonitorReason.empty()) {
+            doc["event"]["peripherals"]["powerMonitor"]["reason"] = peripherals.powerMonitorReason.c_str();
+        }
+
+        doc["event"]["peripherals"]["ir"]["available"] = peripherals.irAvailable;
+        doc["event"]["peripherals"]["ir"]["driver"] = peripherals.irDriver.c_str();
+        doc["event"]["peripherals"]["ir"]["txPin"] = peripherals.irTxPin;
+        doc["event"]["peripherals"]["ir"]["rxPin"] = peripherals.irRxPin;
+        if (!peripherals.irAvailable && !peripherals.irReason.empty()) {
+            doc["event"]["peripherals"]["ir"]["reason"] = peripherals.irReason.c_str();
+        }
+
+        doc["event"]["peripherals"]["proximity"]["available"] = peripherals.proximityAvailable;
+        doc["event"]["peripherals"]["proximity"]["driver"] = peripherals.proximityDriver.c_str();
+        if (peripherals.proximityAvailable) {
+            doc["event"]["peripherals"]["proximity"]["value"] = peripherals.proximityValue;
+            doc["event"]["peripherals"]["proximity"]["raw"] = peripherals.proximityRaw;
+        } else if (!peripherals.proximityReason.empty()) {
+            doc["event"]["peripherals"]["proximity"]["reason"] = peripherals.proximityReason.c_str();
+        }
+
+        doc["event"]["peripherals"]["ambientLight"]["available"] = peripherals.ambientLightAvailable;
+        doc["event"]["peripherals"]["ambientLight"]["driver"] = peripherals.ambientLightDriver.c_str();
+        if (peripherals.ambientLightAvailable) {
+            doc["event"]["peripherals"]["ambientLight"]["lux"] = peripherals.ambientLightLux;
+            doc["event"]["peripherals"]["ambientLight"]["raw"] = peripherals.ambientLightRaw;
+        } else if (!peripherals.ambientLightReason.empty()) {
+            doc["event"]["peripherals"]["ambientLight"]["reason"] = peripherals.ambientLightReason.c_str();
+        }
+
+        const bool mag_available = imu.magnetometerAvailable || peripherals.magnetometerAvailable;
+        doc["event"]["peripherals"]["magnetometer"]["available"] = mag_available;
+        doc["event"]["peripherals"]["magnetometer"]["driver"] = imu.magnetometerAvailable ? "bmi270-aux-bmm150" : peripherals.magnetometerDriver.c_str();
+        if (imu.magnetometerAvailable) {
+            doc["event"]["peripherals"]["magnetometer"]["x"] = imu.magnetometerX;
+            doc["event"]["peripherals"]["magnetometer"]["y"] = imu.magnetometerY;
+            doc["event"]["peripherals"]["magnetometer"]["z"] = imu.magnetometerZ;
+            doc["event"]["peripherals"]["magnetometer"]["rawX"] = imu.magnetometerRawX;
+            doc["event"]["peripherals"]["magnetometer"]["rawY"] = imu.magnetometerRawY;
+            doc["event"]["peripherals"]["magnetometer"]["rawZ"] = imu.magnetometerRawZ;
+            doc["event"]["peripherals"]["magnetometer"]["headingDeg"] = imu.magnetometerHeadingDeg;
+        } else if (peripherals.magnetometerAvailable) {
+            doc["event"]["peripherals"]["magnetometer"]["x"] = peripherals.magnetometerX;
+            doc["event"]["peripherals"]["magnetometer"]["y"] = peripherals.magnetometerY;
+            doc["event"]["peripherals"]["magnetometer"]["z"] = peripherals.magnetometerZ;
+            doc["event"]["peripherals"]["magnetometer"]["rawX"] = peripherals.magnetometerRawX;
+            doc["event"]["peripherals"]["magnetometer"]["rawY"] = peripherals.magnetometerRawY;
+            doc["event"]["peripherals"]["magnetometer"]["rawZ"] = peripherals.magnetometerRawZ;
+            doc["event"]["peripherals"]["magnetometer"]["headingDeg"] = peripherals.magnetometerHeadingDeg;
+        } else if (!peripherals.magnetometerReason.empty()) {
+            doc["event"]["peripherals"]["magnetometer"]["reason"] = peripherals.magnetometerReason.c_str();
+        }
+
+        auto i2c_scans = doc["event"]["peripherals"]["i2cScan"].to<ArduinoJson::JsonArray>();
+        for (const auto& scan : peripherals.i2cScans) {
+            auto scan_doc = i2c_scans.add<ArduinoJson::JsonObject>();
+            scan_doc["stage"] = scan.stage.c_str();
+            scan_doc["uptimeMs"] = scan.uptimeMs;
+            auto addresses = scan_doc["addresses"].to<ArduinoJson::JsonArray>();
+            for (const auto address : scan.addresses) {
+                addresses.add(static_cast<int>(address));
+            }
+            scan_doc["targets"]["ltr553"] = scan.foundLtr553;
+            scan_doc["targets"]["ina226"] = scan.foundIna226;
+            scan_doc["targets"]["nfc"] = scan.foundNfc;
+            if (!scan.reason.empty()) {
+                scan_doc["reason"] = scan.reason.c_str();
+            }
+        }
+
+        doc["event"]["peripherals"]["mic"]["available"] = mic.available;
+        if (mic.channels > 0) {
+            doc["event"]["peripherals"]["mic"]["channels"] = mic.channels;
+        }
         doc["event"]["peripherals"]["mic"]["mode"] = "mono_opus";
         doc["event"]["peripherals"]["mic"]["localization"] = "abandoned";
+        doc["event"]["peripherals"]["mic"]["driver"] = "es7210-level-meter";
+        if (mic.available) {
+            doc["event"]["peripherals"]["mic"]["level"] = mic.level;
+            doc["event"]["peripherals"]["mic"]["rms"] = mic.rms;
+            doc["event"]["peripherals"]["mic"]["peak"] = mic.peak;
+            doc["event"]["peripherals"]["mic"]["dbfs"] = mic.dbfs;
+            doc["event"]["peripherals"]["mic"]["updatedAt"] = mic.updatedAt;
+            if (!mic.reason.empty()) {
+                doc["event"]["peripherals"]["mic"]["reason"] = mic.reason.c_str();
+            }
+        } else if (!mic.reason.empty()) {
+            doc["event"]["peripherals"]["mic"]["reason"] = mic.reason.c_str();
+        }
 
         send_json(doc);
     }
@@ -1207,22 +1411,31 @@ private:
     bool handle_capture_image(const char* command_id, const char* request_id)
     {
         auto camera = hal_bridge::board_get_camera();
-        if (!camera || !camera->Capture() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
+        if (!camera) {
             send_error("capture_failed", "camera capture failed", true, command_id);
             return false;
         }
 
-        size_t encoded_len = 0;
-        auto frame_data    = camera->GetFrameData();
-        auto frame_size    = camera->GetFrameSize();
-        mbedtls_base64_encode(nullptr, 0, &encoded_len, frame_data, frame_size);
+        std::string encoded;
+        {
+            std::lock_guard<std::mutex> lock(_camera_mutex);
+            if (!camera->Capture() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
+                send_error("capture_failed", "camera capture failed", true, command_id);
+                return false;
+            }
 
-        std::string encoded(encoded_len, '\0');
-        if (mbedtls_base64_encode((unsigned char*)encoded.data(), encoded.size(), &encoded_len, frame_data, frame_size) != 0) {
-            send_error("capture_encode_failed", "camera frame base64 encode failed", true, command_id);
-            return false;
+            size_t encoded_len = 0;
+            auto frame_data    = camera->GetFrameData();
+            auto frame_size    = camera->GetFrameSize();
+            mbedtls_base64_encode(nullptr, 0, &encoded_len, frame_data, frame_size);
+
+            encoded.assign(encoded_len, '\0');
+            if (mbedtls_base64_encode((unsigned char*)encoded.data(), encoded.size(), &encoded_len, frame_data, frame_size) != 0) {
+                send_error("capture_encode_failed", "camera frame base64 encode failed", true, command_id);
+                return false;
+            }
+            encoded.resize(encoded_len);
         }
-        encoded.resize(encoded_len);
 
         ArduinoJson::JsonDocument doc;
         doc["type"]              = "robot.event";

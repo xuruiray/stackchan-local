@@ -13,9 +13,15 @@
     "build": "npm run build -w protocol && npm run build -w desktop",
     "typecheck": "npm run typecheck -w protocol && npm run typecheck -w desktop",
     "test": "npm run test -w protocol && npm run test -w desktop",
+    "check": "npm run typecheck && npm test",
     "dev": "npm run dev -w desktop",
     "mcp": "npm run mcp -w desktop",
-    "vision:install": "python3 -m pip install -r desktop/requirements-vision.txt"
+    "firmware:build": "scripts/build-firmware",
+    "firmware:check-local-only": "scripts/check-firmware-local-only",
+    "firmware:flash": "scripts/flash-firmware",
+    "open-source:check": "scripts/check-open-source",
+    "vision:install": "python3 -m pip install -r desktop/requirements-vision.txt",
+    "vision:model": "node desktop/scripts/download_face_landmarker_model.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

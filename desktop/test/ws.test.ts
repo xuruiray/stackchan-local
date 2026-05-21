@@ -21,18 +21,24 @@ const baseConfig: DesktopConfig = {
   faceTrackingEnabled: false,
   faceTrackingFps: 4,
   faceTrackingMirrorX: false,
-  faceTrackingSpeed: 420,
-  faceTrackingDeadband: 0.045,
-  faceTrackingYawKp: 42,
+  faceTrackingSpeed: 760,
+  faceTrackingDeadband: 0.018,
+  faceTrackingYawKp: 78,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 8,
-  faceTrackingPitchKp: 30,
+  faceTrackingYawKd: 10,
+  faceTrackingPitchKp: 54,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 6,
-  faceTrackingIntegralLimit: 0.35,
-  faceTrackingOutputLimitDeg: 20,
+  faceTrackingPitchKd: 8,
+  faceTrackingIntegralLimit: 0.22,
+  faceTrackingOutputLimitDeg: 32,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
+  faceLandmarkerModel: "/tmp/stackchan-local-face-landmarker.task",
+  faceTrackingMaxFaces: 1,
+  faceTrackingMinDetectionConfidence: 0.35,
+  faceTrackingMinPresenceConfidence: 0.35,
+  faceTrackingMinTrackingConfidence: 0.35,
+  faceTrackingCameraPreset: "fast",
   volcengineTtsEnabled: false,
   volcengineTtsEndpoint: "https://example.test/tts",
   volcengineTtsResourceId: "seed-tts-2.0",
@@ -169,9 +175,18 @@ describe("StackChanWebSocketServer", () => {
         },
         peripherals: {
           ioExpander: { available: true },
-          nfc: { available: false, reason: "driver_not_wired" },
-          ir: { available: false, reason: "driver_not_wired" },
-          mic: { available: true, channels: 1, mode: "mono_opus", localization: "abandoned" }
+          nfc: { available: false, driver: "st25r3916-probe", address: 0x50, reason: "not_detected_i2c_0x50" },
+          powerMonitor: { available: true, driver: "ina226", address: 0x41, busVoltage: 3.9, current: 0.11, power: 0.43 },
+          i2cScan: [
+            {
+              stage: "after_py32_vm_en",
+              uptimeMs: 1800,
+              addresses: [0x21, 0x34, 0x38, 0x40, 0x51, 0x58, 0x68, 0x69, 0x6f],
+              targets: { ltr553: false, ina226: false, nfc: false }
+            }
+          ],
+          ir: { available: true, driver: "gpio-ir-basic", txPin: 5, rxPin: 10 },
+          mic: { available: true, channels: 2, mode: "mono_opus", localization: "abandoned", level: 0.4, dbfs: -22, driver: "es7210-level-meter" }
         }
       }
     ]) {
@@ -195,7 +210,10 @@ describe("StackChanWebSocketServer", () => {
     expect(snapshot.sensors.sensorSnapshot?.power?.speakerVolume).toBe(80);
     expect(snapshot.sensors.sensorSnapshot?.peripherals?.ioExpander?.available).toBe(true);
     expect(snapshot.sensors.sensorSnapshot?.motion?.servos?.yaw?.angle).toBe(3.4);
-    expect(snapshot.sensors.sensorSnapshot?.peripherals?.nfc?.reason).toBe("driver_not_wired");
+    expect(snapshot.sensors.sensorSnapshot?.peripherals?.nfc?.reason).toBe("not_detected_i2c_0x50");
+    expect(snapshot.sensors.sensorSnapshot?.peripherals?.powerMonitor?.busVoltage).toBe(3.9);
+    expect(snapshot.sensors.sensorSnapshot?.peripherals?.i2cScan?.[0]?.stage).toBe("after_py32_vm_en");
+    expect(snapshot.sensors.sensorSnapshot?.peripherals?.mic?.level).toBe(0.4);
     ws.close();
   });
 

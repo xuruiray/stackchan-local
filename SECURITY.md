@@ -6,6 +6,8 @@ StackChan Local is intended for a trusted local network.
 
 Keep pairing tokens and provider API keys in `.env` or your local shell environment. Never commit real keys.
 
+Daemon debug logs redact common secret fields such as tokens, passwords, API keys, authorization headers, and image payloads before exposing them in the WebUI.
+
 ## Network Exposure
 
 By default, the WebUI binds to `127.0.0.1` and the device WebSocket binds to `0.0.0.0` so hardware on the LAN can connect. Do not expose the WebSocket port directly to the public internet.

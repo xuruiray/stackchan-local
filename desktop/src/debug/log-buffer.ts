@@ -121,7 +121,7 @@ function sanitizeValue(value: unknown, depth: number): unknown {
   if (value && typeof value === "object") {
     const next: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      if (key.toLowerCase().includes("base64") || key.toLowerCase().includes("database64")) {
+      if (isSensitiveKey(key)) {
         next[key] = "[redacted]";
       } else {
         next[key] = sanitizeValue(child, depth + 1);
@@ -130,4 +130,19 @@ function sanitizeValue(value: unknown, depth: number): unknown {
     return next;
   }
   return value;
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return (
+    normalized.includes("base64") ||
+    normalized.includes("database64") ||
+    normalized.includes("password") ||
+    normalized.includes("passwd") ||
+    normalized.includes("token") ||
+    normalized.includes("apikey") ||
+    normalized.includes("api_key") ||
+    normalized.includes("secret") ||
+    normalized.includes("authorization")
+  );
 }

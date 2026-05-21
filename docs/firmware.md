@@ -16,10 +16,21 @@ This downloads the pinned dependencies listed in `firmware/repos.json`, includin
 ## Build And Flash
 
 ```bash
-idf.py set-target esp32s3
-idf.py build
-idf.py flash monitor
+source ~/esp/esp-idf-v5.5.4/export.sh
+python3 firmware/fetch_repos.py
+npm run firmware:build
+npm run firmware:check-local-only
+cd firmware
+idf.py -p /dev/cu.usbmodem21301 flash
 ```
+
+`npm run firmware:build` sets the ESP32-S3 target and builds through the project wrapper. `npm run firmware:check-local-only` checks the generated compile database and fails if legacy cloud runtime sources are linked into the local-only build.
+
+## Local-Only Build Boundary
+
+`CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD` defaults to `n`. In the default build, CMake excludes copied launcher/cloud app surfaces, App Center, EzData, cloud avatar WebSocket, cloud OTA, Xiaozhi cloud application, MQTT/WebSocket protocol clients, and 4G/RNDIS board paths.
+
+The local-only build defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, and links `firmware/main/local_xiaozhi/application_local_stub.cc` instead of the upstream cloud `application.cc`.
 
 ## Local Companion Mode
 
@@ -35,7 +46,7 @@ Runtime behavior:
 
 ## Wi-Fi Provisioning
 
-If no Wi-Fi credentials are saved, the device starts an AP named `Xiaozhi-XXXX`.
+If no Wi-Fi credentials are saved, the device starts an AP named `StackChan-XXXX`.
 
 1. Connect your phone or computer to that AP.
 2. Open `http://192.168.4.1`.

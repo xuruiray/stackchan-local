@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createLogger } from "../src/config.js";
 import { DebugLogBuffer } from "../src/debug/log-buffer.js";
+import type { DeviceEventListener, DeviceRegistry } from "../src/device/registry.js";
 import { PreviewServer } from "../src/preview/server.js";
 import type { VisionPreviewListener, VisionPreviewSnapshot, VisionTrackingService } from "../src/vision/tracking.js";
 
@@ -12,22 +13,52 @@ class FakeVisionTracking {
   snapshot: VisionPreviewSnapshot = {
     status: {
       enabled: true,
-      fps: 4,
+      fps: 10,
       mirrorX: false,
       detectorAvailable: true,
       control: {
-        speed: 420,
+        speed: 760,
+        camera: {
+          preset: "fast",
+          width: 320,
+          height: 240,
+          fps: 10,
+          quality: 18
+        },
+        detector: {
+          minDetectionConfidence: 0.18,
+          minPresenceConfidence: 0.18,
+          minTrackingConfidence: 0.18
+        },
         control: {
           mode: "pid",
-          deadband: 0.045,
-          yaw: { kp: 42, ki: 0, kd: 8 },
-          pitch: { kp: 30, ki: 0, kd: 6 },
-          integralLimit: 0.35,
-          outputLimitDeg: 20
+          deadband: 0.018,
+          yaw: { kp: 78, ki: 0, kd: 10 },
+          pitch: { kp: 54, ki: 0, kd: 8 },
+          integralLimit: 0.22,
+          outputLimitDeg: 32,
+          servoRange: {
+            yawMin: -1280,
+            yawMax: 1280,
+            pitchMin: 0,
+            pitchMax: 900
+          }
         }
       },
       framesReceived: 1,
       framesDropped: 0,
+      detectorLatencyMs: 18,
+      lastExpression: {
+        emotion: "happy",
+        smile: 0.61,
+        leftEyeOpen: 0.72,
+        rightEyeOpen: 0.7,
+        jawOpen: 0.08,
+        mouthFunnel: 0.03,
+        topBlendshapes: [{ name: "mouthSmileLeft", score: 0.62 }]
+      },
+      lastExpressionAt: new Date("2026-05-18T12:00:00.000Z").toISOString(),
+      lastExpressionCommandAt: new Date("2026-05-18T12:00:00.000Z").toISOString(),
       lastFrameAt: new Date("2026-05-18T12:00:00.000Z").toISOString()
     },
     faces: [{ x: 0.2, y: 0.25, width: 0.3, height: 0.35, confidence: 1 }],
@@ -60,9 +91,19 @@ class FakeVisionTracking {
     return this.snapshot.status;
   }
 
-  setControl(patch: { speed?: number; control?: { deadband?: number } }): VisionPreviewSnapshot["status"] {
+  setControl(patch: { speed?: number; cameraPreset?: "fast" | "accurate" | "debug"; control?: { deadband?: number } }): VisionPreviewSnapshot["status"] {
     if (typeof patch.speed === "number") {
       this.snapshot.status.control.speed = patch.speed;
+    }
+    if (patch.cameraPreset === "accurate") {
+      this.snapshot.status.control.camera = {
+        preset: "accurate",
+        width: 320,
+        height: 240,
+        fps: 6,
+        quality: 28
+      };
+      this.snapshot.status.fps = 6;
     }
     if (typeof patch.control?.deadband === "number") {
       this.snapshot.status.control.control.deadband = patch.control.deadband;
@@ -75,6 +116,74 @@ class FakeVisionTracking {
 
   get enabledState(): boolean {
     return this.enabled;
+  }
+}
+
+class FakeDeviceRegistry {
+  private readonly listeners = new Set<DeviceEventListener>();
+  private lastSeenAt = new Date("2026-05-18T12:00:00.000Z").toISOString();
+
+  onEvent(listener: DeviceEventListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  listSnapshots(): ReturnType<DeviceRegistry["listSnapshots"]> {
+    return [
+      {
+        deviceId: "stackchan-test",
+        sessionId: "session-test",
+        firmwareVersion: "local-test",
+        capabilities: ["camera", "rgb", "mic", "nfc", "ir", "proximity", "ambientLight", "magnetometer"],
+        audioParams: { format: "opus", sampleRate: 16000, channels: 1, frameDurationMs: 30 },
+        status: "online",
+        mode: "idle",
+        connectedAt: new Date("2026-05-18T12:00:00.000Z").toISOString(),
+        lastSeenAt: this.lastSeenAt,
+        audioFramesReceived: 0,
+        sensors: {
+          sensorSnapshot: {
+            kind: "sensorSnapshot",
+            uptimeMs: 12_000,
+            updatedAt: this.lastSeenAt,
+            peripherals: {
+              rgb: { available: true, count: 12, enabled: true, color: "#43D5B0", brightness: 0.8, driver: "neon-light" },
+              nfc: { available: false, driver: "st25r3916-probe", address: 0x50, reason: "not_detected_i2c_0x50" },
+              powerMonitor: { available: true, driver: "ina226", address: 0x41, busVoltage: 3.9, current: 0.11, power: 0.43 },
+              ir: { available: true, driver: "gpio-ir-basic", txPin: 5, rxPin: 10 },
+              proximity: { available: true, value: 42, raw: 42, driver: "ltr553" },
+              ambientLight: { available: true, lux: 18.5, raw: 320, driver: "ltr553" },
+              magnetometer: { available: true, x: 0.1, y: -0.2, z: 0.3, rawX: 12, rawY: -24, rawZ: 36, driver: "bmi270-aux-bmm150" },
+              mic: {
+                available: true,
+                channels: 2,
+                mode: "mono_opus",
+                localization: "abandoned",
+                level: 0.42,
+                rms: 0.08,
+                peak: 0.31,
+                dbfs: -21.4,
+                updatedAt: 12_000,
+                driver: "es7210-level-meter"
+              }
+            }
+          }
+        }
+      }
+    ];
+  }
+
+  emitBattery(level: number): void {
+    this.lastSeenAt = new Date("2026-05-18T12:00:01.000Z").toISOString();
+    for (const listener of this.listeners) {
+      listener({
+        type: "robot.event",
+        eventId: `battery-${level}`,
+        deviceId: "stackchan-test",
+        timestamp: this.lastSeenAt,
+        event: { kind: "battery", level, charging: false }
+      });
+    }
   }
 }
 
@@ -96,11 +205,24 @@ describe("PreviewServer", () => {
       context: { type: "vision", dataBase64: "abcd".repeat(100) }
     });
     const announcements: Array<{ id: string; reason: string; taskSummary?: string }> = [];
+    const rgbCommands: Array<{ enabled: boolean; color?: string; brightness?: number }> = [];
     let ttsEnabled = true;
     let lightEnabled = true;
     let ttsVolume = 80;
     server = new PreviewServer({ host: "127.0.0.1", port: 0 }, fakeVision as unknown as VisionTrackingService, createLogger("error"), {
+      registry: new FakeDeviceRegistry() as unknown as DeviceRegistry,
       debugLog,
+      robotController: {
+        setRgb: async (options) => {
+          rgbCommands.push(options);
+          return {
+            sent: true,
+            deviceId: "stackchan-test",
+            command: { kind: "setRgb", ...options },
+            ack: { received: true, status: "accepted" }
+          };
+        }
+      },
       completionAnnouncer: {
         announce: (completion) => announcements.push(completion),
         isEnabled: () => ttsEnabled,
@@ -127,7 +249,20 @@ describe("PreviewServer", () => {
     expect(html).toContain("StackChan Vision");
     expect(html).toContain("Hardware");
     expect(html).toContain("Yaw P");
+    expect(html).toContain("Official Range");
+    expect(html).toContain("Camera Presets");
+    expect(html).toContain("Detector Sensitivity");
+    expect(html).toContain("Expression Sync");
+    expect(html).toContain("Responsive PID");
+    expect(html).toContain("Accurate");
+    expect(html).toContain("Detector latency");
     expect(html).toContain("TTS Vol");
+    expect(html).toContain("RGB color");
+    expect(html).toContain("Mic level");
+    expect(html).toContain("st25r3916-probe");
+
+    const ipv6Html = await fetch(`http://[::1]:${port}/`).then((response) => response.text());
+    expect(ipv6Html).toContain("StackChan Vision");
 
     const status = (await fetch(`${baseUrl}/status`).then((response) => response.json())) as {
       frame: { frameId: string };
@@ -157,6 +292,11 @@ describe("PreviewServer", () => {
     expect(frame.status).toBe(200);
     expect(frame.headers.get("content-type")).toBe("image/jpeg");
 
+    const stream = await fetch(`${baseUrl}/stream.mjpg`);
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("multipart/x-mixed-replace");
+    await stream.body?.cancel();
+
     const toggled = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -185,6 +325,17 @@ describe("PreviewServer", () => {
     expect(ttsSettings.lightEnabled).toBe(false);
     expect(ttsSettings.volume).toBe(73);
 
+    const rgb = (await fetch(`${baseUrl}/api/rgb`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, color: "#6cb6ff" })
+    }).then((response) => response.json())) as { ok: boolean; enabled: boolean; color: string };
+
+    expect(rgb.ok).toBe(true);
+    expect(rgb.enabled).toBe(true);
+    expect(rgb.color).toBe("#6CB6FF");
+    expect(rgbCommands).toEqual([{ enabled: true, color: "#6CB6FF", brightness: undefined }]);
+
     const tuned = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -193,5 +344,50 @@ describe("PreviewServer", () => {
 
     expect(tuned.status.control.speed).toBe(520);
     expect(tuned.status.control.control.deadband).toBe(0.03);
+
+    const cameraTuned = (await fetch(`${baseUrl}/api/tracking`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ control: { cameraPreset: "accurate" } })
+    }).then((response) => response.json())) as { status: { control: { camera: { preset: string; width: number; height: number; fps: number; quality: number } } } };
+
+    expect(cameraTuned.status.control.camera).toEqual({
+      preset: "accurate",
+      width: 320,
+      height: 240,
+      fps: 6,
+      quality: 28
+    });
+  });
+
+  it("broadcasts throttled snapshot updates for non-camera device events", async () => {
+    const fakeVision = new FakeVisionTracking();
+    const registry = new FakeDeviceRegistry();
+    server = new PreviewServer(
+      { host: "127.0.0.1", port: 0 },
+      fakeVision as unknown as VisionTrackingService,
+      createLogger("error"),
+      { registry: registry as unknown as DeviceRegistry }
+    );
+    const port = await server.start();
+    const response = await fetch(`http://127.0.0.1:${port}/events`);
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let body = "";
+    body += decoder.decode((await reader.read()).value);
+    registry.emitBattery(87);
+
+    const deadline = Date.now() + 2000;
+    while (!body.includes('"lastSeenAt":"2026-05-18T12:00:01.000Z"') && Date.now() < deadline) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value);
+    }
+    reader.cancel().catch(() => {});
+
+    expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:01.000Z"');
   });
 });

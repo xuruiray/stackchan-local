@@ -93,6 +93,9 @@ export type CameraStreamCommand = {
   kind: "cameraStream";
   enabled: boolean;
   fps?: number;
+  width?: number;
+  height?: number;
+  quality?: number;
   format?: "jpeg";
 };
 
@@ -102,12 +105,55 @@ export type NormalizedFaceBox = {
   width: number;
   height: number;
   confidence?: number;
+  trackingId?: string | number;
+  landmarks?: FaceLandmarks;
+  pose?: FacePose;
+  transformMatrix?: number[];
+  expression?: FaceExpression;
+  detector?: string;
+};
+
+export type NormalizedFacePoint = {
+  x: number;
+  y: number;
+  z?: number;
+};
+
+export type FaceLandmarks = {
+  all?: NormalizedFacePoint[];
+  nose?: NormalizedFacePoint;
+  leftEye?: NormalizedFacePoint;
+  rightEye?: NormalizedFacePoint;
+  mouthLeft?: NormalizedFacePoint;
+  mouthRight?: NormalizedFacePoint;
+  mouthCenter?: NormalizedFacePoint;
+  chin?: NormalizedFacePoint;
+};
+
+export type FacePose = {
+  yawDeg: number;
+  pitchDeg: number;
+  rollDeg: number;
+};
+
+export type FaceExpression = {
+  smile?: number;
+  leftEyeOpen?: number;
+  rightEyeOpen?: number;
+  blendshapes?: Record<string, number>;
 };
 
 export type FaceTrackingPidAxis = {
   kp: number;
   ki: number;
   kd: number;
+};
+
+export type FaceServoRange = {
+  yawMin: number;
+  yawMax: number;
+  pitchMin: number;
+  pitchMax: number;
 };
 
 export type FaceTrackingControl = {
@@ -117,6 +163,7 @@ export type FaceTrackingControl = {
   pitch: FaceTrackingPidAxis;
   integralLimit: number;
   outputLimitDeg: number;
+  servoRange: FaceServoRange;
 };
 
 export type TrackFaceCommand = {
@@ -176,6 +223,13 @@ export type SetModeCommand = {
   reason?: string;
 };
 
+export type SetRgbCommand = {
+  kind: "setRgb";
+  enabled: boolean;
+  color?: string;
+  brightness?: number;
+};
+
 export type RobotCommand =
   | SayCommand
   | ReactCommand
@@ -185,7 +239,8 @@ export type RobotCommand =
   | PlayAnimationCommand
   | PlayAudioCommand
   | CaptureImageCommand
-  | SetModeCommand;
+  | SetModeCommand
+  | SetRgbCommand;
 
 export interface RobotCommandMessage {
   type: "robot.command";
@@ -326,11 +381,21 @@ export type RobotEvent =
           width?: number;
           height?: number;
           fps?: number;
+          requestedWidth?: number;
+          requestedHeight?: number;
+          actualWidth?: number;
+          actualHeight?: number;
+          quality?: number;
+          fallbackReason?: string;
           reason?: string;
         };
         rgb?: {
           available: boolean;
           count?: number;
+          enabled?: boolean;
+          color?: string;
+          brightness?: number;
+          driver?: string;
           reason?: string;
         };
         rtc?: {
@@ -341,20 +406,40 @@ export type RobotEvent =
         };
         nfc?: {
           available: boolean;
+          driver?: string;
+          address?: number;
+          status?: "chip_detected" | "ready" | "card_detected" | "inactive";
+          reason?: string;
+        };
+        powerMonitor?: {
+          available: boolean;
+          driver?: string;
+          address?: number;
+          busVoltage?: number;
+          shuntVoltage?: number;
+          current?: number;
+          power?: number;
           reason?: string;
         };
         ir?: {
           available: boolean;
+          driver?: string;
+          txPin?: number;
+          rxPin?: number;
           reason?: string;
         };
         proximity?: {
           available: boolean;
           value?: number;
+          raw?: number;
+          driver?: string;
           reason?: string;
         };
         ambientLight?: {
           available: boolean;
           lux?: number;
+          raw?: number;
+          driver?: string;
           reason?: string;
         };
         magnetometer?: {
@@ -362,7 +447,11 @@ export type RobotEvent =
           x?: number;
           y?: number;
           z?: number;
+          rawX?: number;
+          rawY?: number;
+          rawZ?: number;
           headingDeg?: number;
+          driver?: string;
           reason?: string;
         };
         mic?: {
@@ -370,8 +459,25 @@ export type RobotEvent =
           channels?: number;
           mode?: "mono_opus" | "unknown";
           localization?: "abandoned" | "unsupported";
+          level?: number;
+          rms?: number;
+          peak?: number;
+          dbfs?: number;
+          updatedAt?: number;
+          driver?: string;
           reason?: string;
         };
+        i2cScan?: Array<{
+          stage: string;
+          uptimeMs: number;
+          addresses: number[];
+          targets?: {
+            ltr553?: boolean;
+            ina226?: boolean;
+            nfc?: boolean;
+          };
+          reason?: string;
+        }>;
       };
     };
 

@@ -219,7 +219,7 @@ private:
             _last_reconnect_attempt = GetHAL().millis();
             return;
         }
-        ESP_LOGI(_tag.c_str(), "get token %s", _token.c_str());
+        ESP_LOGI(_tag.c_str(), "device token received");
 
         auto& board  = Board::GetInstance();
         auto network = board.GetNetwork();

@@ -34,8 +34,10 @@ void Hal::init()
     ESP_ERROR_CHECK(ret);
 
     xiaozhi_board_init();
+    recordI2cDiagnosticScan("after_board_init_axp2101");
     head_touch_init();
     io_expander_init();
+    peripheral_probe_init();
     rtc_init();
     imu_init();
     servo_init();

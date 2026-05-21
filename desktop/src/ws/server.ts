@@ -249,6 +249,8 @@ export class StackChanWebSocketServer {
         "cameraStream",
         "faceTracking",
         "audioPlayback",
+        "rgbControl",
+        "sensorTelemetry",
         "robotCommand"
       ],
       audioParams: handshake.audioParams

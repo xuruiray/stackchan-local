@@ -7,10 +7,13 @@
 #include <esp_heap_caps.h>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 #include "esp_imgfx_color_convert.h"
 #include "esp_video_device.h"
 #include "esp_video_init.h"
+#include "esp_video_ioctl.h"
+#include "gc0308.h"
 #include "linux/videodev2.h"
 
 #include "board.h"
@@ -20,8 +23,10 @@
 #include "jpg/image_to_jpeg.h"
 #include "jpg/jpeg_to_image.h"
 #include "lvgl_display.h"
+#ifndef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
 #include "mcp_server.h"
 #include "system_info.h"
+#endif
 
 // #include "application.h"
 // #include "audio_service.h"
@@ -99,6 +104,20 @@ static void log_available_video_devices()
 #else
 #define CAM_PRINT_FOURCC(pixelformat) (void)0;
 #endif  // CONFIG_XIAOZHI_ENABLE_CAMERA_DEBUG_MODE
+
+static esp_cam_sensor_output_format_t sensor_format_from_v4l2(v4l2_pix_fmt_t format)
+{
+    switch (format) {
+        case V4L2_PIX_FMT_YUV422P:
+            return ESP_CAM_SENSOR_PIXFORMAT_YUV422;
+        case V4L2_PIX_FMT_RGB565:
+            return ESP_CAM_SENSOR_PIXFORMAT_RGB565;
+        case V4L2_PIX_FMT_GREY:
+            return ESP_CAM_SENSOR_PIXFORMAT_GRAYSCALE;
+        default:
+            return static_cast<esp_cam_sensor_output_format_t>(0);
+    }
+}
 
 StackChanCamera::StackChanCamera(const esp_video_init_config_t& config)
 {
@@ -388,8 +407,168 @@ StackChanCamera::~StackChanCamera()
 
 void StackChanCamera::SetExplainUrl(const std::string& url, const std::string& token)
 {
+#ifdef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
+    (void)url;
+    (void)token;
+    ESP_LOGW(TAG, "legacy camera explain URL ignored in StackChan Local build");
+#else
     explain_url_   = url;
     explain_token_ = token;
+#endif
+}
+
+bool StackChanCamera::SetFrameSize(int width, int height)
+{
+    if (width <= 0 || height <= 0 || video_fd_ < 0 || sensor_format_ == 0) {
+        return false;
+    }
+    if (frame_.width == width && frame_.height == height) {
+        return true;
+    }
+
+    if (encoder_thread_.joinable()) {
+        encoder_thread_.join();
+    }
+
+    const uint16_t previous_width  = frame_.width;
+    const uint16_t previous_height = frame_.height;
+    const uint32_t buffer_count    = mmap_buffers_.empty() ? 1 : static_cast<uint32_t>(mmap_buffers_.size());
+
+    auto stop_stream = [this]() {
+        if (!streaming_on_) {
+            return true;
+        }
+        int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        if (ioctl(video_fd_, VIDIOC_STREAMOFF, &type) != 0) {
+            ESP_LOGE(TAG, "VIDIOC_STREAMOFF failed before resize, errno=%d(%s)", errno, strerror(errno));
+            return false;
+        }
+        streaming_on_ = false;
+        return true;
+    };
+
+    auto release_buffers = [this]() {
+        for (auto& b : mmap_buffers_) {
+            if (b.start && b.length) {
+                munmap(b.start, b.length);
+            }
+        }
+        mmap_buffers_.clear();
+
+        struct v4l2_requestbuffers release_req = {};
+        release_req.count                      = 0;
+        release_req.type                       = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        release_req.memory                     = V4L2_MEMORY_MMAP;
+        if (ioctl(video_fd_, VIDIOC_REQBUFS, &release_req) != 0) {
+            ESP_LOGW(TAG, "VIDIOC_REQBUFS release failed during resize, errno=%d(%s)", errno, strerror(errno));
+        }
+    };
+
+    auto clear_frame = [this]() {
+        if (frame_.data) {
+            heap_caps_free(frame_.data);
+            frame_.data = nullptr;
+        }
+        frame_.len = 0;
+    };
+
+    auto configure_stream = [this, buffer_count](int target_width, int target_height) {
+        const esp_cam_sensor_output_format_t sensor_format = sensor_format_from_v4l2(sensor_format_);
+        const esp_cam_sensor_format_t* gc0308_format = sensor_format != 0
+                                                           ? gc0308_find_dvp_format(target_width, target_height, sensor_format)
+                                                           : nullptr;
+        if (gc0308_format) {
+            esp_cam_sensor_format_t requested_sensor_format = *gc0308_format;
+            if (ioctl(video_fd_, VIDIOC_S_SENSOR_FMT, &requested_sensor_format) != 0) {
+                ESP_LOGE(TAG, "VIDIOC_S_SENSOR_FMT resize %dx%d failed, errno=%d(%s)", target_width, target_height,
+                         errno, strerror(errno));
+                return false;
+            }
+        }
+
+        struct v4l2_format setformat = {};
+        setformat.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        setformat.fmt.pix.width      = target_width;
+        setformat.fmt.pix.height     = target_height;
+        setformat.fmt.pix.pixelformat = sensor_format_;
+
+        if (ioctl(video_fd_, VIDIOC_S_FMT, &setformat) != 0) {
+            ESP_LOGE(TAG, "VIDIOC_S_FMT resize %dx%d failed, errno=%d(%s)", target_width, target_height, errno,
+                     strerror(errno));
+            return false;
+        }
+
+#ifdef CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
+        frame_.width  = setformat.fmt.pix.height;
+        frame_.height = setformat.fmt.pix.width;
+        sensor_width_ = setformat.fmt.pix.width;
+        sensor_height_ = setformat.fmt.pix.height;
+#else
+        frame_.width  = setformat.fmt.pix.width;
+        frame_.height = setformat.fmt.pix.height;
+#endif
+
+        struct v4l2_requestbuffers req = {};
+        req.count                      = buffer_count;
+        req.type                       = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        req.memory                     = V4L2_MEMORY_MMAP;
+        if (ioctl(video_fd_, VIDIOC_REQBUFS, &req) != 0 || req.count == 0) {
+            ESP_LOGE(TAG, "VIDIOC_REQBUFS resize failed, errno=%d(%s)", errno, strerror(errno));
+            return false;
+        }
+
+        mmap_buffers_.resize(req.count);
+        for (uint32_t i = 0; i < req.count; i++) {
+            struct v4l2_buffer buf = {};
+            buf.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory             = V4L2_MEMORY_MMAP;
+            buf.index              = i;
+            if (ioctl(video_fd_, VIDIOC_QUERYBUF, &buf) != 0) {
+                ESP_LOGE(TAG, "VIDIOC_QUERYBUF resize failed, errno=%d(%s)", errno, strerror(errno));
+                return false;
+            }
+
+            void* start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, video_fd_, buf.m.offset);
+            if (start == MAP_FAILED) {
+                ESP_LOGE(TAG, "mmap resize failed, errno=%d(%s)", errno, strerror(errno));
+                return false;
+            }
+            mmap_buffers_[i].start  = start;
+            mmap_buffers_[i].length = buf.length;
+
+            if (ioctl(video_fd_, VIDIOC_QBUF, &buf) != 0) {
+                ESP_LOGE(TAG, "VIDIOC_QBUF resize failed, errno=%d(%s)", errno, strerror(errno));
+                return false;
+            }
+        }
+
+        int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        if (ioctl(video_fd_, VIDIOC_STREAMON, &type) != 0) {
+            ESP_LOGE(TAG, "VIDIOC_STREAMON resize failed, errno=%d(%s)", errno, strerror(errno));
+            return false;
+        }
+        streaming_on_ = true;
+        return true;
+    };
+
+    if (!stop_stream()) {
+        return false;
+    }
+    release_buffers();
+    clear_frame();
+
+    if (!configure_stream(width, height)) {
+        release_buffers();
+        clear_frame();
+        const bool restored = configure_stream(previous_width, previous_height);
+        ESP_LOGW(TAG, "camera resize to %dx%d failed; restore %dx%d %s", width, height, previous_width,
+                 previous_height, restored ? "ok" : "failed");
+        return false;
+    }
+
+    const bool matched = frame_.width == width && frame_.height == height;
+    ESP_LOGI(TAG, "camera frame size requested=%dx%d actual=%dx%d", width, height, frame_.width, frame_.height);
+    return matched;
 }
 
 bool StackChanCamera::Capture()
@@ -1026,6 +1205,10 @@ bool StackChanCamera::SetVFlip(bool enabled)
  */
 std::string StackChanCamera::Explain(const std::string& question)
 {
+#ifdef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
+    (void)question;
+    throw std::runtime_error("Legacy cloud camera explain is disabled in StackChan Local build");
+#else
     if (explain_url_.empty()) {
         throw std::runtime_error("Image explain URL or token is not set");
     }
@@ -1166,4 +1349,5 @@ std::string StackChanCamera::Explain(const std::string& question)
     ESP_LOGI(TAG, "Explain image size=%d bytes, compressed size=%d, remain stack size=%d, question=%s\n%s",
              (int)frame_.len, (int)total_sent, (int)remain_stack_size, question.c_str(), result.c_str());
     return result;
+#endif
 }

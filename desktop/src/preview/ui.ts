@@ -41,43 +41,77 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       letter-spacing: 0;
+      overflow-x: hidden;
     }
-    .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
-    header {
+    .shell {
+      width: 100%;
+      min-width: 0;
+      min-height: 100vh;
       display: grid;
-      grid-template-columns: minmax(180px, 260px) 1fr auto;
-      gap: 14px;
-      align-items: center;
-      min-height: 64px;
-      padding: 10px 16px;
+      grid-template-rows: auto 1fr;
+      overflow-x: hidden;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      align-items: stretch;
+      min-width: 0;
+      max-width: 100%;
+      padding: 10px 12px;
       background: #101214;
       border-bottom: 1px solid var(--line);
     }
+    header > * { min-width: 0; }
     h1 { margin: 0; font-size: 16px; font-weight: 700; }
-    .subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .subtitle {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
     .status-strip {
-      display: grid;
-      grid-template-columns: repeat(10, minmax(74px, 1fr));
+      display: flex;
       gap: 8px;
+      width: 100%;
+      max-width: 100%;
       min-width: 0;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: thin;
     }
     .pill {
       min-width: 0;
       padding: 7px 9px;
       border: 1px solid var(--line);
       border-radius: 7px;
-      background: var(--panel-2);
+      background: #171b1e;
       font-size: 12px;
       line-height: 1.2;
     }
+    .status-strip .pill { flex: 0 0 92px; }
     .pill .k { display: block; color: var(--muted); margin-bottom: 3px; white-space: nowrap; }
     .pill .v { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .ok { color: var(--ok); }
     .warn { color: var(--warn); }
     .bad { color: var(--bad); }
-    .actions { display: flex; align-items: center; gap: 8px; }
+    .actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow: visible;
+      padding-bottom: 0;
+      scrollbar-width: thin;
+    }
     button {
-      height: 34px;
+      min-height: 34px;
       padding: 0 11px;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -86,31 +120,42 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       font: inherit;
       font-size: 13px;
       cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, color 120ms ease, opacity 120ms ease;
+      white-space: nowrap;
     }
-	    button.active { border-color: rgba(67, 213, 176, .7); background: #12312b; color: #d8fff5; }
-	    button:disabled { cursor: default; opacity: .45; }
+    button:hover:not(:disabled) { border-color: #59646c; background: var(--panel-3); }
+    button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+    button.active,
+    button[aria-pressed="true"] {
+      border-color: rgba(67, 213, 176, .75);
+      background: #12312b;
+      color: #d8fff5;
+    }
+    button.pending { border-color: rgba(108, 182, 255, .8); color: #cfe7ff; }
+    button:disabled { cursor: default; opacity: .45; }
     main {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(360px, 430px);
-      min-height: 0;
+      display: block;
+      min-width: 0;
+      max-width: 100%;
+      min-height: auto;
     }
     .stage {
-      min-height: calc(100vh - 64px);
-      display: grid;
-      grid-template-rows: 1fr auto;
+      min-width: 0;
+      max-width: 100%;
+      min-height: auto;
+      display: block;
       background: #050607;
-      overflow: hidden;
+      overflow: visible;
     }
     .video-area {
-      display: grid;
-      place-items: center;
+      display: block;
       min-height: 0;
-      padding: 14px;
+      padding: 10px;
     }
     .video-wrap {
       position: relative;
-      width: min(100%, calc((100vh - 150px) * 1.333));
-      max-height: calc(100vh - 150px);
+      width: 100%;
+      max-height: none;
       aspect-ratio: 4 / 3;
       background: #000;
       border: 1px solid #20262b;
@@ -135,34 +180,41 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
     }
     .frame-footer {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
-      padding: 0 14px 14px;
+      padding: 0 10px 10px;
     }
     .side {
+      min-width: 0;
+      max-width: 100%;
       min-height: 0;
-      overflow: auto;
+      overflow: visible;
       background: var(--panel);
-      border-left: 1px solid var(--line);
+      border-top: 1px solid var(--line);
     }
     .tabs {
       position: sticky;
       top: 0;
       z-index: 2;
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 1px;
+      display: flex;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
       background: var(--line);
       border-bottom: 1px solid var(--line);
     }
     .tab {
+      flex: 0 0 auto;
+      min-width: 96px;
       border: 0;
       border-radius: 0;
       background: #15181a;
       color: var(--muted);
     }
     .tab.selected { background: var(--panel); color: var(--text); }
-    .panel { display: none; padding: 14px; }
+    .panel { display: none; padding: 12px; }
     .panel.selected { display: block; }
     .group {
       padding: 13px 0;
@@ -176,23 +228,102 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       text-transform: uppercase;
       margin-bottom: 10px;
     }
+    .tuning-group {
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #111416;
+    }
+    .tuning-group:first-child { padding-top: 12px; }
+    .tuning-group:last-child { margin-bottom: 0; border-bottom: 1px solid var(--line); }
     .metric {
       display: grid;
-      grid-template-columns: minmax(110px, 1fr) minmax(0, 1.2fr);
-      gap: 12px;
+      grid-template-columns: minmax(92px, .9fr) minmax(0, 1.3fr);
+      gap: 10px;
       padding: 7px 0;
       border-top: 1px solid rgba(255,255,255,.04);
       font-size: 13px;
     }
     .metric:first-of-type { border-top: 0; }
     .metric span:first-child { color: var(--muted); }
-    .metric span:last-child { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    .metric > span:last-child,
+    .metric > .metric-value {
+      text-align: right;
+      overflow-wrap: anywhere;
+      white-space: normal;
+      font-variant-numeric: tabular-nums;
+    }
+    .metric > .metric-value {
+      min-width: 0;
+      display: grid;
+      justify-items: end;
+      gap: 6px;
+    }
+    .meter {
+      position: relative;
+      width: min(160px, 100%);
+      height: 9px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #090b0d;
+      border: 1px solid rgba(255,255,255,.08);
+    }
+    .meter-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--warn));
+      transition: width 120ms linear;
+    }
+    .meter-readout {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .rgb-controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 0 10px;
+    }
+    .color-field {
+      display: grid;
+      grid-template-columns: auto 44px;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    input[type="color"] {
+      width: 44px;
+      height: 34px;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+    }
+    .swatch-row {
+      grid-column: 1 / -1;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .swatch {
+      width: 32px;
+      min-width: 32px;
+      padding: 0;
+      color: transparent;
+      border-color: rgba(255,255,255,.18);
+    }
     .control-row {
       display: grid;
-      grid-template-columns: 76px minmax(0, 1fr) 52px;
+      grid-template-columns: minmax(72px, 92px) minmax(0, 1fr) minmax(44px, 58px);
       gap: 9px;
       align-items: center;
-      padding: 7px 0;
+      padding: 8px 0;
       border-top: 1px solid rgba(255,255,255,.04);
       font-size: 13px;
     }
@@ -314,6 +445,16 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
     .axis-g { background: #e3b341; }
     input[type="range"] { width: 100%; accent-color: var(--accent); }
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .segmented button {
+      width: 100%;
+      min-width: 0;
+    }
     pre {
       margin: 0;
       padding: 10px;
@@ -367,105 +508,52 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
     }
     .log-msg { color: var(--text); margin-bottom: 5px; }
     .log-context { color: #c8d1d6; white-space: pre-wrap; overflow-wrap: anywhere; }
-    @media (max-width: 1180px) {
-      header { grid-template-columns: 1fr; align-items: stretch; }
-      .status-strip { grid-template-columns: repeat(5, minmax(86px, 1fr)); }
-      .actions { justify-content: flex-start; }
-    }
-    @media (max-width: 900px) {
-      main { grid-template-columns: 1fr; }
-      .side { border-left: 0; border-top: 1px solid var(--line); }
-      .stage { min-height: auto; }
-      .frame-footer { grid-template-columns: repeat(2, 1fr); }
-      .video-wrap { width: 100%; max-height: none; }
-    }
-    @media (max-width: 560px) {
-      .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .logs { max-height: 460px; }
+    @media (max-width: 520px) {
       .frame-footer { grid-template-columns: 1fr; }
       .log-controls { grid-template-columns: 1fr; }
+      .control-row {
+        grid-template-columns: minmax(0, 1fr) 58px;
+        gap: 6px 10px;
+      }
+      .control-row label { grid-column: 1 / -1; }
+      .segmented { grid-template-columns: 1fr; }
+      .metric { grid-template-columns: minmax(84px, .8fr) minmax(0, 1.2fr); }
     }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      grid-template-columns: 1fr;
-      align-items: stretch;
-      min-height: auto;
-      padding: 10px 12px;
-    }
-    .status-strip {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 2px;
-      scrollbar-width: thin;
-    }
-    .status-strip .pill { min-width: 88px; }
-    .actions { justify-content: flex-start; overflow-x: auto; }
-    main {
-      display: block;
-      min-height: auto;
-    }
-    .stage {
-      min-height: auto;
-      display: block;
-      overflow: visible;
-    }
-    .video-area {
-      display: block;
-      padding: 10px;
-    }
-    .video-wrap {
-      width: 100%;
-      max-height: none;
-    }
-    .frame-footer {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      padding: 0 10px 10px;
-    }
-    .side {
-      overflow: visible;
-      border-left: 0;
-      border-top: 1px solid var(--line);
-    }
-    .tabs {
-      display: flex;
-      overflow-x: auto;
-      scrollbar-width: thin;
-    }
-    .tab {
-      flex: 0 0 auto;
-      min-width: 96px;
-    }
-    .panel { padding: 12px; }
-    .metric {
-      grid-template-columns: minmax(92px, .9fr) minmax(0, 1.3fr);
-      gap: 10px;
-    }
-    .metric span:last-child { white-space: normal; }
-    .logs { max-height: 460px; }
     @media (min-width: 1120px) {
+      .shell { height: 100vh; }
       header {
-        grid-template-columns: minmax(180px, 260px) 1fr auto;
-        align-items: center;
-        min-height: 64px;
+        grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+        align-items: start;
+        gap: 8px 16px;
         padding: 10px 16px;
       }
       .status-strip {
+        grid-column: 1 / -1;
         display: grid;
-        grid-template-columns: repeat(10, minmax(74px, 1fr));
+        grid-template-columns: repeat(10, minmax(0, 1fr));
         overflow: visible;
         padding-bottom: 0;
       }
       .status-strip .pill { min-width: 0; }
-      .actions { justify-content: flex-end; overflow: visible; }
+      .actions {
+        grid-column: 2;
+        grid-row: 1;
+        flex-wrap: nowrap;
+        justify-content: flex-end;
+        overflow: visible;
+        padding-bottom: 0;
+      }
       main {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(360px, 430px);
+        grid-template-columns: minmax(0, 1fr) clamp(430px, 36vw, 520px);
+        height: 100%;
         min-height: 0;
+        overflow: hidden;
       }
       .stage {
-        min-height: calc(100vh - 64px);
+        height: 100%;
+        min-height: 0;
         display: grid;
         grid-template-rows: 1fr auto;
         overflow: hidden;
@@ -477,8 +565,8 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
         padding: 14px;
       }
       .video-wrap {
-        width: min(100%, calc((100vh - 150px) * 1.333));
-        max-height: calc(100vh - 150px);
+        width: min(100%, calc((100vh - 198px) * 1.333));
+        max-height: calc(100vh - 198px);
       }
       .frame-footer {
         grid-template-columns: repeat(4, 1fr);
@@ -566,6 +654,15 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
             <div class="metric"><span>Target box</span><span id="targetBox">${html(initial.targetBox)}</span></div>
           </div>
           <div class="group">
+            <div class="group-title">Expression</div>
+            <div class="metric"><span>Emotion</span><span id="expressionEmotion">${html(initial.expressionEmotion)}</span></div>
+            <div class="metric"><span>Smile</span><span id="expressionSmile">${html(initial.expressionSmile)}</span></div>
+            <div class="metric"><span>Eyes</span><span id="expressionEyes">${html(initial.expressionEyes)}</span></div>
+            <div class="metric"><span>Mouth</span><span id="expressionMouth">${html(initial.expressionMouth)}</span></div>
+            <div class="metric"><span>Top blendshapes</span><span id="expressionBlendshapes">${html(initial.expressionBlendshapes)}</span></div>
+            <div class="metric"><span>Synced</span><span id="expressionSynced">${html(initial.expressionSynced)}</span></div>
+          </div>
+          <div class="group">
             <div class="group-title">Device</div>
             <div class="metric"><span>Status</span><span id="deviceStatus">${html(initial.deviceStatus)}</span></div>
             <div class="metric"><span>Mode</span><span id="deviceMode">${html(initial.deviceMode)}</span></div>
@@ -579,10 +676,12 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
             <div class="group-title">Power & IO</div>
             <div class="metric"><span>Battery</span><span id="sensorBatteryLevel">${html(initial.batteryLevel)}</span></div>
             <div class="metric"><span>Charging</span><span id="sensorBatteryCharging">${html(initial.batteryCharging)}</span></div>
+            <div class="metric"><span>Power monitor</span><span id="hardwarePowerMonitor">${html(initial.hardwarePowerMonitor)}</span></div>
             <div class="metric"><span>Backlight</span><span id="hardwareBacklight">${html(initial.hardwareBacklight)}</span></div>
             <div class="metric"><span>Speaker</span><span id="hardwareSpeaker">${html(initial.hardwareSpeaker)}</span></div>
             <div class="metric"><span>Servo power</span><span id="hardwareServoPower">${html(initial.hardwareServoPower)}</span></div>
             <div class="metric"><span>IO expander</span><span id="hardwareIoExpander">${html(initial.hardwareIoExpander)}</span></div>
+            <div class="metric"><span>I2C scan</span><span id="hardwareI2cScan">${html(initial.hardwareI2cScan)}</span></div>
             <div class="metric"><span>Updated</span><span id="sensorBatteryAge">${html(initial.batteryAge)}</span></div>
           </div>
           <div class="group">
@@ -641,14 +740,30 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
           <div class="group">
             <div class="group-title">Peripherals</div>
             <div class="metric"><span>Camera</span><span id="hardwareCamera">${html(initial.hardwareCamera)}</span></div>
-            <div class="metric"><span>RGB</span><span id="hardwareRgb">${html(initial.hardwareRgb)}</span></div>
+            <div class="metric"><span>Requested</span><span id="hardwareCameraRequested">${html(initial.hardwareCameraRequested)}</span></div>
+            <div class="metric"><span>Actual</span><span id="hardwareCameraActual">${html(initial.hardwareCameraActual)}</span></div>
+            <div class="metric"><span>JPEG quality</span><span id="hardwareCameraQuality">${html(initial.hardwareCameraQuality)}</span></div>
+            <div class="metric"><span>Fallback</span><span id="hardwareCameraFallback">${html(initial.hardwareCameraFallback)}</span></div>
+            <div class="metric"><span>RGB</span><div class="metric-value" id="hardwareRgb">${html(initial.hardwareRgb)}</div></div>
+            <div class="rgb-controls">
+              <label class="color-field" for="rgbColor">RGB color <input id="rgbColor" type="color" value="${attr(initial.rgbColor)}" /></label>
+              <button id="rgbToggle" class="${attr(initial.rgbToggleClass)}" type="button">${html(initial.rgbToggleText)}</button>
+              <div class="swatch-row" aria-label="RGB presets">
+                <button class="swatch" type="button" data-rgb="#43D5B0" style="background:#43D5B0">Mint</button>
+                <button class="swatch" type="button" data-rgb="#6CB6FF" style="background:#6CB6FF">Blue</button>
+                <button class="swatch" type="button" data-rgb="#E3B341" style="background:#E3B341">Amber</button>
+                <button class="swatch" type="button" data-rgb="#F47067" style="background:#F47067">Red</button>
+                <button class="swatch" type="button" data-rgb="#FFFFFF" style="background:#FFFFFF">White</button>
+              </div>
+            </div>
             <div class="metric"><span>RTC</span><span id="hardwareRtc">${html(initial.hardwareRtc)}</span></div>
             <div class="metric"><span>NFC</span><span id="hardwareNfc">${html(initial.hardwareNfc)}</span></div>
             <div class="metric"><span>IR</span><span id="hardwareIr">${html(initial.hardwareIr)}</span></div>
             <div class="metric"><span>Proximity</span><span id="hardwareProximity">${html(initial.hardwareProximity)}</span></div>
             <div class="metric"><span>Ambient light</span><span id="hardwareAmbientLight">${html(initial.hardwareAmbientLight)}</span></div>
             <div class="metric"><span>Magnetometer</span><span id="hardwareMagnetometer">${html(initial.hardwareMagnetometer)}</span></div>
-            <div class="metric"><span>Mic</span><span id="hardwareMic">${html(initial.hardwareMic)}</span></div>
+            <div class="metric"><span>Mic</span><div class="metric-value" id="hardwareMic">${html(initial.hardwareMic)}</div></div>
+            <div class="metric"><span>Mic level</span><div class="metric-value"><div class="meter"><i id="hardwareMicLevelFill" class="meter-fill" style="width:${attr(initial.hardwareMicLevelWidth)}"></i></div><span id="hardwareMicLevelText" class="meter-readout">${html(initial.hardwareMicLevelText)}</span></div></div>
             <div class="metric"><span>Frame age</span><span id="sensorFrameAge">${html(initial.frameAge)}</span></div>
             <div class="metric"><span>Face count</span><span id="sensorFaceCount">${html(initial.statFaces)}</span></div>
             <div class="metric"><span>Target</span><span id="sensorTarget">${html(initial.targetSummary)}</span></div>
@@ -658,12 +773,49 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
         </section>
 
         <section id="tuning" class="panel">
-          <div class="toolbar">
-            <button id="presetFast" type="button">Fast preset</button>
-            <button id="presetStable" type="button">Stable preset</button>
-            <button id="presetDefault" type="button">Reset defaults</button>
+          <div class="group tuning-group">
+            <div class="group-title">Camera Presets</div>
+            <div class="segmented">
+              <button id="cameraPresetFast" type="button">Fast 10fps</button>
+              <button id="cameraPresetAccurate" type="button">Clear 6fps</button>
+              <button id="cameraPresetDebug" type="button">Inspect 2fps</button>
+            </div>
+            <div class="metric"><span>Current</span><span id="cameraPresetCurrent">${html(initial.cameraPresetCurrent)}</span></div>
+            <div class="metric"><span>Requested</span><span id="cameraPresetRequested">${html(initial.cameraPresetRequested)}</span></div>
+            <div class="metric"><span>Actual frame</span><span id="cameraPresetActual">${html(initial.cameraPresetActual)}</span></div>
+            <div class="metric"><span>Detector latency</span><span id="cameraDetectorLatency">${html(initial.cameraDetectorLatency)}</span></div>
+            <div class="metric"><span>Drop rate</span><span id="cameraDropRate">${html(initial.cameraDropRate)}</span></div>
+            <div class="metric"><span>Fallback</span><span id="cameraPresetFallback">${html(initial.cameraPresetFallback)}</span></div>
           </div>
-          <div class="group">
+          <div class="group tuning-group">
+            <div class="group-title">Detector Sensitivity</div>
+            <div class="segmented">
+              <button id="detectorPresetLoose" type="button">Loose</button>
+              <button id="detectorPresetBalanced" type="button">Balanced</button>
+              <button id="detectorPresetStrict" type="button">Strict</button>
+            </div>
+            <div class="control-row"><label for="detectorDetectionControl">Detection</label><input id="detectorDetectionControl" data-path="detector.minDetectionConfidence" type="range" min="0.05" max="0.8" step="0.01" /><output>-</output></div>
+            <div class="control-row"><label for="detectorPresenceControl">Presence</label><input id="detectorPresenceControl" data-path="detector.minPresenceConfidence" type="range" min="0.05" max="0.8" step="0.01" /><output>-</output></div>
+            <div class="control-row"><label for="detectorTrackingControl">Tracking</label><input id="detectorTrackingControl" data-path="detector.minTrackingConfidence" type="range" min="0.05" max="0.8" step="0.01" /><output>-</output></div>
+            <div class="metric"><span>Current</span><span id="detectorThresholdSummary">${html(initial.detectorThresholdSummary)}</span></div>
+          </div>
+          <div class="group tuning-group">
+            <div class="group-title">Expression Sync</div>
+            <div class="metric"><span>Emotion</span><span id="tuneExpressionEmotion">${html(initial.expressionEmotion)}</span></div>
+            <div class="metric"><span>Smile</span><span id="tuneExpressionSmile">${html(initial.expressionSmile)}</span></div>
+            <div class="metric"><span>Eyes</span><span id="tuneExpressionEyes">${html(initial.expressionEyes)}</span></div>
+            <div class="metric"><span>Synced</span><span id="tuneExpressionSynced">${html(initial.expressionSynced)}</span></div>
+          </div>
+          <div class="group tuning-group">
+            <div class="group-title">Tracking PID Presets</div>
+            <div class="segmented">
+              <button id="presetOfficial" type="button">Official Range</button>
+              <button id="presetFast" type="button">Responsive PID</button>
+              <button id="presetStable" type="button">Smooth PID</button>
+              <button id="presetDefaults" type="button">Reset Defaults</button>
+            </div>
+          </div>
+          <div class="group tuning-group">
             <div class="group-title">PID Controls</div>
             <div class="control-row"><label for="speedControl">Speed</label><input id="speedControl" data-path="speed" type="range" min="0" max="1000" step="10" /><output>-</output></div>
             <div class="control-row"><label for="deadbandControl">Dead</label><input id="deadbandControl" data-path="control.deadband" type="range" min="0" max="0.2" step="0.005" /><output>-</output></div>
@@ -676,15 +828,23 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
             <div class="control-row"><label for="pitchKdControl">Pitch D</label><input id="pitchKdControl" data-path="control.pitch.kd" type="range" min="0" max="35" step="0.5" /><output>-</output></div>
             <div class="control-row"><label for="limitControl">Limit</label><input id="limitControl" data-path="control.outputLimitDeg" type="range" min="1" max="45" step="1" /><output>-</output></div>
           </div>
-		          <div class="group">
-		            <div class="group-title">Audio</div>
-		            <div class="metric"><span>Codex 播报</span><span class="${attr(initial.ttsEnabledClass)}" id="ttsEnabledSummary">${html(initial.ttsEnabledSummary)}</span></div>
-		            <div class="metric"><span>灯光闪烁</span><span class="${attr(initial.ttsLightEnabledClass)}" id="ttsLightSummary">${html(initial.ttsLightSummary)}</span></div>
-		            <div class="control-row"><label for="ttsVolumeControl">TTS Vol</label><input id="ttsVolumeControl" type="range" min="0" max="100" step="1" value="${attr(initial.ttsVolume)}" /><output id="ttsVolumeValue">${html(initial.ttsVolume)}</output></div>
-		            <div class="metric"><span>Completion</span><span id="ttsVolumeSummary">${html(initial.ttsVolumeSummary)}</span></div>
-		          </div>
-          <div class="group">
+          <div class="group tuning-group">
+            <div class="group-title">Servo Range</div>
+            <div class="control-row"><label for="yawMinControl">Yaw min</label><input id="yawMinControl" data-path="control.servoRange.yawMin" type="range" min="-1800" max="0" step="10" /><output>-</output></div>
+            <div class="control-row"><label for="yawMaxControl">Yaw max</label><input id="yawMaxControl" data-path="control.servoRange.yawMax" type="range" min="0" max="1800" step="10" /><output>-</output></div>
+            <div class="control-row"><label for="pitchMinControl">Pitch min</label><input id="pitchMinControl" data-path="control.servoRange.pitchMin" type="range" min="-900" max="1200" step="10" /><output>-</output></div>
+            <div class="control-row"><label for="pitchMaxControl">Pitch max</label><input id="pitchMaxControl" data-path="control.servoRange.pitchMax" type="range" min="-900" max="1200" step="10" /><output>-</output></div>
+          </div>
+          <div class="group tuning-group">
+            <div class="group-title">Audio</div>
+            <div class="metric"><span>Codex 播报</span><span class="${attr(initial.ttsEnabledClass)}" id="ttsEnabledSummary">${html(initial.ttsEnabledSummary)}</span></div>
+            <div class="metric"><span>灯光闪烁</span><span class="${attr(initial.ttsLightEnabledClass)}" id="ttsLightSummary">${html(initial.ttsLightSummary)}</span></div>
+            <div class="control-row"><label for="ttsVolumeControl">TTS Vol</label><input id="ttsVolumeControl" type="range" min="0" max="100" step="1" value="${attr(initial.ttsVolume)}" /><output id="ttsVolumeValue">${html(initial.ttsVolume)}</output></div>
+            <div class="metric"><span>Completion</span><span id="ttsVolumeSummary">${html(initial.ttsVolumeSummary)}</span></div>
+          </div>
+          <div class="group tuning-group">
             <div class="group-title">Command</div>
+            <div class="metric"><span>Save status</span><span id="tuningSaveState">ready</span></div>
             <div class="metric"><span>Last command</span><span id="tuneCommand">-</span></div>
             <div class="metric"><span>Target center</span><span id="tuneCenter">-</span></div>
           </div>
@@ -703,6 +863,8 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
             <div class="group-title">Counters</div>
             <div class="metric"><span>Vision frames</span><span id="debugVisionFrames">${html(initial.debugVisionFrames)}</span></div>
             <div class="metric"><span>Vision drops</span><span id="debugVisionDrops">${html(initial.debugVisionDrops)}</span></div>
+            <div class="metric"><span>Detector latency</span><span id="debugDetectorLatency">${html(initial.cameraDetectorLatency)}</span></div>
+            <div class="metric"><span>Camera preset</span><span id="debugCameraPreset">${html(initial.cameraPresetCurrent)}</span></div>
           </div>
           <div class="group">
             <div class="group-title">Raw Snapshot</div>
@@ -749,28 +911,56 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 	    const toggleCompletionTts = $('toggleCompletionTts');
 	    const toggleCompletionLight = $('toggleCompletionLight');
 	    const testCompletionTts = $('testCompletionTts');
+    const rgbColorInput = $('rgbColor');
+    const rgbToggle = $('rgbToggle');
     let imuFusion = null;
     let imu3d = null;
     let latest = null;
     let lastFrameId = frame.dataset.frameId || null;
-    let pendingFrameId = null;
-    let frameLoadSeq = 0;
+    let frameStreamActive = (frame.getAttribute('src') || '').indexOf('/stream.mjpg') === 0;
+    let frameStreamRestartTimer = null;
     let controlTimer = null;
+    let controlSavedTimer = null;
     let ttsVolumeTimer = null;
     let logsPaused = false;
+    let logRenderTimer = null;
+    let lastRawSnapshotAt = 0;
     let logEntries = [];
 
+    const officialServoRange = { yawMin: -1280, yawMax: 1280, pitchMin: 0, pitchMax: 900 };
     const presets = {
-      fast: { speed: 720, control: { deadband: 0.035, integralLimit: 0.25, outputLimitDeg: 28, yaw: { kp: 62, ki: 0, kd: 10 }, pitch: { kp: 44, ki: 0, kd: 8 } } },
-      stable: { speed: 480, control: { deadband: 0.06, integralLimit: 0.2, outputLimitDeg: 16, yaw: { kp: 36, ki: 0, kd: 12 }, pitch: { kp: 26, ki: 0, kd: 8 } } },
-      defaults: { speed: 420, control: { deadband: 0.045, integralLimit: 0.35, outputLimitDeg: 20, yaw: { kp: 42, ki: 0, kd: 8 }, pitch: { kp: 30, ki: 0, kd: 6 } } }
+      official: { speed: 420, control: { deadband: 0.045, integralLimit: 0.35, outputLimitDeg: 20, yaw: { kp: 42, ki: 0, kd: 8 }, pitch: { kp: 30, ki: 0, kd: 6 }, servoRange: officialServoRange } },
+      fast: { speed: 760, control: { deadband: 0.018, integralLimit: 0.22, outputLimitDeg: 32, yaw: { kp: 78, ki: 0, kd: 10 }, pitch: { kp: 54, ki: 0, kd: 8 }, servoRange: officialServoRange } },
+      stable: { speed: 480, control: { deadband: 0.06, integralLimit: 0.2, outputLimitDeg: 16, yaw: { kp: 36, ki: 0, kd: 12 }, pitch: { kp: 26, ki: 0, kd: 8 }, servoRange: officialServoRange } },
+      defaults: { speed: 760, control: { deadband: 0.018, integralLimit: 0.22, outputLimitDeg: 32, yaw: { kp: 78, ki: 0, kd: 10 }, pitch: { kp: 54, ki: 0, kd: 8 }, servoRange: officialServoRange } }
+    };
+    const cameraPresetIds = {
+      fast: 'cameraPresetFast',
+      accurate: 'cameraPresetAccurate',
+      debug: 'cameraPresetDebug'
+    };
+    const pidPresetIds = {
+      official: 'presetOfficial',
+      fast: 'presetFast',
+      stable: 'presetStable'
+    };
+    const detectorPresets = {
+      loose: { detector: { minDetectionConfidence: 0.18, minPresenceConfidence: 0.18, minTrackingConfidence: 0.18 } },
+      balanced: { detector: { minDetectionConfidence: 0.25, minPresenceConfidence: 0.25, minTrackingConfidence: 0.25 } },
+      strict: { detector: { minDetectionConfidence: 0.35, minPresenceConfidence: 0.35, minTrackingConfidence: 0.35 } }
+    };
+    const detectorPresetIds = {
+      loose: 'detectorPresetLoose',
+      balanced: 'detectorPresetBalanced',
+      strict: 'detectorPresetStrict'
     };
 
     function setText(id, value, className) {
       const node = $(id);
       if (!node) return;
       node.textContent = value == null || value === '' ? '-' : String(value);
-      node.className = className || '';
+      const preserved = node.classList.contains('metric-value') ? 'metric-value' : '';
+      node.className = [preserved, className || ''].filter(Boolean).join(' ');
     }
 
     function fmtTime(value) {
@@ -825,15 +1015,59 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       return typeof value === 'boolean' ? (value ? 'yes' : 'no') : '-';
     }
 
+    function unavailableLabel(item) {
+      const reason = item && typeof item.reason === 'string' ? item.reason : '';
+      if (reason.indexOf('not_detected_i2c') === 0) return 'Not detected';
+      if (reason === 'driver_not_wired') return 'Driver not wired';
+      if (reason === 'driver_unavailable') return 'Driver unavailable';
+      if (reason === 'io_expander_unavailable') return 'IO expander unavailable';
+      return 'Unavailable';
+    }
+
     function availability(item, availableText) {
       if (!item) return '-';
-      if (item.available === false) return 'Unavailable' + (item.reason ? ': ' + item.reason : '');
+      if (item.available === false) return unavailableLabel(item) + (item.reason ? ': ' + item.reason : '');
       if (item.available === true) return availableText || 'available';
       return '-';
     }
 
     function formatPowerValue(value, suffix) {
       return Number.isFinite(value) ? Math.round(value) + suffix : '-';
+    }
+
+    function formatPowerMonitor(item) {
+      if (!item) return '-';
+      if (item.available === false) return formatProbe(item);
+      const parts = [];
+      if (Number.isFinite(item.busVoltage)) parts.push(num(item.busVoltage, 3) + ' V');
+      if (Number.isFinite(item.current)) parts.push(num(item.current * 1000, 1) + ' mA');
+      if (Number.isFinite(item.power)) parts.push(num(item.power * 1000, 1) + ' mW');
+      if (Number.isFinite(item.shuntVoltage)) parts.push('shunt ' + num(item.shuntVoltage * 1000, 3) + ' mV');
+      return formatProbe(item, parts.length ? parts.join(' / ') : 'available');
+    }
+
+    function formatI2cAddressList(addresses) {
+      if (!Array.isArray(addresses) || addresses.length === 0) return 'none';
+      return addresses
+        .filter((address) => Number.isFinite(address))
+        .map((address) => '0x' + Number(address).toString(16).padStart(2, '0'))
+        .join(' ');
+    }
+
+    function targetMark(value) {
+      return value ? 'yes' : 'no';
+    }
+
+    function formatI2cScan(scans) {
+      if (!Array.isArray(scans) || scans.length === 0) return '-';
+      const latest = scans[scans.length - 1] || {};
+      const targets = latest.targets || {};
+      const targetText = 'targets LTR ' + targetMark(targets.ltr553) + ' / INA ' + targetMark(targets.ina226) + ' / NFC ' + targetMark(targets.nfc);
+      const stageText = scans.map((scan) => {
+        const reason = scan.reason ? ' / ' + scan.reason : '';
+        return String(scan.stage || 'scan') + ': ' + formatI2cAddressList(scan.addresses) + reason;
+      }).join(' | ');
+      return targetText + ' / ' + stageText;
     }
 
     function formatBle(item) {
@@ -869,9 +1103,119 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
     function formatCamera(item) {
       if (!item) return '-';
       if (item.available === false) return availability(item);
-      const size = Number.isFinite(item.width) && Number.isFinite(item.height) ? item.width + ' x ' + item.height : '-';
+      const actualWidth = firstDefined(item.actualWidth, item.width);
+      const actualHeight = firstDefined(item.actualHeight, item.height);
+      const size = Number.isFinite(actualWidth) && Number.isFinite(actualHeight) ? actualWidth + ' x ' + actualHeight : '-';
       const fps = Number.isFinite(item.fps) ? ' / ' + num(item.fps, 1) + ' fps' : '';
-      return (item.streaming ? 'streaming ' : 'ready ') + size + fps;
+      const quality = Number.isFinite(item.quality) ? ' / q' + item.quality : '';
+      return (item.streaming ? 'streaming ' : 'ready ') + size + fps + quality;
+    }
+
+    function cameraRequested(item, settings) {
+      const width = firstDefined(item && item.requestedWidth, settings && settings.width);
+      const height = firstDefined(item && item.requestedHeight, settings && settings.height);
+      const fps = firstDefined(item && item.fps, settings && settings.fps);
+      const quality = firstDefined(item && item.quality, settings && settings.quality);
+      const size = Number.isFinite(width) && Number.isFinite(height) ? width + ' x ' + height : '-';
+      const fpsText = Number.isFinite(fps) ? ' / ' + num(fps, 1) + ' fps' : '';
+      const qualityText = Number.isFinite(quality) ? ' / q' + quality : '';
+      return size + fpsText + qualityText;
+    }
+
+    function cameraActual(item, frame) {
+      const width = firstDefined(item && item.actualWidth, item && item.width, frame && frame.width);
+      const height = firstDefined(item && item.actualHeight, item && item.height, frame && frame.height);
+      return Number.isFinite(width) && Number.isFinite(height) ? width + ' x ' + height : '-';
+    }
+
+    function formatCameraQuality(item, settings) {
+      const quality = firstDefined(item && item.quality, settings && settings.quality);
+      return Number.isFinite(quality) ? String(quality) : '-';
+    }
+
+    function formatCameraFallback(item) {
+      return item && item.fallbackReason ? item.fallbackReason : '-';
+    }
+
+    function formatLatency(ms) {
+      return Number.isFinite(ms) ? Math.round(ms) + ' ms' : '-';
+    }
+
+    function updateCameraPresetButtons(preset) {
+      for (const [name, id] of Object.entries(cameraPresetIds)) {
+        const button = $(id);
+        if (button) {
+          const active = name === preset;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        }
+      }
+    }
+
+    function updatePidPresetButtons(settings) {
+      for (const [name, id] of Object.entries(pidPresetIds)) {
+        const button = $(id);
+        if (button) {
+          const active = matchesPreset(settings, presets[name]);
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        }
+      }
+    }
+
+    function updateDetectorPresetButtons(settings) {
+      for (const [name, id] of Object.entries(detectorPresetIds)) {
+        const button = $(id);
+        if (button) {
+          const active = matchesDetectorPreset(settings, detectorPresets[name]);
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        }
+      }
+    }
+
+    function matchesPreset(settings, preset) {
+      if (!settings || !preset) return false;
+      return sameNumber(settings.speed, preset.speed)
+        && matchesControl(settings.control, preset.control);
+    }
+
+    function matchesControl(current, expected) {
+      if (!current || !expected) return false;
+      return sameNumber(current.deadband, expected.deadband)
+        && sameNumber(current.integralLimit, expected.integralLimit)
+        && sameNumber(current.outputLimitDeg, expected.outputLimitDeg)
+        && matchesAxis(current.yaw, expected.yaw)
+        && matchesAxis(current.pitch, expected.pitch)
+        && matchesServoRange(current.servoRange, expected.servoRange);
+    }
+
+    function matchesAxis(current, expected) {
+      return current && expected
+        && sameNumber(current.kp, expected.kp)
+        && sameNumber(current.ki, expected.ki)
+        && sameNumber(current.kd, expected.kd);
+    }
+
+    function matchesServoRange(current, expected) {
+      return current && expected
+        && sameNumber(current.yawMin, expected.yawMin)
+        && sameNumber(current.yawMax, expected.yawMax)
+        && sameNumber(current.pitchMin, expected.pitchMin)
+        && sameNumber(current.pitchMax, expected.pitchMax);
+    }
+
+    function matchesDetectorPreset(settings, preset) {
+      const current = settings && settings.detector;
+      const expected = preset && preset.detector;
+      return current && expected
+        && sameNumber(current.minDetectionConfidence, expected.minDetectionConfidence)
+        && sameNumber(current.minPresenceConfidence, expected.minPresenceConfidence)
+        && sameNumber(current.minTrackingConfidence, expected.minTrackingConfidence);
+    }
+
+    function sameNumber(left, right) {
+      return Number.isFinite(left) && Number.isFinite(right) && Math.abs(Number(left) - Number(right)) < 0.0001;
     }
 
     function formatRtc(item) {
@@ -885,7 +1229,66 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       if (!item) return '-';
       if (item.available === false) return availability(item);
       const channels = Number.isFinite(item.channels) ? item.channels + ' ch' : 'available';
-      return channels + (item.mode ? ' / ' + item.mode : '') + (item.localization ? ' / localization ' + item.localization : '');
+      const level = Number.isFinite(item.level) ? ' / calibrated ' + Math.round(item.level * 100) + '%' : '';
+      const dbfs = Number.isFinite(item.dbfs) ? ' / raw ' + num(item.dbfs, 1) + ' dBFS' : '';
+      return channels + (item.mode ? ' / ' + item.mode : '') + level + dbfs + (item.localization ? ' / localization ' + item.localization : '');
+    }
+
+    function formatRgb(item) {
+      if (!item) return '-';
+      if (item.available === false) return availability(item);
+      const parts = ['available'];
+      if (Number.isFinite(item.count)) parts.push(item.count + ' LEDs');
+      if (typeof item.enabled === 'boolean') parts.push(item.enabled ? 'on' : 'off');
+      if (item.color) parts.push(item.color);
+      if (Number.isFinite(item.brightness)) parts.push(Math.round(item.brightness * 100) + '%');
+      if (item.driver) parts.push(item.driver);
+      return parts.join(' / ');
+    }
+
+    function formatProbe(item, valueText) {
+      if (!item) return '-';
+      const parts = [];
+      if (item.available === true) {
+        parts.push(valueText || 'available');
+      } else if (item.available === false) {
+        parts.push(unavailableLabel(item));
+      }
+      if (item.driver) parts.push(item.driver);
+      if (Number.isFinite(item.address)) parts.push('0x' + Number(item.address).toString(16).padStart(2, '0'));
+      if (item.status) parts.push(item.status);
+      if (Number.isFinite(item.txPin)) parts.push('TX GPIO' + item.txPin);
+      if (Number.isFinite(item.rxPin)) parts.push('RX GPIO' + item.rxPin);
+      if (item.reason) parts.push(item.reason);
+      return parts.length ? parts.join(' / ') : availability(item);
+    }
+
+    function micLevelPercent(item) {
+      return item && Number.isFinite(item.level) ? Math.max(0, Math.min(100, Math.round(item.level * 100))) : 0;
+    }
+
+    function updateMicLevel(item) {
+      const fill = $('hardwareMicLevelFill');
+      const text = $('hardwareMicLevelText');
+      const percent = micLevelPercent(item);
+      if (fill) fill.style.width = percent + '%';
+      if (text) {
+        const dbfs = item && Number.isFinite(item.dbfs) ? ' / raw ' + num(item.dbfs, 1) + ' dBFS' : '';
+        text.textContent = item && item.available ? percent + '% calibrated' + dbfs : '-';
+      }
+    }
+
+    function updateRgbControls(item) {
+      const enabled = Boolean(item && item.enabled);
+      const color = item && /^#[0-9a-fA-F]{6}$/.test(String(item.color || '')) ? String(item.color).toUpperCase() : '#43D5B0';
+      if (rgbColorInput && document.activeElement !== rgbColorInput) {
+        rgbColorInput.value = color;
+      }
+      if (rgbToggle) {
+        rgbToggle.classList.toggle('active', enabled);
+        rgbToggle.textContent = enabled ? 'RGB On' : 'RGB Off';
+        rgbToggle.disabled = Boolean(item && item.available === false);
+      }
     }
 
     function accelMagnitude(sensor) {
@@ -1150,6 +1553,7 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       const wifi = network.wifi || sensors.wifi;
       const imu = sensors.imu || (motion.imu && motion.imu.available ? motion.imu : null);
       const dropRate = status.framesReceived ? status.framesDropped / status.framesReceived : 0;
+      const cameraSettings = status.control && status.control.camera || {};
       const batteryText = Number.isFinite(power.batteryLevel)
         ? Math.round(power.batteryLevel) + '%' + (power.charging ? ' charging' : '')
         : formatBattery(sensors.battery);
@@ -1173,6 +1577,12 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       setText('lastFace', age(status.lastFaceAt));
       setText('lastFaceCommand', age(status.lastCommandAt));
       setText('targetBox', formatBox(snapshot.target));
+      setText('expressionEmotion', formatExpressionEmotion(status, snapshot));
+      setText('expressionSmile', formatExpressionSmile(status, snapshot));
+      setText('expressionEyes', formatExpressionEyes(status, snapshot));
+      setText('expressionMouth', formatExpressionMouth(status, snapshot));
+      setText('expressionBlendshapes', formatExpressionBlendshapes(status, snapshot));
+      setText('expressionSynced', age(status.lastExpressionCommandAt));
       setText('deviceStatus', device && device.status || '-');
       setText('deviceMode', device && device.mode || '-');
       setText('deviceSeen', age(device && device.lastSeenAt));
@@ -1180,10 +1590,12 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 
       setText('sensorBatteryLevel', Number.isFinite(power.batteryLevel) ? Math.round(power.batteryLevel) + '%' : (sensors.battery ? Math.round(sensors.battery.level) + '%' : '-'));
       setText('sensorBatteryCharging', typeof power.charging === 'boolean' ? boolText(power.charging) : (sensors.battery ? (sensors.battery.charging ? 'yes' : 'no') : '-'));
+      setText('hardwarePowerMonitor', formatPowerMonitor(peripherals.powerMonitor));
       setText('hardwareBacklight', formatPowerValue(power.backlight, '%'));
       setText('hardwareSpeaker', formatPowerValue(power.speakerVolume, '%'));
       setText('hardwareServoPower', boolText(power.servoPower));
       setText('hardwareIoExpander', availability(peripherals.ioExpander));
+      setText('hardwareI2cScan', formatI2cScan(peripherals.i2cScan));
       setText('sensorBatteryAge', age(hardware.updatedAt || sensors.battery && sensors.battery.updatedAt));
       setText('sensorWifiStatus', wifi && wifi.status || '-');
       setText('sensorWifiSsid', wifi && wifi.ssid || '-');
@@ -1226,14 +1638,20 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       setText('hardwareWakeWord', interaction.wakeWord ? (interaction.wakeWord.text || availability(interaction.wakeWord)) : (sensors.wakeWord && sensors.wakeWord.text || '-'));
       setText('sensorTouchAge', age(hardware.updatedAt || sensors.touch && sensors.touch.updatedAt));
       setText('hardwareCamera', formatCamera(peripherals.camera));
-      setText('hardwareRgb', peripherals.rgb ? availability(peripherals.rgb, 'available' + (Number.isFinite(peripherals.rgb.count) ? ' / ' + peripherals.rgb.count + ' LEDs' : '')) : '-');
+      setText('hardwareCameraRequested', cameraRequested(peripherals.camera, cameraSettings));
+      setText('hardwareCameraActual', cameraActual(peripherals.camera, snapshot.frame));
+      setText('hardwareCameraQuality', formatCameraQuality(peripherals.camera, cameraSettings));
+      setText('hardwareCameraFallback', formatCameraFallback(peripherals.camera));
+      setText('hardwareRgb', formatRgb(peripherals.rgb));
+      updateRgbControls(peripherals.rgb);
       setText('hardwareRtc', formatRtc(peripherals.rtc));
-      setText('hardwareNfc', availability(peripherals.nfc));
-      setText('hardwareIr', availability(peripherals.ir));
-      setText('hardwareProximity', peripherals.proximity && peripherals.proximity.available ? num(peripherals.proximity.value, 2) : availability(peripherals.proximity));
-      setText('hardwareAmbientLight', peripherals.ambientLight && peripherals.ambientLight.available ? num(peripherals.ambientLight.lux, 1) + ' lux' : availability(peripherals.ambientLight));
-      setText('hardwareMagnetometer', peripherals.magnetometer && peripherals.magnetometer.available ? [peripherals.magnetometer.x, peripherals.magnetometer.y, peripherals.magnetometer.z].map((v) => num(v, 2)).join(', ') : availability(peripherals.magnetometer));
+      setText('hardwareNfc', formatProbe(peripherals.nfc));
+      setText('hardwareIr', formatProbe(peripherals.ir));
+      setText('hardwareProximity', formatProbe(peripherals.proximity, peripherals.proximity && peripherals.proximity.available ? num(peripherals.proximity.value, 2) + (Number.isFinite(peripherals.proximity.raw) ? ' raw ' + peripherals.proximity.raw : '') : undefined));
+      setText('hardwareAmbientLight', formatProbe(peripherals.ambientLight, peripherals.ambientLight && peripherals.ambientLight.available ? num(peripherals.ambientLight.lux, 1) + ' lux' + (Number.isFinite(peripherals.ambientLight.raw) ? ' raw ' + peripherals.ambientLight.raw : '') : undefined));
+      setText('hardwareMagnetometer', formatProbe(peripherals.magnetometer, peripherals.magnetometer && peripherals.magnetometer.available ? [peripherals.magnetometer.x, peripherals.magnetometer.y, peripherals.magnetometer.z].map((v) => num(v, 2)).join(', ') : undefined));
       setText('hardwareMic', formatMic(peripherals.mic));
+      updateMicLevel(peripherals.mic);
       setText('hardwareSnapshotAge', age(hardware.updatedAt));
       setText('sensorFrameAge', age(snapshot.frame && snapshot.frame.timestamp || status.lastFrameAt));
       setText('sensorFaceCount', (snapshot.faces || []).length);
@@ -1244,8 +1662,20 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       setText('frameSize', snapshot.frame ? snapshot.frame.width + ' x ' + snapshot.frame.height : '-');
       setText('lastFrame', age(snapshot.frame && snapshot.frame.timestamp || status.lastFrameAt));
       setText('targetSummary', formatCenter(snapshot.target));
+      setText('cameraPresetCurrent', cameraSettings.preset || '-');
+      setText('cameraPresetRequested', cameraRequested(peripherals.camera, cameraSettings));
+      setText('cameraPresetActual', cameraActual(peripherals.camera, snapshot.frame));
+      setText('cameraDetectorLatency', formatLatency(status.detectorLatencyMs));
+      setText('cameraDropRate', pct(dropRate));
+      setText('cameraPresetFallback', formatCameraFallback(peripherals.camera));
+      setText('detectorThresholdSummary', formatDetectorThresholds(status.control && status.control.detector));
+      updateCameraPresetButtons(cameraSettings.preset);
       setText('tuneCommand', age(status.lastCommandAt));
       setText('tuneCenter', formatCenter(snapshot.target));
+      setText('tuneExpressionEmotion', formatExpressionEmotion(status, snapshot));
+      setText('tuneExpressionSmile', formatExpressionSmile(status, snapshot));
+      setText('tuneExpressionEyes', formatExpressionEyes(status, snapshot));
+      setText('tuneExpressionSynced', age(status.lastExpressionCommandAt));
       renderCompletionTts(snapshot.completionTts);
       setText('debugDeviceId', device && device.deviceId || '-');
       setText('debugSessionId', device && device.sessionId || '-');
@@ -1254,7 +1684,9 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       setText('debugLastEvent', device && device.lastEvent && device.lastEvent.kind || '-');
       setText('debugVisionFrames', firstDefined(status.framesReceived, '-'));
       setText('debugVisionDrops', firstDefined(status.framesDropped, '-'));
-      $('rawSnapshot').textContent = JSON.stringify(snapshot, null, 2);
+      setText('debugDetectorLatency', formatLatency(status.detectorLatencyMs));
+      setText('debugCameraPreset', cameraSettings.preset || '-');
+      updateRawSnapshot(snapshot);
 
       renderControls(status.control);
       updateFrame(snapshot);
@@ -1298,7 +1730,68 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 
     function formatCenter(box) {
       if (!box) return '-';
-      return num(box.x + box.width / 2, 2) + ', ' + num(box.y + box.height / 2, 2);
+      const pose = box.pose
+        ? ' / yaw ' + num(box.pose.yawDeg, 1) + ' pitch ' + num(box.pose.pitchDeg, 1) + ' roll ' + num(box.pose.rollDeg, 1)
+        : '';
+      return num(box.x + box.width / 2, 2) + ', ' + num(box.y + box.height / 2, 2) + pose;
+    }
+
+    function currentExpression(status, snapshot) {
+      return status && status.lastExpression || snapshot && snapshot.target && snapshot.target.expression || null;
+    }
+
+    function formatExpressionEmotion(status, snapshot) {
+      const expression = currentExpression(status, snapshot);
+      return expression && expression.emotion ? expression.emotion : '-';
+    }
+
+    function formatExpressionSmile(status, snapshot) {
+      const expression = currentExpression(status, snapshot);
+      return expression && Number.isFinite(expression.smile) ? pct(expression.smile) : '-';
+    }
+
+    function formatExpressionEyes(status, snapshot) {
+      const expression = currentExpression(status, snapshot);
+      if (!expression) return '-';
+      const left = Number.isFinite(expression.leftEyeOpen) ? pct(expression.leftEyeOpen) : '-';
+      const right = Number.isFinite(expression.rightEyeOpen) ? pct(expression.rightEyeOpen) : '-';
+      return 'L ' + left + ' / R ' + right;
+    }
+
+    function formatExpressionMouth(status, snapshot) {
+      const expression = currentExpression(status, snapshot);
+      if (!expression) return '-';
+      const jaw = Number.isFinite(expression.jawOpen) ? pct(expression.jawOpen) : '-';
+      const funnel = Number.isFinite(expression.mouthFunnel) ? pct(expression.mouthFunnel) : '-';
+      return 'jaw ' + jaw + ' / funnel ' + funnel;
+    }
+
+    function formatExpressionBlendshapes(status, snapshot) {
+      const expression = currentExpression(status, snapshot);
+      const top = expression && Array.isArray(expression.topBlendshapes)
+        ? expression.topBlendshapes
+        : topBlendshapes(expression && expression.blendshapes);
+      return top.length
+        ? top.map((item) => item.name + ' ' + Math.round(item.score * 100) + '%').join(', ')
+        : '-';
+    }
+
+    function topBlendshapes(blendshapes) {
+      if (!blendshapes) return [];
+      return Object.entries(blendshapes)
+        .filter((entry) => Number.isFinite(entry[1]))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map((entry) => ({ name: entry[0], score: entry[1] }));
+    }
+
+    function formatDetectorThresholds(detector) {
+      if (!detector) return '-';
+      return [
+        'D ' + pct(detector.minDetectionConfidence),
+        'P ' + pct(detector.minPresenceConfidence),
+        'T ' + pct(detector.minTrackingConfidence)
+      ].join(' / ');
     }
 
     function formatTouchPoint(touch) {
@@ -1320,6 +1813,8 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
         const output = input.parentElement.querySelector('output');
         output.textContent = formatControl(input, Number(input.value || value));
       }
+      updatePidPresetButtons(settings);
+      updateDetectorPresetButtons(settings);
     }
 
     function formatControl(input, value) {
@@ -1333,25 +1828,10 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
         return;
       }
       empty.style.display = 'none';
+      startFrameStream();
       const nextFrameId = String(snapshot.frame.frameId);
-      if (nextFrameId === lastFrameId || nextFrameId === pendingFrameId) return;
-
-      pendingFrameId = nextFrameId;
-      const loadSeq = ++frameLoadSeq;
-      const nextSrc = '/frame.jpg?frameId=' + encodeURIComponent(nextFrameId) + '&t=' + Date.now();
-      const preloader = new Image();
-      preloader.decoding = 'async';
-      preloader.onload = () => {
-        if (loadSeq !== frameLoadSeq || pendingFrameId !== nextFrameId) return;
-        frame.src = nextSrc;
-        frame.dataset.frameId = nextFrameId;
-        lastFrameId = nextFrameId;
-        pendingFrameId = null;
-      };
-      preloader.onerror = () => {
-        if (loadSeq === frameLoadSeq && pendingFrameId === nextFrameId) pendingFrameId = null;
-      };
-      preloader.src = nextSrc;
+      frame.dataset.frameId = nextFrameId;
+      lastFrameId = nextFrameId;
     }
 
     function drawOverlay(snapshot) {
@@ -1370,6 +1850,7 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
           ctx.font = '18px system-ui';
           ctx.fillText(String(Math.round(face.confidence * 100)) + '%', face.x * width + 8, face.y * height + 24);
         }
+        drawLandmarks(face, width, height, selected);
       }
       if (snapshot.target) {
         const x = (snapshot.target.x + snapshot.target.width / 2) * width;
@@ -1389,6 +1870,18 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       return a && b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
     }
 
+    function drawLandmarks(face, width, height, selected) {
+      if (!face.landmarks) return;
+      ctx.fillStyle = selected ? '#f4d06f' : '#9fd4ff';
+      const points = Array.isArray(face.landmarks.all) ? face.landmarks.all : Object.values(face.landmarks);
+      for (const point of points) {
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+        ctx.beginPath();
+        ctx.arc(point.x * width, point.y * height, selected ? 2.4 : 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     function collectControlPatch() {
       const patch = { control: { mode: 'pid' } };
       for (const input of controls) {
@@ -1399,12 +1892,9 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 
     function scheduleControlPost() {
       clearTimeout(controlTimer);
+      setTuningSaveState('pending', 'warn');
       controlTimer = setTimeout(() => {
-        fetch('/api/tracking', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ control: collectControlPatch() })
-        }).catch(console.error);
+        postControlPatch({ control: collectControlPatch() });
       }, 120);
     }
 
@@ -1453,12 +1943,108 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 	        .catch(console.error);
 	    }
 
-    async function postPreset(preset) {
-      await fetch('/api/tracking', {
+    async function postTracking(payload) {
+      const response = await fetch('/api/tracking', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ control: preset })
+        body: JSON.stringify(payload)
       });
+      render(await response.json());
+    }
+
+    function setButtonBusy(id, busy) {
+      if (!id) return;
+      const button = $(id);
+      if (!button) return;
+      button.classList.toggle('pending', busy);
+      button.disabled = busy;
+    }
+
+    function setTuningSaveState(text, className) {
+      clearTimeout(controlSavedTimer);
+      setText('tuningSaveState', text, className);
+      if (text === 'saved') {
+        controlSavedTimer = setTimeout(() => setText('tuningSaveState', 'ready'), 1600);
+      }
+    }
+
+    async function postControlPatch(payload, buttonId) {
+      setButtonBusy(buttonId, true);
+      setTuningSaveState('saving', 'warn');
+      try {
+        await postTracking(payload);
+        setTuningSaveState('saved', 'ok');
+      } catch (error) {
+        setTuningSaveState('failed', 'bad');
+        console.error(error);
+      } finally {
+        setButtonBusy(buttonId, false);
+      }
+    }
+
+    function postPreset(preset, buttonId) {
+      postControlPatch({ control: preset }, buttonId);
+    }
+
+    function postCameraPreset(cameraPreset, buttonId) {
+      postControlPatch({ control: { cameraPreset } }, buttonId);
+    }
+
+    async function postRgb(enabled, color, buttonId) {
+      setButtonBusy(buttonId, true);
+      try {
+        const response = await fetch('/api/rgb', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled, color })
+        });
+        const result = await response.json();
+        if (!result.ok) {
+          console.warn('RGB command failed', result);
+        }
+        if (latest) {
+          const device = (latest.devices || []).find((item) => item.status === 'online') || (latest.devices || [])[0];
+          const peripherals = device && device.sensors && device.sensors.sensorSnapshot && device.sensors.sensorSnapshot.peripherals;
+          if (peripherals && peripherals.rgb) {
+            peripherals.rgb.enabled = result.enabled;
+            peripherals.rgb.color = result.color;
+          }
+        }
+        updateRgbControls({ available: true, enabled: result.enabled, color: result.color });
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setButtonBusy(buttonId, false);
+      }
+    }
+
+    function startFrameStream() {
+      if (frameStreamActive || document.hidden) {
+        return;
+      }
+      frameStreamActive = true;
+      frame.src = '/stream.mjpg?stream=' + Date.now();
+    }
+
+    function selectedPanelId() {
+      const panel = document.querySelector('.panel.selected');
+      return panel ? panel.id : '';
+    }
+
+    function updateRawSnapshot(snapshot) {
+      if (selectedPanelId() !== 'debug') return;
+      const now = Date.now();
+      if (now - lastRawSnapshotAt < 500) return;
+      lastRawSnapshotAt = now;
+      $('rawSnapshot').textContent = JSON.stringify(snapshot, null, 2);
+    }
+
+    function scheduleLogRender() {
+      if (logsPaused || selectedPanelId() !== 'logs' || logRenderTimer) return;
+      logRenderTimer = setTimeout(() => {
+        logRenderTimer = null;
+        renderLogs();
+      }, 350);
     }
 
     function renderLogs() {
@@ -1494,6 +2080,8 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach((node) => node.classList.toggle('selected', node === tab));
         document.querySelectorAll('.panel').forEach((node) => node.classList.toggle('selected', node.id === tab.dataset.tab));
+        if (tab.dataset.tab === 'logs') renderLogs();
+        if (tab.dataset.tab === 'debug' && latest) updateRawSnapshot(latest);
       });
     }
     for (const input of controls) {
@@ -1510,11 +2098,7 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       });
     }
     $('toggleTracking').addEventListener('click', () => {
-      fetch('/api/tracking', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enabled: !(latest && latest.status && latest.status.enabled) })
-      }).catch(console.error);
+      postTracking({ enabled: !(latest && latest.status && latest.status.enabled) }).catch(console.error);
     });
 	    if (toggleCompletionTts) {
 	      toggleCompletionTts.addEventListener('click', toggleCompletionTtsEnabled);
@@ -1522,12 +2106,45 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 	    if (toggleCompletionLight) {
 	      toggleCompletionLight.addEventListener('click', toggleCompletionLightEnabled);
 	    }
-	    testCompletionTts.addEventListener('click', () => {
-      fetch('/api/completion-tts-test', { method: 'POST' }).catch(console.error);
-    });
-    $('presetFast').addEventListener('click', () => postPreset(presets.fast));
-    $('presetStable').addEventListener('click', () => postPreset(presets.stable));
-    $('presetDefault').addEventListener('click', () => postPreset(presets.defaults));
+	    if (testCompletionTts) {
+	      testCompletionTts.addEventListener('click', () => {
+        fetch('/api/completion-tts-test', { method: 'POST' }).catch(console.error);
+      });
+	    }
+    if (rgbToggle) {
+      rgbToggle.addEventListener('click', () => {
+        const device = latest && ((latest.devices || []).find((item) => item.status === 'online') || (latest.devices || [])[0]);
+        const rgb = device && device.sensors && device.sensors.sensorSnapshot && device.sensors.sensorSnapshot.peripherals && device.sensors.sensorSnapshot.peripherals.rgb;
+        const enabled = !(rgb && rgb.enabled);
+        postRgb(enabled, rgbColorInput ? rgbColorInput.value : '#43D5B0', 'rgbToggle');
+      });
+    }
+    if (rgbColorInput) {
+      rgbColorInput.addEventListener('input', () => {
+        const device = latest && ((latest.devices || []).find((item) => item.status === 'online') || (latest.devices || [])[0]);
+        const rgb = device && device.sensors && device.sensors.sensorSnapshot && device.sensors.sensorSnapshot.peripherals && device.sensors.sensorSnapshot.peripherals.rgb;
+        if (!rgb || rgb.enabled !== false) {
+          postRgb(true, rgbColorInput.value);
+        }
+      });
+    }
+    for (const swatch of Array.from(document.querySelectorAll('[data-rgb]'))) {
+      swatch.addEventListener('click', () => {
+        const color = swatch.getAttribute('data-rgb') || '#43D5B0';
+        if (rgbColorInput) rgbColorInput.value = color;
+        postRgb(true, color);
+      });
+    }
+    $('presetOfficial').addEventListener('click', () => postPreset(presets.official, 'presetOfficial'));
+    $('presetFast').addEventListener('click', () => postPreset(presets.fast, 'presetFast'));
+    $('presetStable').addEventListener('click', () => postPreset(presets.stable, 'presetStable'));
+    $('presetDefaults').addEventListener('click', () => postPreset(presets.defaults, 'presetDefaults'));
+    $('detectorPresetLoose').addEventListener('click', () => postPreset(detectorPresets.loose, 'detectorPresetLoose'));
+    $('detectorPresetBalanced').addEventListener('click', () => postPreset(detectorPresets.balanced, 'detectorPresetBalanced'));
+    $('detectorPresetStrict').addEventListener('click', () => postPreset(detectorPresets.strict, 'detectorPresetStrict'));
+    $('cameraPresetFast').addEventListener('click', () => postCameraPreset('fast', 'cameraPresetFast'));
+    $('cameraPresetAccurate').addEventListener('click', () => postCameraPreset('accurate', 'cameraPresetAccurate'));
+    $('cameraPresetDebug').addEventListener('click', () => postCameraPreset('debug', 'cameraPresetDebug'));
     $('pauseLogs').addEventListener('click', () => {
       logsPaused = !logsPaused;
       $('pauseLogs').classList.toggle('active', logsPaused);
@@ -1560,11 +2177,22 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
 
     const logEvents = new EventSource('/debug/log-events');
     logEvents.onmessage = (event) => {
-      if (logsPaused) return;
       logEntries.push(JSON.parse(event.data));
       if (logEntries.length > 500) logEntries = logEntries.slice(-500);
-      renderLogs();
+      scheduleLogRender();
     };
+    frame.addEventListener('error', () => {
+      frameStreamActive = false;
+      clearTimeout(frameStreamRestartTimer);
+      frameStreamRestartTimer = setTimeout(startFrameStream, 1000);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        frameStreamActive = false;
+        startFrameStream();
+      }
+    });
+    startFrameStream();
   </script>
 </body>
 </html>`;
@@ -1589,6 +2217,7 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
   const dropRate = Number.isFinite(status.framesReceived) && status.framesReceived > 0
     ? status.framesDropped / status.framesReceived
     : 0;
+  const cameraSettings = status.control?.camera ?? {};
 
   return {
     subtitle: device ? String(device.deviceId ?? "StackChan device") : "No StackChan device connected",
@@ -1613,7 +2242,7 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
     toggleTrackingText: status.enabled ? "Face on" : "Face off",
     toggleTrackingClass: status.enabled ? "active" : "",
     emptyStyle: frame ? "display:none" : "",
-    frameSrc: frame ? `/frame.jpg?frameId=${encodeURIComponent(String(frame.frameId ?? ""))}` : "",
+    frameSrc: `/stream.mjpg?stream=${Date.now()}`,
     frameId: valueOrDash(frame?.frameId),
     frameSize: frame ? `${frame.width} x ${frame.height}` : "-",
     frameAge: age(frame?.timestamp ?? status.lastFrameAt),
@@ -1623,6 +2252,12 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
     lastFace: age(status.lastFaceAt),
     lastCommand: age(status.lastCommandAt),
     targetBox: formatBox(target),
+    expressionEmotion: formatInitialExpressionEmotion(status, target),
+    expressionSmile: formatInitialExpressionSmile(status, target),
+    expressionEyes: formatInitialExpressionEyes(status, target),
+    expressionMouth: formatInitialExpressionMouth(status, target),
+    expressionBlendshapes: formatInitialExpressionBlendshapes(status, target),
+    expressionSynced: age(status.lastExpressionCommandAt),
     deviceStatus: valueOrDash(device?.status),
     deviceMode: valueOrDash(device?.mode),
     deviceSeen: age(device?.lastSeenAt),
@@ -1634,10 +2269,12 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
       ? (power.charging ? "yes" : "no")
       : sensors.battery ? (sensors.battery.charging ? "yes" : "no") : "-",
     batteryAge: age(hardware.updatedAt ?? sensors.battery?.updatedAt),
+    hardwarePowerMonitor: formatInitialPowerMonitor(peripherals.powerMonitor),
     hardwareBacklight: formatInitialPercent(power.backlight),
     hardwareSpeaker: formatInitialPercent(power.speakerVolume),
     hardwareServoPower: boolInitial(power.servoPower),
     hardwareIoExpander: formatInitialAvailability(peripherals.ioExpander),
+    hardwareI2cScan: formatInitialI2cScan(peripherals.i2cScan),
     wifiStatus: valueOrDash(wifi?.status),
     wifiSsid: valueOrDash(wifi?.ssid),
     wifiRssi: Number.isFinite(wifi?.rssi) ? `${wifi.rssi} dBm` : "-",
@@ -1665,18 +2302,36 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
       : valueOrDash(sensors.wakeWord?.text),
     touchAge: age(hardware.updatedAt ?? sensors.touch?.updatedAt),
     hardwareCamera: formatInitialCamera(peripherals.camera),
-    hardwareRgb: peripherals.rgb
-      ? formatInitialAvailability(peripherals.rgb, `available${Number.isFinite(peripherals.rgb.count) ? ` / ${peripherals.rgb.count} LEDs` : ""}`)
-      : "-",
+    hardwareCameraRequested: formatInitialCameraRequested(peripherals.camera, cameraSettings),
+    hardwareCameraActual: formatInitialCameraActual(peripherals.camera, frame),
+    hardwareCameraQuality: formatInitialCameraQuality(peripherals.camera, cameraSettings),
+    hardwareCameraFallback: formatInitialCameraFallback(peripherals.camera),
+    hardwareRgb: formatInitialRgb(peripherals.rgb),
+    rgbColor: initialRgbColor(peripherals.rgb),
+    rgbToggleClass: peripherals.rgb?.enabled ? "active" : "",
+    rgbToggleText: peripherals.rgb?.enabled ? "RGB On" : "RGB Off",
     hardwareRtc: formatInitialRtc(peripherals.rtc),
-    hardwareNfc: formatInitialAvailability(peripherals.nfc),
-    hardwareIr: formatInitialAvailability(peripherals.ir),
-    hardwareProximity: peripherals.proximity?.available ? numberText(peripherals.proximity.value, 2) : formatInitialAvailability(peripherals.proximity),
-    hardwareAmbientLight: peripherals.ambientLight?.available ? `${numberText(peripherals.ambientLight.lux, 1)} lux` : formatInitialAvailability(peripherals.ambientLight),
-    hardwareMagnetometer: peripherals.magnetometer?.available
-      ? [peripherals.magnetometer.x, peripherals.magnetometer.y, peripherals.magnetometer.z].map((value: unknown) => numberText(value, 2)).join(", ")
-      : formatInitialAvailability(peripherals.magnetometer),
+    hardwareNfc: formatInitialProbe(peripherals.nfc),
+    hardwareIr: formatInitialProbe(peripherals.ir),
+    hardwareProximity: formatInitialProbe(
+      peripherals.proximity,
+      peripherals.proximity?.available ? `${numberText(peripherals.proximity.value, 2)}${Number.isFinite(peripherals.proximity.raw) ? ` raw ${peripherals.proximity.raw}` : ""}` : undefined
+    ),
+    hardwareAmbientLight: formatInitialProbe(
+      peripherals.ambientLight,
+      peripherals.ambientLight?.available ? `${numberText(peripherals.ambientLight.lux, 1)} lux${Number.isFinite(peripherals.ambientLight.raw) ? ` raw ${peripherals.ambientLight.raw}` : ""}` : undefined
+    ),
+    hardwareMagnetometer: formatInitialProbe(
+      peripherals.magnetometer,
+      peripherals.magnetometer?.available
+        ? [peripherals.magnetometer.x, peripherals.magnetometer.y, peripherals.magnetometer.z].map((value: unknown) => numberText(value, 2)).join(", ")
+        : undefined
+    ),
     hardwareMic: formatInitialMic(peripherals.mic),
+    hardwareMicLevelWidth: `${initialMicLevelPercent(peripherals.mic)}%`,
+    hardwareMicLevelText: peripherals.mic?.available
+      ? `${initialMicLevelPercent(peripherals.mic)}% calibrated${Number.isFinite(peripherals.mic.dbfs) ? ` / raw ${numberText(peripherals.mic.dbfs, 1)} dBFS` : ""}`
+      : "-",
     hardwareSnapshotAge: age(hardware.updatedAt),
     debugDeviceId: valueOrDash(device?.deviceId),
     debugSessionId: valueOrDash(device?.sessionId),
@@ -1685,6 +2340,13 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
     debugLastEvent: valueOrDash(device?.lastEvent?.kind),
     debugVisionFrames: valueOrDash(status.framesReceived),
     debugVisionDrops: valueOrDash(status.framesDropped),
+    cameraPresetCurrent: valueOrDash(cameraSettings.preset),
+    cameraPresetRequested: formatInitialCameraRequested(peripherals.camera, cameraSettings),
+    cameraPresetActual: formatInitialCameraActual(peripherals.camera, frame),
+    cameraDetectorLatency: formatInitialLatency(status.detectorLatencyMs),
+    cameraDropRate: percent(dropRate),
+    cameraPresetFallback: formatInitialCameraFallback(peripherals.camera),
+    detectorThresholdSummary: formatInitialDetectorThresholds(status.control?.detector),
     rawSnapshot: JSON.stringify(snapshot, null, 2),
 	    ttsEnabledClass: snapshot.completionTts?.enabled ? "ok" : "warn",
 	    ttsEnabledSummary: snapshot.completionTts?.enabled ? "on" : "off",
@@ -1752,15 +2414,60 @@ function formatInitialPercent(value: unknown): string {
   return Number.isFinite(value) ? `${Math.round(Number(value))}%` : "-";
 }
 
+function formatInitialPowerMonitor(sensor: Record<string, any> | undefined): string {
+  if (!sensor) return "-";
+  if (sensor.available === false) return formatInitialProbe(sensor);
+  const parts: string[] = [];
+  if (Number.isFinite(sensor.busVoltage)) parts.push(`${numberText(sensor.busVoltage, 3)} V`);
+  if (Number.isFinite(sensor.current)) parts.push(`${numberText(sensor.current * 1000, 1)} mA`);
+  if (Number.isFinite(sensor.power)) parts.push(`${numberText(sensor.power * 1000, 1)} mW`);
+  if (Number.isFinite(sensor.shuntVoltage)) parts.push(`shunt ${numberText(sensor.shuntVoltage * 1000, 3)} mV`);
+  return formatInitialProbe(sensor, parts.length ? parts.join(" / ") : "available");
+}
+
+function formatInitialI2cAddressList(addresses: unknown): string {
+  if (!Array.isArray(addresses) || addresses.length === 0) return "none";
+  return addresses
+    .filter((address) => Number.isFinite(address))
+    .map((address) => `0x${Number(address).toString(16).padStart(2, "0")}`)
+    .join(" ");
+}
+
+function initialTargetMark(value: unknown): string {
+  return value ? "yes" : "no";
+}
+
+function formatInitialI2cScan(scans: unknown): string {
+  if (!Array.isArray(scans) || scans.length === 0) return "-";
+  const latest = scans[scans.length - 1] as Record<string, any>;
+  const targets = latest?.targets ?? {};
+  const targetText = `targets LTR ${initialTargetMark(targets.ltr553)} / INA ${initialTargetMark(targets.ina226)} / NFC ${initialTargetMark(targets.nfc)}`;
+  const stageText = scans.map((scan) => {
+    const item = scan as Record<string, any>;
+    const reason = item.reason ? ` / ${item.reason}` : "";
+    return `${String(item.stage ?? "scan")}: ${formatInitialI2cAddressList(item.addresses)}${reason}`;
+  }).join(" | ");
+  return `${targetText} / ${stageText}`;
+}
+
 function formatInitialAvailability(sensor: Record<string, any> | undefined, availableText = "available"): string {
   if (!sensor) return "-";
   if (sensor.available === false) {
-    return `Unavailable${sensor.reason ? `: ${sensor.reason}` : ""}`;
+    return `${initialUnavailableLabel(sensor)}${sensor.reason ? `: ${sensor.reason}` : ""}`;
   }
   if (sensor.available === true) {
     return availableText;
   }
   return "-";
+}
+
+function initialUnavailableLabel(sensor: Record<string, any>): string {
+  const reason = typeof sensor.reason === "string" ? sensor.reason : "";
+  if (reason.startsWith("not_detected_i2c")) return "Not detected";
+  if (reason === "driver_not_wired") return "Driver not wired";
+  if (reason === "driver_unavailable") return "Driver unavailable";
+  if (reason === "io_expander_unavailable") return "IO expander unavailable";
+  return "Unavailable";
 }
 
 function formatInitialBle(sensor: Record<string, any> | undefined): string {
@@ -1796,9 +2503,58 @@ function formatInitialHeadTouch(sensor: Record<string, any> | undefined): string
 function formatInitialCamera(sensor: Record<string, any> | undefined): string {
   if (!sensor) return "-";
   if (sensor.available === false) return formatInitialAvailability(sensor);
-  const size = Number.isFinite(sensor.width) && Number.isFinite(sensor.height) ? `${sensor.width} x ${sensor.height}` : "-";
+  const width = firstInitialDefined(sensor.actualWidth, sensor.width);
+  const height = firstInitialDefined(sensor.actualHeight, sensor.height);
+  const size = Number.isFinite(width) && Number.isFinite(height) ? `${width} x ${height}` : "-";
   const fps = Number.isFinite(sensor.fps) ? ` / ${numberText(sensor.fps, 1)} fps` : "";
-  return `${sensor.streaming ? "streaming" : "ready"} ${size}${fps}`;
+  const quality = Number.isFinite(sensor.quality) ? ` / q${sensor.quality}` : "";
+  return `${sensor.streaming ? "streaming" : "ready"} ${size}${fps}${quality}`;
+}
+
+function formatInitialCameraRequested(
+  sensor: Record<string, any> | undefined,
+  settings: Record<string, any> | undefined
+): string {
+  const width = firstInitialDefined(sensor?.requestedWidth, settings?.width);
+  const height = firstInitialDefined(sensor?.requestedHeight, settings?.height);
+  const fps = firstInitialDefined(sensor?.fps, settings?.fps);
+  const quality = firstInitialDefined(sensor?.quality, settings?.quality);
+  const size = Number.isFinite(width) && Number.isFinite(height) ? `${width} x ${height}` : "-";
+  const fpsText = Number.isFinite(fps) ? ` / ${numberText(fps, 1)} fps` : "";
+  const qualityText = Number.isFinite(quality) ? ` / q${quality}` : "";
+  return `${size}${fpsText}${qualityText}`;
+}
+
+function formatInitialCameraActual(
+  sensor: Record<string, any> | undefined,
+  frame: Record<string, any> | undefined
+): string {
+  const width = firstInitialDefined(sensor?.actualWidth, sensor?.width, frame?.width);
+  const height = firstInitialDefined(sensor?.actualHeight, sensor?.height, frame?.height);
+  return Number.isFinite(width) && Number.isFinite(height) ? `${width} x ${height}` : "-";
+}
+
+function formatInitialCameraQuality(
+  sensor: Record<string, any> | undefined,
+  settings: Record<string, any> | undefined
+): string {
+  const quality = firstInitialDefined(sensor?.quality, settings?.quality);
+  return Number.isFinite(quality) ? String(quality) : "-";
+}
+
+function formatInitialCameraFallback(sensor: Record<string, any> | undefined): string {
+  return sensor?.fallbackReason ? String(sensor.fallbackReason) : "-";
+}
+
+function formatInitialLatency(value: unknown): string {
+  return Number.isFinite(value) ? `${Math.round(Number(value))} ms` : "-";
+}
+
+function firstInitialDefined(...values: unknown[]): unknown {
+  for (const value of values) {
+    if (value !== undefined && value !== null) return value;
+  }
+  return null;
 }
 
 function formatInitialRtc(sensor: Record<string, any> | undefined): string {
@@ -1813,7 +2569,47 @@ function formatInitialMic(sensor: Record<string, any> | undefined): string {
   if (!sensor) return "-";
   if (sensor.available === false) return formatInitialAvailability(sensor);
   const channels = Number.isFinite(sensor.channels) ? `${sensor.channels} ch` : "available";
-  return `${channels}${sensor.mode ? ` / ${sensor.mode}` : ""}${sensor.localization ? ` / localization ${sensor.localization}` : ""}`;
+  const level = Number.isFinite(sensor.level) ? ` / calibrated ${Math.round(sensor.level * 100)}%` : "";
+  const dbfs = Number.isFinite(sensor.dbfs) ? ` / raw ${numberText(sensor.dbfs, 1)} dBFS` : "";
+  return `${channels}${sensor.mode ? ` / ${sensor.mode}` : ""}${level}${dbfs}${sensor.localization ? ` / localization ${sensor.localization}` : ""}`;
+}
+
+function formatInitialRgb(sensor: Record<string, any> | undefined): string {
+  if (!sensor) return "-";
+  if (sensor.available === false) return formatInitialAvailability(sensor);
+  const parts = ["available"];
+  if (Number.isFinite(sensor.count)) parts.push(`${sensor.count} LEDs`);
+  if (typeof sensor.enabled === "boolean") parts.push(sensor.enabled ? "on" : "off");
+  if (sensor.color) parts.push(String(sensor.color));
+  if (Number.isFinite(sensor.brightness)) parts.push(`${Math.round(sensor.brightness * 100)}%`);
+  if (sensor.driver) parts.push(String(sensor.driver));
+  return parts.join(" / ");
+}
+
+function formatInitialProbe(sensor: Record<string, any> | undefined, valueText?: string): string {
+  if (!sensor) return "-";
+  const parts: string[] = [];
+  if (sensor.available === true) {
+    parts.push(valueText ?? "available");
+  } else if (sensor.available === false) {
+    parts.push(initialUnavailableLabel(sensor));
+  }
+  if (sensor.driver) parts.push(String(sensor.driver));
+  if (Number.isFinite(sensor.address)) parts.push(`0x${Number(sensor.address).toString(16).padStart(2, "0")}`);
+  if (sensor.status) parts.push(String(sensor.status));
+  if (Number.isFinite(sensor.txPin)) parts.push(`TX GPIO${sensor.txPin}`);
+  if (Number.isFinite(sensor.rxPin)) parts.push(`RX GPIO${sensor.rxPin}`);
+  if (sensor.reason) parts.push(String(sensor.reason));
+  return parts.length ? parts.join(" / ") : formatInitialAvailability(sensor);
+}
+
+function initialMicLevelPercent(sensor: Record<string, any> | undefined): number {
+  return sensor && Number.isFinite(sensor.level) ? Math.max(0, Math.min(100, Math.round(sensor.level * 100))) : 0;
+}
+
+function initialRgbColor(sensor: Record<string, any> | undefined): string {
+  const color = String(sensor?.color ?? "");
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : "#43D5B0";
 }
 
 function formatInitialBattery(sensor: Record<string, any> | undefined): string {
@@ -1841,6 +2637,58 @@ function formatBox(box: Record<string, any> | undefined): string {
 function formatCenter(box: Record<string, any> | undefined): string {
   if (!box) return "-";
   return `${numberText(box.x + box.width / 2, 2)}, ${numberText(box.y + box.height / 2, 2)}`;
+}
+
+function initialExpression(status: Record<string, any>, target: Record<string, any> | undefined): Record<string, any> | undefined {
+  return status.lastExpression ?? target?.expression;
+}
+
+function formatInitialExpressionEmotion(status: Record<string, any>, target: Record<string, any> | undefined): string {
+  const expression = initialExpression(status, target);
+  return valueOrDash(expression?.emotion);
+}
+
+function formatInitialExpressionSmile(status: Record<string, any>, target: Record<string, any> | undefined): string {
+  const expression = initialExpression(status, target);
+  return typeof expression?.smile === "number" ? percent(expression.smile) : "-";
+}
+
+function formatInitialExpressionEyes(status: Record<string, any>, target: Record<string, any> | undefined): string {
+  const expression = initialExpression(status, target);
+  if (!expression) return "-";
+  const left = typeof expression.leftEyeOpen === "number" ? percent(expression.leftEyeOpen) : "-";
+  const right = typeof expression.rightEyeOpen === "number" ? percent(expression.rightEyeOpen) : "-";
+  return `L ${left} / R ${right}`;
+}
+
+function formatInitialExpressionMouth(status: Record<string, any>, target: Record<string, any> | undefined): string {
+  const expression = initialExpression(status, target);
+  if (!expression) return "-";
+  const jaw = typeof expression.jawOpen === "number" ? percent(expression.jawOpen) : "-";
+  const funnel = typeof expression.mouthFunnel === "number" ? percent(expression.mouthFunnel) : "-";
+  return `jaw ${jaw} / funnel ${funnel}`;
+}
+
+function formatInitialExpressionBlendshapes(status: Record<string, any>, target: Record<string, any> | undefined): string {
+  const expression = initialExpression(status, target);
+  if (!expression) return "-";
+  const top = Array.isArray(expression.topBlendshapes)
+    ? expression.topBlendshapes
+    : Object.entries(expression.blendshapes ?? {})
+        .filter(([, score]) => typeof score === "number" && Number.isFinite(score))
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .slice(0, 6)
+        .map(([name, score]) => ({ name, score: Number(score) }));
+  return top.length ? top.map((item) => `${item.name} ${Math.round(item.score * 100)}%`).join(", ") : "-";
+}
+
+function formatInitialDetectorThresholds(detector: Record<string, any> | undefined): string {
+  if (!detector) return "-";
+  return [
+    `D ${percent(detector.minDetectionConfidence)}`,
+    `P ${percent(detector.minPresenceConfidence)}`,
+    `T ${percent(detector.minTrackingConfidence)}`
+  ].join(" / ");
 }
 
 function formatTouchPoint(touch: Record<string, any> | undefined): string {

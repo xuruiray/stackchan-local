@@ -146,7 +146,15 @@ export async function startMcpServer(
                   })
                   .optional(),
                 integralLimit: z.number().min(0).max(2).optional(),
-                outputLimitDeg: z.number().min(1).max(45).optional()
+                outputLimitDeg: z.number().min(1).max(45).optional(),
+                servoRange: z
+                  .object({
+                    yawMin: z.number().min(-1800).max(0).optional(),
+                    yawMax: z.number().min(0).max(1800).optional(),
+                    pitchMin: z.number().min(-900).max(1200).optional(),
+                    pitchMax: z.number().min(-900).max(1200).optional()
+                  })
+                  .optional()
               })
               .optional()
           })
