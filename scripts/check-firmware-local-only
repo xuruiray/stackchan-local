@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+compile_db="firmware/build/compile_commands.json"
+if [[ ! -f "$compile_db" ]]; then
+  echo "Missing $compile_db. Run npm run firmware:build first." >&2
+  exit 1
+fi
+
+legacy_source_regex='firmware/main/apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/|firmware/main/hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\.cpp|firmware/xiaozhi-esp32/main/(application|mcp_server|ota)\.cc|firmware/xiaozhi-esp32/main/protocols/(mqtt_protocol|websocket_protocol)\.cc|firmware/xiaozhi-esp32/main/boards/common/(dual_network_board|esp32_camera|esp_video|ml307_board|nt26_board|press_to_talk_mcp_tool|rndis_board|sleep_timer)\.cc'
+
+if rg -n "$legacy_source_regex" "$compile_db"; then
+  echo "Legacy cloud sources are still present in the firmware compile database." >&2
+  exit 1
+fi
+
+if ! rg -q 'STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1|STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD' "$compile_db"; then
+  echo "STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD is missing from firmware compile flags." >&2
+  exit 1
+fi
+
+if ! rg -q 'firmware/main/local_xiaozhi/application_local_stub\.cc' "$compile_db"; then
+  echo "Local Application stub is missing from the firmware compile database." >&2
+  exit 1
+fi
+
+echo "Firmware local-only compile guard passed."

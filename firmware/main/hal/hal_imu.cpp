@@ -8,10 +8,12 @@
 #include "drivers/bmi270/bmi270.h"
 #include "utils/motion_detector/motion_detector.h"
 #include <mooncake_log.h>
+#include <cmath>
 #include <memory>
 #include <mutex>
 
 static const std::string_view _tag = "HAL-IMU";
+static constexpr float kPi = 3.14159265358979323846f;
 
 static std::unique_ptr<BMI270> _bmi270;
 static std::mutex _imu_snapshot_mutex;
@@ -44,6 +46,20 @@ static void _imu_task(void* param)
                 _imu_snapshot.gyroX     = data.gyro_x;
                 _imu_snapshot.gyroY     = data.gyro_y;
                 _imu_snapshot.gyroZ     = data.gyro_z;
+                _imu_snapshot.magnetometerAvailable = data.mag_available;
+                if (data.mag_available && data.mag_updated) {
+                    _imu_snapshot.magnetometerX = data.mag_x;
+                    _imu_snapshot.magnetometerY = data.mag_y;
+                    _imu_snapshot.magnetometerZ = data.mag_z;
+                    _imu_snapshot.magnetometerRawX = data.mag_raw_x;
+                    _imu_snapshot.magnetometerRawY = data.mag_raw_y;
+                    _imu_snapshot.magnetometerRawZ = data.mag_raw_z;
+                    float heading = std::atan2(data.mag_y, data.mag_x) * 180.0f / kPi;
+                    if (heading < 0.0f) {
+                        heading += 360.0f;
+                    }
+                    _imu_snapshot.magnetometerHeadingDeg = heading;
+                }
                 _imu_snapshot.motion    = motion;
                 _imu_snapshot.updatedAt = GetHAL().millis();
             }

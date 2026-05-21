@@ -12,6 +12,29 @@
 
 static const char* TAG = "BMI270";
 
+namespace {
+constexpr uint8_t kBmm150Address = 0x10;
+constexpr uint8_t kBmm150ChipId = 0x32;
+constexpr float kBmm150MagResolution = 10.0f * 4912.0f / 32760.0f;
+
+constexpr uint8_t CHIP_ID_ADDR = 0x00;
+constexpr uint8_t STATUS_ADDR = 0x03;
+constexpr uint8_t AUX_X_LSB_ADDR = 0x04;
+constexpr uint8_t AUX_DEV_ID_ADDR = 0x4B;
+constexpr uint8_t AUX_IF_CONF_ADDR = 0x4C;
+constexpr uint8_t AUX_RD_ADDR = 0x4D;
+constexpr uint8_t AUX_WR_ADDR = 0x4E;
+constexpr uint8_t AUX_WR_DATA_ADDR = 0x4F;
+constexpr uint8_t IF_CONF_ADDR = 0x6B;
+constexpr uint8_t PWR_CONF_ADDR = 0x7C;
+constexpr uint8_t PWR_CTRL_ADDR = 0x7D;
+
+constexpr uint8_t BMM150_CHIP_ID = 0x40;
+constexpr uint8_t BMM150_DATA_X_LSB = 0x42;
+constexpr uint8_t BMM150_POWER_CONTROL = 0x4B;
+constexpr uint8_t BMM150_OP_MODE = 0x4C;
+}  // namespace
+
 BMI270::BMI270(i2c_master_bus_handle_t i2c_bus_handle, uint8_t addr) : _addr(addr), _initialized(false)
 {
     i2c_device_config_t dev_cfg = {
@@ -58,6 +81,110 @@ BMI2_INTF_RETURN_TYPE BMI270::bmi2_i2c_write(uint8_t reg_addr, const uint8_t* re
     free(buf);
 
     return (err == ESP_OK) ? BMI2_OK : BMI2_E_COM_FAIL;
+}
+
+bool BMI270::readRegister(uint8_t reg_addr, uint8_t* reg_data, uint32_t len) const
+{
+    return bmi2_i2c_read(reg_addr, reg_data, len, const_cast<i2c_master_dev_handle_t*>(&_i2c_dev)) == BMI2_OK;
+}
+
+uint8_t BMI270::readRegister8(uint8_t reg_addr) const
+{
+    uint8_t value = 0;
+    readRegister(reg_addr, &value, 1);
+    return value;
+}
+
+bool BMI270::writeRegister8(uint8_t reg_addr, uint8_t value)
+{
+    return bmi2_i2c_write(reg_addr, &value, 1, &_i2c_dev) == BMI2_OK;
+}
+
+bool BMI270::waitAuxReady() const
+{
+    for (int retry = 0; retry < 10; ++retry) {
+        if ((readRegister8(STATUS_ADDR) & 0x04) == 0) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return false;
+}
+
+bool BMI270::auxSetupMode(uint8_t i2c_addr)
+{
+    return writeRegister8(IF_CONF_ADDR, 0x20) &&
+           writeRegister8(PWR_CONF_ADDR, 0x00) &&
+           writeRegister8(PWR_CTRL_ADDR, 0x0E) &&
+           writeRegister8(AUX_IF_CONF_ADDR, 0x80) &&
+           writeRegister8(AUX_DEV_ID_ADDR, i2c_addr << 1);
+}
+
+bool BMI270::auxWriteRegister8(uint8_t reg_addr, uint8_t value)
+{
+    if (!writeRegister8(AUX_WR_DATA_ADDR, value) || !writeRegister8(AUX_WR_ADDR, reg_addr)) {
+        return false;
+    }
+    return waitAuxReady();
+}
+
+bool BMI270::auxReadRegister8(uint8_t reg_addr, uint8_t& value)
+{
+    if (!writeRegister8(AUX_IF_CONF_ADDR, 0x80) || !writeRegister8(AUX_RD_ADDR, reg_addr) || !waitAuxReady()) {
+        return false;
+    }
+    value = readRegister8(AUX_X_LSB_ADDR);
+    return true;
+}
+
+bool BMI270::setupBmm150Aux()
+{
+    if (!auxSetupMode(kBmm150Address)) {
+        return false;
+    }
+
+    auxWriteRegister8(BMM150_POWER_CONTROL, 0x83);
+    vTaskDelay(pdMS_TO_TICKS(4));
+
+    uint8_t chip_id = 0;
+    auxReadRegister8(BMM150_CHIP_ID, chip_id);
+    if (!auxReadRegister8(BMM150_CHIP_ID, chip_id) || chip_id != kBmm150ChipId) {
+        ESP_LOGW(TAG, "BMM150 not detected through BMI270 AUX: 0x%02x", chip_id);
+        return false;
+    }
+
+    if (!auxWriteRegister8(BMM150_OP_MODE, 0x38)) {
+        return false;
+    }
+    if (!writeRegister8(AUX_IF_CONF_ADDR, 0x4F) ||
+        !writeRegister8(AUX_RD_ADDR, BMM150_DATA_X_LSB) ||
+        !writeRegister8(PWR_CTRL_ADDR, 0x0F)) {
+        return false;
+    }
+
+    ESP_LOGI(TAG, "BMM150 init ok through BMI270 AUX");
+    return true;
+}
+
+void BMI270::updateBmm150()
+{
+    _data.mag_updated = false;
+    if (!_data.mag_available) {
+        return;
+    }
+
+    int16_t buffer[10] = {};
+    if (!readRegister(AUX_X_LSB_ADDR, reinterpret_cast<uint8_t*>(buffer), sizeof(buffer))) {
+        return;
+    }
+
+    _data.mag_raw_x = static_cast<int16_t>(buffer[0] >> 2);
+    _data.mag_raw_y = static_cast<int16_t>(buffer[1] >> 2);
+    _data.mag_raw_z = static_cast<int16_t>(buffer[2] & 0xFFFE);
+    _data.mag_x = static_cast<float>(_data.mag_raw_x) * kBmm150MagResolution;
+    _data.mag_y = static_cast<float>(_data.mag_raw_y) * kBmm150MagResolution;
+    _data.mag_z = static_cast<float>(_data.mag_raw_z) * kBmm150MagResolution;
+    _data.mag_updated = true;
 }
 
 #define NOP() asm volatile("nop")
@@ -129,6 +256,9 @@ bool BMI270::begin()
         return false;
     }
 
+    _data.mag_available = setupBmm150Aux();
+    _data.mag_updated = false;
+
     _initialized = true;
     return true;
 }
@@ -152,6 +282,8 @@ bool BMI270::update()
         _data.gyro_x = lsb_to_dps(sens_data.gyr.x, 2000.0f, 16);
         _data.gyro_y = lsb_to_dps(sens_data.gyr.y, 2000.0f, 16);
         _data.gyro_z = lsb_to_dps(sens_data.gyr.z, 2000.0f, 16);
+
+        updateBmm150();
 
         return true;
     }

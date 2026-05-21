@@ -6,7 +6,7 @@ The firmware connects to:
 ws://<mac-ip>:8787/stackchan/local
 ```
 
-Messages are JSON envelopes unless explicitly noted. Large image payloads are kept out of `/status` and `/debug/snapshot`; use `/frame.jpg` for the latest preview frame.
+Messages are JSON envelopes unless explicitly noted. Large image payloads are kept out of `/status` and `/debug/snapshot`; use `/frame.jpg` for the latest preview frame or `/stream.mjpg` for an external MJPEG viewer.
 
 ## Pairing
 
@@ -17,20 +17,12 @@ The first message from firmware must be `handshake`:
   "type": "handshake",
   "deviceId": "stackchan-001",
   "firmwareVersion": "0.1.0-local",
-  "capabilities": {
-    "avatar": true,
-    "motion": true,
-    "rgb": true,
-    "camera": true,
-    "audio": true,
-    "imu": true,
-    "touch": true,
-    "sensorSnapshot": true
-  },
+  "capabilities": ["audio", "camera", "motion", "face", "rgb", "touch", "imu", "battery", "wifi", "ble", "rtc", "servos", "mic", "display", "bleProvisioning"],
   "audioParams": {
-    "codec": "opus",
+    "format": "opus",
     "sampleRate": 16000,
-    "channels": 1
+    "channels": 1,
+    "frameDurationMs": 30
   },
   "pairingToken": "change-me"
 }
@@ -47,7 +39,7 @@ The daemon validates the token and replies with `daemon.hello`, including a sess
 - `moveHead`: manual yaw/pitch movement.
 - `playAnimation`: run a named animation or dance routine.
 - `captureImage`: request one camera snapshot.
-- `cameraStream`: start or stop low-FPS JPEG camera streaming.
+- `cameraStream`: start or stop low-FPS JPEG camera streaming, optionally including `width`, `height`, `fps`, and JPEG `quality`.
 - `trackFace`: send a normalized face target and PID settings.
 - `setMode`: set companion mode such as `idle`, `thinking`, or `speaking`.
 - `playAudio`: stream pre-synthesized PCM/WAV chunks to the hardware speaker.
@@ -64,7 +56,7 @@ Every command has a `commandId`. Firmware should answer with an ACK containing t
 - `imu`: accelerometer, gyro, derived attitude, and filter metadata.
 - `touch`: head and screen touch events.
 - `wakeWord`: wake word detection state.
-- `cameraFrame`: base64 JPEG frame for local face detection.
+- `cameraFrame`: base64 JPEG frame for local MediaPipe face detection.
 - `sensorSnapshot`: one-second hardware summary for the WebUI.
 - `state`: current firmware mode and motion state.
 
@@ -77,15 +69,17 @@ Every command has a `commandId`. Firmware should answer with an ACK containing t
 - Interaction: touch, wake word, BLE, Wi-Fi.
 - Peripherals: camera, RGB, RTC, NFC, IR, proximity/ALS, magnetometer, microphone audio link.
 
-If a peripheral is present but not wired into firmware yet, report it as `status: "not_connected"` or `status: "unsupported"` rather than inventing values.
+If a peripheral is present but not wired into firmware yet, report it as `available: false` with a `reason` such as `driver_not_wired` or `unsupported` rather than inventing values.
+
+Camera telemetry should include requested and actual stream settings when available: `requestedWidth`, `requestedHeight`, `actualWidth`, `actualHeight`, `fps`, `quality`, and `fallbackReason`.
 
 ## Camera Face Tracking
 
 Face tracking uses:
 
-- `robot.command.cameraStream`: daemon asks firmware to stream low-FPS JPEG frames.
-- `robot.event.cameraFrame`: firmware sends base64 JPEG frames for OpenCV detection.
-- `robot.command.trackFace`: daemon sends normalized target data and PID settings.
+- `robot.command.cameraStream`: daemon asks firmware to stream low-FPS JPEG frames using the selected preset.
+- `robot.event.cameraFrame`: firmware sends base64 JPEG frames for local MediaPipe Tasks Face Landmarker detection.
+- `robot.command.trackFace`: daemon sends normalized target data, landmarks, pose, optional transform matrix/blendshapes, and PID settings.
 
 Firmware applies `trackFace` from the Local Companion main loop, not directly inside the WebSocket callback.
 

@@ -181,6 +181,21 @@ export class DeviceRegistry {
       .sort((a, b) => b.lastSeenAt.getTime() - a.lastSeenAt.getTime())[0];
   }
 
+  reconnectActiveDevice(reason: string): boolean {
+    const session = this.getActiveSession();
+    if (!session) {
+      return false;
+    }
+
+    this.logger.warn("requesting device reconnect", {
+      type: "device",
+      deviceId: session.deviceId,
+      reason
+    });
+    session.ws.close(4001, reason);
+    return true;
+  }
+
   sendToActiveDevice(message: RobotCommandMessage): CommandDispatchResult {
     const session = this.getActiveSession();
     if (!session) {

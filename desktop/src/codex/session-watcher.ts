@@ -7,6 +7,8 @@ import type { Logger } from "../config.js";
 import type { RobotController } from "../robot/controller.js";
 import { CodexSessionStateMachine, type CodexLogEntry, type CodexStateChange } from "./session-state.js";
 
+const MODE_RETRY_MS = 5000;
+
 export interface CodexSessionWatcherOptions {
   sessionsRoot: string;
   pollMs: number;
@@ -37,6 +39,9 @@ export class CodexSessionWatcher {
   private retryTimer?: NodeJS.Timeout;
   private lastLatestScanAt = 0;
   private lastSentMode?: RobotMode;
+  private lastAttemptedMode?: RobotMode;
+  private lastAttemptAt = 0;
+  private dispatchInFlight = false;
   private pendingChange?: CodexStateChange;
   private currentTaskSummary?: string;
   private running = false;
@@ -213,7 +218,8 @@ export class CodexSessionWatcher {
     }
 
     if (this.lastSentMode !== change.mode) {
-      void this.dispatchModeChange(change);
+      this.pendingChange = change;
+      this.dispatchPendingModeChange();
     }
 
     if (change.ttlMs) {
@@ -226,22 +232,50 @@ export class CodexSessionWatcher {
     }
   }
 
-  private scheduleRetry(): void {
+  private dispatchPendingModeChange(): void {
+    if (this.dispatchInFlight || !this.pendingChange) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.lastAttemptAt;
+    if (this.lastAttemptedMode === this.pendingChange.mode && elapsed < MODE_RETRY_MS) {
+      this.scheduleRetry(MODE_RETRY_MS - elapsed);
+      return;
+    }
+
+    void this.dispatchModeChange(this.pendingChange);
+  }
+
+  private scheduleRetry(delayMs = MODE_RETRY_MS): void {
     if (this.retryTimer || !this.pendingChange) {
       return;
     }
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      const change = this.pendingChange;
-      if (change) {
-        this.applyChange(change, { announceCompletion: false });
-      }
-    }, 1000);
+      this.dispatchPendingModeChange();
+    }, delayMs);
     this.retryTimer.unref?.();
   }
 
   private async dispatchModeChange(change: CodexStateChange): Promise<void> {
-    const result = await this.controller.setMode(change.mode, change.reason);
+    this.dispatchInFlight = true;
+    this.lastAttemptedMode = change.mode;
+    this.lastAttemptAt = Date.now();
+    let result;
+    try {
+      result = await Promise.resolve(this.controller.setMode(change.mode, change.reason));
+    } catch (error) {
+      this.logger.warn("codex state dispatch failed", {
+        mode: change.mode,
+        reason: change.reason,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.pendingChange = change;
+      this.scheduleRetry();
+      return;
+    } finally {
+      this.dispatchInFlight = false;
+    }
     const accepted = result.sent && (!result.ack || result.ack.status === "accepted");
     this.logger.info("codex state dispatched", {
       mode: change.mode,

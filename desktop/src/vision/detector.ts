@@ -10,6 +10,7 @@ export interface CameraFrameInput {
   width: number;
   height: number;
   dataBase64: string;
+  timestampMs?: number;
 }
 
 export interface FaceDetectionResult {
@@ -19,6 +20,7 @@ export interface FaceDetectionResult {
 
 export interface FaceDetector {
   detect(frame: CameraFrameInput): Promise<FaceDetectionResult>;
+  updateEnv?(env: NodeJS.ProcessEnv): void;
   close(): void;
 }
 
@@ -28,17 +30,27 @@ interface PendingRequest {
   timeout: NodeJS.Timeout;
 }
 
-export class OpenCvSidecarFaceDetector implements FaceDetector {
+export interface PythonSidecarFaceDetectorOptions {
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}
+
+export class PythonSidecarFaceDetector implements FaceDetector {
   private child?: ChildProcessWithoutNullStreams;
   private stdout?: Interface;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly timeoutMs: number;
+  private env: NodeJS.ProcessEnv;
 
   constructor(
     private readonly pythonCommand: string,
     private readonly scriptPath: string,
     private readonly logger: Logger,
-    private readonly timeoutMs = 2000
-  ) {}
+    private readonly options: PythonSidecarFaceDetectorOptions = {}
+  ) {
+    this.timeoutMs = options.timeoutMs ?? 2000;
+    this.env = { ...(options.env ?? {}) };
+  }
 
   async detect(frame: CameraFrameInput): Promise<FaceDetectionResult> {
     this.ensureStarted();
@@ -77,13 +89,22 @@ export class OpenCvSidecarFaceDetector implements FaceDetector {
     this.stdout = undefined;
   }
 
+  updateEnv(env: NodeJS.ProcessEnv): void {
+    this.env = { ...this.env, ...env };
+    this.close();
+  }
+
   private ensureStarted(): void {
     if (this.child && !this.child.killed) {
       return;
     }
 
     const child = spawn(this.pythonCommand, [this.scriptPath], {
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        ...this.env
+      }
     });
     this.child = child;
     this.stdout = createInterface({ input: child.stdout });
@@ -144,3 +165,5 @@ export class OpenCvSidecarFaceDetector implements FaceDetector {
     this.pending.clear();
   }
 }
+
+export { PythonSidecarFaceDetector as OpenCvSidecarFaceDetector };

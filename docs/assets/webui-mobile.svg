@@ -11,7 +11,7 @@
   <rect width="390" height="844" fill="#0b1014"/>
   <rect x="0" y="0" width="390" height="76" fill="#11191d"/>
   <text x="18" y="30" class="title">StackChan Local</text>
-  <text x="18" y="54" class="small">Online  Face 4fps  Battery 82%  Wi-Fi -61</text>
+  <text x="18" y="54" class="small">Online  Face 10fps  Battery 82%  Wi-Fi -61</text>
 
   <g transform="translate(14 92)">
     <rect class="panel" x="0" y="0" width="362" height="280" rx="10"/>

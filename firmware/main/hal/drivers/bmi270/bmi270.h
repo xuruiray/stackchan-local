@@ -17,6 +17,14 @@ struct BMI270_Data {
     float gyro_x;
     float gyro_y;
     float gyro_z;
+    bool mag_available;
+    bool mag_updated;
+    float mag_x;
+    float mag_y;
+    float mag_z;
+    int16_t mag_raw_x;
+    int16_t mag_raw_y;
+    int16_t mag_raw_z;
 };
 
 class BMI270 {
@@ -57,6 +65,16 @@ private:
     static BMI2_INTF_RETURN_TYPE bmi2_i2c_write(uint8_t reg_addr, const uint8_t* reg_data, uint32_t len,
                                                 void* intf_ptr);
     static void bmi2_delay_us(uint32_t period, void* intf_ptr);
+
+    bool readRegister(uint8_t reg_addr, uint8_t* reg_data, uint32_t len) const;
+    uint8_t readRegister8(uint8_t reg_addr) const;
+    bool writeRegister8(uint8_t reg_addr, uint8_t value);
+    bool waitAuxReady() const;
+    bool auxSetupMode(uint8_t i2c_addr);
+    bool auxWriteRegister8(uint8_t reg_addr, uint8_t value);
+    bool auxReadRegister8(uint8_t reg_addr, uint8_t& value);
+    bool setupBmm150Aux();
+    void updateBmm150();
 
     float lsb_to_mps2(int16_t val, float g_range, uint8_t bit_width);
     float lsb_to_dps(int16_t val, float dps, uint8_t bit_width);

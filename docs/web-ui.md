@@ -23,11 +23,11 @@ The SVG examples below are static documentation assets that show the intended de
 ## Layout
 
 - Sticky status bar: device online, face tracking, FPS, battery, Wi-Fi, IMU age, last error.
-- Video area: latest camera frame, face boxes, target crosshair, confidence, frame timestamp.
+- Video area: latest camera frame, face boxes, landmarks, target crosshair, pose, confidence, frame timestamp.
 - Tabs: `Overview`, `Hardware`, `Tuning`, `Debug`, and `Logs`.
 - Hardware tab: power, IO, servos, IMU, interaction state, and peripheral placeholders.
-- Tuning tab: face-tracking PID, presets, TTS volume, completion TTS toggle, completion light toggle.
-- Debug tab: device id, firmware version, session id, capabilities, counters, last event, and sanitized snapshot.
+- Tuning tab: camera presets, face-tracking PID, tracking presets, TTS volume, completion TTS toggle, completion light toggle.
+- Debug tab: device id, firmware version, session id, capabilities, camera preset, detector latency, counters, last event, and sanitized snapshot.
 - Logs tab: daemon ring-buffer logs with level/type/search filters.
 
 The UI updates fields in place from SSE events and avoids rebuilding the full page, which prevents the flashing behavior seen during early prototypes.
@@ -35,12 +35,13 @@ The UI updates fields in place from SSE events and avoids rebuilding the full pa
 ## HTTP Endpoints
 
 - `GET /status`: lightweight daemon, device, tracking, and sensor status.
-- `GET /frame.jpg`: latest camera preview frame.
+- `GET /stream.mjpg`: MJPEG preview stream for external viewers and debugging.
+- `GET /frame.jpg`: latest camera preview frame. The built-in WebUI uses this as a low-latency frame pump to avoid WebView MJPEG buffering.
 - `GET /events`: SSE stream for status and frame metadata updates.
 - `GET /debug/snapshot`: full sanitized state snapshot without image/base64 payloads.
 - `GET /debug/logs?limit=200&level=info&type=device|vision|command|system`: recent structured logs.
 - `GET /debug/log-events`: SSE stream for log updates.
-- `POST /api/tracking`: update face-tracking enable state or PID settings.
+- `POST /api/tracking`: update face-tracking enable state, camera preset, or PID settings.
 - `GET /api/completion-tts`: current Codex completion notification settings.
 - `POST /api/completion-tts`: update completion TTS, completion light, or volume.
 - `POST /api/completion-tts-test`: trigger one local completion notification test.

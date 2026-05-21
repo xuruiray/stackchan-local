@@ -22,20 +22,26 @@ Optional local face tracking:
 
 ```bash
 npm run vision:install
+npm run vision:model
 STACKCHAN_FACE_TRACKING=1 npm run dev
 ```
+
+The model download is cached at `desktop/models/face_landmarker.task` by default and is intentionally not committed.
 
 ## Firmware
 
 Install ESP-IDF v5.5.x, then fetch firmware dependencies and build:
 
 ```bash
+source ~/esp/esp-idf-v5.5.4/export.sh
+python3 firmware/fetch_repos.py
+npm run firmware:build
+npm run firmware:check-local-only
 cd firmware
-python3 ./fetch_repos.py
-idf.py set-target esp32s3
-idf.py build
-idf.py flash monitor
+idf.py -p /dev/cu.usbmodem21301 flash
 ```
+
+`npm run firmware:check-local-only` verifies that copied legacy cloud sources are not present in the firmware compile database.
 
 The Local Companion firmware reads the desktop endpoint from the NVS namespace `stackchan_local`:
 
@@ -43,7 +49,7 @@ The Local Companion firmware reads the desktop endpoint from the NVS namespace `
 - `token`: pairing token; must match `STACKCHAN_PAIRING_TOKEN`
 - `mdns`: if true, discover `_stackchan-local._tcp` before using `url`
 
-If the device has no saved Wi-Fi credentials, it starts a hotspot named `Xiaozhi-XXXX`. Connect to that hotspot and open `http://192.168.4.1` to configure Wi-Fi.
+If the device has no saved Wi-Fi credentials, it starts a hotspot named `StackChan-XXXX`. Connect to that hotspot and open `http://192.168.4.1` to configure Wi-Fi.
 
 ## Codex MCP
 

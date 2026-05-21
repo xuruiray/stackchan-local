@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.task binary
+
+firmware/managed_components/** linguist-vendored=true
+firmware/components/** linguist-vendored=true
+node_modules/** linguist-vendored=true

@@ -16,15 +16,25 @@ file(GLOB_RECURSE STACK_CHAN_SOURCES
     "stackchan/*.cpp"
 )
 
-# Local Companion boots directly into app_local_companion. Keep shared widgets and
-# hardware helpers, but exclude the copied launcher/cloud app surfaces.
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/.*")
-list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX ".*hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\\.cpp$")
+set(STACKCHAN_LEGACY_CLOUD_APP_REGEX
+    ".*apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/.*")
+set(STACKCHAN_LEGACY_CLOUD_HAL_REGEX
+    ".*hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\\.cpp$")
+
+if(CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD)
+    message(WARNING "StackChan Local: legacy cloud StackChan app/hal sources are included")
+else()
+    message(STATUS "StackChan Local: excluding copied legacy cloud StackChan app/hal sources")
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "${STACKCHAN_LEGACY_CLOUD_APP_REGEX}")
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "${STACKCHAN_LEGACY_CLOUD_HAL_REGEX}")
+endif()
 
 set(STACK_CHAN_INCLUDE_DIRS 
     "."
 )
 list(APPEND STACK_CHAN_SOURCES main.cpp)
+list(APPEND STACK_CHAN_SOURCES hal/hal_peripherals.cpp)
+list(REMOVE_DUPLICATES STACK_CHAN_SOURCES)
 
 # Define source files
 set(SOURCES "audio/audio_codec.cc"
@@ -295,6 +305,29 @@ if(CONFIG_IDF_TARGET_ESP32S3)
     list(APPEND SOURCES "${XIAOZHI_MAIN_DIR}/boards/common/esp32_camera.cc")
 endif()
 
+if(CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD)
+    message(WARNING "StackChan Local: legacy Xiaozhi cloud runtime sources are included")
+else()
+    message(STATUS "StackChan Local: excluding legacy Xiaozhi cloud runtime sources")
+    set(XIAOZHI_LEGACY_CLOUD_SOURCES
+        "${XIAOZHI_MAIN_DIR}/application.cc"
+        "${XIAOZHI_MAIN_DIR}/mcp_server.cc"
+        "${XIAOZHI_MAIN_DIR}/ota.cc"
+        "${XIAOZHI_MAIN_DIR}/protocols/mqtt_protocol.cc"
+        "${XIAOZHI_MAIN_DIR}/protocols/websocket_protocol.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/dual_network_board.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/esp32_camera.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/esp_video.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/ml307_board.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/nt26_board.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/press_to_talk_mcp_tool.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/rndis_board.cc"
+        "${XIAOZHI_MAIN_DIR}/boards/common/sleep_timer.cc"
+    )
+    list(REMOVE_ITEM SOURCES ${XIAOZHI_LEGACY_CLOUD_SOURCES})
+    list(APPEND SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/local_xiaozhi/application_local_stub.cc")
+endif()
+
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
@@ -334,6 +367,10 @@ target_compile_definitions(${COMPONENT_LIB}
                     PRIVATE BOARD_TYPE=\"${BOARD_TYPE}\" BOARD_NAME=\"${BOARD_NAME}\"
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
                     )
+
+if(NOT CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1)
+endif()
 
 # Add generation rules
 add_custom_command(

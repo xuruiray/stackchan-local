@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import type { Logger, LogLevel } from "../config.js";
 import type { DebugLogBuffer, DebugLogType } from "../debug/log-buffer.js";
 import type { DeviceRegistry } from "../device/registry.js";
+import type { RobotController } from "../robot/controller.js";
 import type {
   VisionPreviewSnapshot,
   VisionTrackingService,
@@ -17,6 +18,9 @@ import { renderPreviewHtml } from "./ui.js";
 const require = createRequire(import.meta.url);
 const threeBuildDir = dirname(require.resolve("three"));
 const threeVendorFiles = new Set(["three.module.js", "three.core.js"]);
+const VISION_SNAPSHOT_BROADCAST_MIN_MS = 200;
+const DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 500;
+const FRAME_STREAM_MAX_BUFFER_BYTES = 512 * 1024;
 
 export interface PreviewServerOptions {
   host: string;
@@ -26,6 +30,7 @@ export interface PreviewServerOptions {
 export interface PreviewServerExtras {
   registry?: DeviceRegistry;
   debugLog?: DebugLogBuffer;
+  robotController?: Pick<RobotController, "setRgb">;
   completionAnnouncer?: {
     announce(completion: { id: string; reason: string; taskSummary?: string }): void;
     isEnabled(): boolean;
@@ -41,12 +46,22 @@ type PublicVisionSnapshot = Omit<VisionPreviewSnapshot, "frame"> & {
   frame?: Omit<NonNullable<VisionPreviewSnapshot["frame"]>, "dataBase64">;
 };
 
+interface FrameStreamClientState {
+  lastFrameId?: string;
+  draining: boolean;
+}
+
 export class PreviewServer {
   private server?: Server;
+  private loopbackIpv6Server?: Server;
   private unsubscribeVision?: () => void;
+  private unsubscribeDevice?: () => void;
   private unsubscribeLog?: () => void;
   private readonly snapshotClients = new Set<ServerResponse>();
   private readonly logClients = new Set<ServerResponse>();
+  private readonly frameStreamClients = new Map<ServerResponse, FrameStreamClientState>();
+  private snapshotBroadcastTimer?: NodeJS.Timeout;
+  private lastSnapshotBroadcastAt = 0;
 
   constructor(
     private readonly options: PreviewServerOptions,
@@ -61,9 +76,18 @@ export class PreviewServer {
     }
 
     this.server = createServer((request, response) => void this.handleRequest(request, response));
-    this.unsubscribeVision = this.visionTracking.onPreviewUpdate(() => this.broadcastSnapshot());
+    this.unsubscribeVision = this.visionTracking.onPreviewUpdate(() => {
+      this.broadcastFrameStream();
+      this.scheduleSnapshotBroadcast(VISION_SNAPSHOT_BROADCAST_MIN_MS);
+    });
+    this.unsubscribeDevice = this.extras.registry?.onEvent((message) => {
+      if (message.event.kind !== "cameraFrame") {
+        this.scheduleSnapshotBroadcast(DEVICE_SNAPSHOT_BROADCAST_MIN_MS);
+      }
+    });
     this.unsubscribeLog = this.extras.debugLog?.onEntry((entry) => this.broadcastLog(entry));
-    await new Promise<void>((resolve) => this.server?.listen(this.options.port, this.options.host, resolve));
+    await listenServer(this.server, this.options.port, this.options.host);
+    await this.startLoopbackIpv6Alias();
     this.logger.info("preview server listening", {
       type: "system",
       host: this.options.host,
@@ -75,9 +99,15 @@ export class PreviewServer {
 
   async stop(): Promise<void> {
     this.unsubscribeVision?.();
+    this.unsubscribeDevice?.();
     this.unsubscribeLog?.();
     this.unsubscribeVision = undefined;
+    this.unsubscribeDevice = undefined;
     this.unsubscribeLog = undefined;
+    if (this.snapshotBroadcastTimer) {
+      clearTimeout(this.snapshotBroadcastTimer);
+      this.snapshotBroadcastTimer = undefined;
+    }
 
     for (const client of this.snapshotClients) {
       client.end();
@@ -87,20 +117,14 @@ export class PreviewServer {
       client.end();
     }
     this.logClients.clear();
+    for (const client of this.frameStreamClients.keys()) {
+      client.end();
+    }
+    this.frameStreamClients.clear();
 
-    await new Promise<void>((resolve, reject) => {
-      if (!this.server) {
-        resolve();
-        return;
-      }
-      this.server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
+    await closeServer(this.loopbackIpv6Server);
+    await closeServer(this.server);
+    this.loopbackIpv6Server = undefined;
     this.server = undefined;
   }
 
@@ -110,6 +134,32 @@ export class PreviewServer {
       return this.options.port;
     }
     return address.port;
+  }
+
+  private async startLoopbackIpv6Alias(): Promise<void> {
+    if (!usesIpv4Loopback(this.options.host)) {
+      return;
+    }
+
+    this.loopbackIpv6Server = createServer((request, response) => void this.handleRequest(request, response));
+    try {
+      await listenServer(this.loopbackIpv6Server, this.port(), "::1");
+      this.logger.info("preview server IPv6 loopback alias listening", {
+        type: "system",
+        host: "::1",
+        port: this.port(),
+        url: `http://[::1]:${this.port()}/`
+      });
+    } catch (error) {
+      this.logger.warn("preview IPv6 loopback alias unavailable", {
+        type: "system",
+        host: "::1",
+        port: this.port(),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await closeServer(this.loopbackIpv6Server);
+      this.loopbackIpv6Server = undefined;
+    }
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -141,6 +191,45 @@ export class PreviewServer {
         return;
       }
 
+      if (request.method === "POST" && url.pathname === "/api/rgb") {
+        if (!this.extras.robotController) {
+          this.sendJson(response, { ok: false, error: "robot controller unavailable" });
+          return;
+        }
+        const body = await readBody(request);
+        const parsed = body ? (JSON.parse(body) as { enabled?: unknown; color?: unknown; brightness?: unknown }) : {};
+        const enabled = typeof parsed.enabled === "boolean" ? parsed.enabled : undefined;
+        if (typeof enabled !== "boolean") {
+          this.sendJson(response, { ok: false, error: "missing enabled" });
+          return;
+        }
+        const color = sanitizeRgbColor(parsed.color);
+        if (enabled && !color) {
+          this.sendJson(response, { ok: false, error: "invalid color" });
+          return;
+        }
+        const brightness = sanitizeRgbBrightness(parsed.brightness);
+        if (parsed.brightness !== undefined && brightness === undefined) {
+          this.sendJson(response, { ok: false, error: "invalid brightness" });
+          return;
+        }
+        const result = await this.extras.robotController.setRgb({
+          enabled,
+          color: color ?? "#000000",
+          brightness
+        });
+        this.sendJson(response, {
+          ok: result.sent && (!result.ack || result.ack.status === "accepted"),
+          sent: result.sent,
+          reason: result.reason,
+          ack: result.ack,
+          color: color ?? "#000000",
+          enabled,
+          brightness
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/debug/logs") {
         this.sendJson(response, {
           logs: this.extras.debugLog?.list(parseLogFilter(url)) ?? []
@@ -155,6 +244,11 @@ export class PreviewServer {
 
       if (request.method === "GET" && url.pathname === "/frame.jpg") {
         this.sendFrame(response);
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/stream.mjpg") {
+        this.handleFrameStream(response);
         return;
       }
 
@@ -305,9 +399,27 @@ export class PreviewServer {
 
     response.writeHead(200, {
       "content-type": frame.mimeType,
-      "cache-control": "no-store"
+      "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      pragma: "no-cache",
+      expires: "0",
+      "x-frame-id": frame.frameId,
+      "x-frame-timestamp": frame.timestamp
     });
     response.end(Buffer.from(frame.dataBase64, "base64"));
+  }
+
+  private handleFrameStream(response: ServerResponse): void {
+    response.writeHead(200, {
+      "content-type": "multipart/x-mixed-replace; boundary=stackchanframe",
+      "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      pragma: "no-cache",
+      expires: "0",
+      "x-accel-buffering": "no",
+      connection: "keep-alive"
+    });
+    this.frameStreamClients.set(response, { draining: false });
+    this.writeFrameStream(response);
+    response.on("close", () => this.frameStreamClients.delete(response));
   }
 
   private async sendVendorModule(response: ServerResponse, method: string, pathname: string): Promise<void> {
@@ -371,6 +483,70 @@ export class PreviewServer {
     for (const client of this.snapshotClients) {
       client.write(payload);
     }
+    this.lastSnapshotBroadcastAt = Date.now();
+  }
+
+  private broadcastFrameStream(): void {
+    if (this.frameStreamClients.size === 0) {
+      return;
+    }
+    const frame = this.visionTracking.previewSnapshot().frame;
+    if (!frame) {
+      return;
+    }
+    for (const client of this.frameStreamClients.keys()) {
+      this.writeFrameStream(client, frame);
+    }
+  }
+
+  private writeFrameStream(
+    response: ServerResponse,
+    frame = this.visionTracking.previewSnapshot().frame
+  ): void {
+    if (!frame || response.writableEnded || response.destroyed) {
+      return;
+    }
+    const state = this.frameStreamClients.get(response);
+    if (!state) {
+      return;
+    }
+    if (state.lastFrameId === frame.frameId) {
+      return;
+    }
+    if (state.draining || response.writableLength > FRAME_STREAM_MAX_BUFFER_BYTES) {
+      return;
+    }
+
+    const jpeg = Buffer.from(frame.dataBase64, "base64");
+    const ok =
+      response.write(
+      `--stackchanframe\r\ncontent-type: ${frame.mimeType}\r\ncontent-length: ${jpeg.length}\r\nx-frame-id: ${frame.frameId}\r\nx-frame-timestamp: ${frame.timestamp}\r\n\r\n`
+      ) &&
+      response.write(jpeg) &&
+      response.write("\r\n");
+    state.lastFrameId = frame.frameId;
+    if (!ok) {
+      state.draining = true;
+      response.once("drain", () => {
+        const current = this.frameStreamClients.get(response);
+        if (current) {
+          current.draining = false;
+        }
+      });
+    }
+  }
+
+  private scheduleSnapshotBroadcast(minIntervalMs: number): void {
+    if (this.snapshotClients.size === 0 || this.snapshotBroadcastTimer) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.lastSnapshotBroadcastAt;
+    const delay = Math.max(0, minIntervalMs - elapsed);
+    this.snapshotBroadcastTimer = setTimeout(() => {
+      this.snapshotBroadcastTimer = undefined;
+      this.broadcastSnapshot();
+    }, delay);
   }
 
   private broadcastLog(entry: unknown): void {
@@ -409,4 +585,58 @@ function isLogLevel(value: string | null): value is LogLevel {
 
 function isDebugLogType(value: string | null): value is DebugLogType {
   return value === "system" || value === "device" || value === "vision" || value === "command";
+}
+
+function listenServer(server: Server, port: number, host: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+}
+
+function closeServer(server: Server | undefined): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (!server) {
+      resolve();
+      return;
+    }
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function sanitizeRgbColor(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const color = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : undefined;
+}
+
+function sanitizeRgbBrightness(value: unknown): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.min(1, Math.max(0, value));
+}
+
+function usesIpv4Loopback(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost";
 }

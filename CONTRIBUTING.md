@@ -6,8 +6,7 @@ StackChan Local is an experimental hardware project. Keep changes small, testabl
 
 ```bash
 npm install
-npm run typecheck
-npm test
+npm run check
 ```
 
 Firmware changes should also pass:
@@ -25,6 +24,8 @@ idf.py build
 - Keep protocol changes backwards compatible when possible and add schema tests.
 - For hardware features, document whether values are real, derived, or placeholders.
 - For UI changes, check both narrow vertical layout and desktop layout.
+- Before publishing or opening a PR from local hardware work, run `npm run open-source:check`.
+- Do not commit `desktop/models/*.task`; use `npm run vision:model` to restore the local cache.
 
 ## Pull Requests
 

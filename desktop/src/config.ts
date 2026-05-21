@@ -1,6 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type FaceTrackingCameraPreset = "fast" | "accurate" | "debug";
 
 export interface DesktopConfig {
   host: string;
@@ -27,6 +29,12 @@ export interface DesktopConfig {
   faceTrackingOutputLimitDeg: number;
   faceTrackingPython: string;
   faceTrackingDetectorScript: string;
+  faceLandmarkerModel: string;
+  faceTrackingMaxFaces: number;
+  faceTrackingMinDetectionConfidence: number;
+  faceTrackingMinPresenceConfidence: number;
+  faceTrackingMinTrackingConfidence: number;
+  faceTrackingCameraPreset: FaceTrackingCameraPreset;
   volcengineTtsEnabled: boolean;
   volcengineTtsApiKey?: string;
   volcengineTtsEndpoint: string;
@@ -104,9 +112,19 @@ function parseTtsSampleRate(value: string | undefined): 16000 | 24000 {
   return value === "24000" ? 24000 : 16000;
 }
 
+function parseCameraPreset(value: string | undefined): FaceTrackingCameraPreset {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "accurate" || normalized === "debug" || normalized === "fast") {
+    return normalized;
+  }
+  return "fast";
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig {
+  const initialProjectRoot = env.STACKCHAN_PROJECT_ROOT ?? defaultProjectRoot(process.cwd());
+  loadDotEnv(initialProjectRoot, env);
   const home = env.HOME ?? process.cwd();
-  const projectRoot = env.STACKCHAN_PROJECT_ROOT ?? defaultProjectRoot(process.cwd());
+  const projectRoot = env.STACKCHAN_PROJECT_ROOT ?? initialProjectRoot;
   return {
     host: env.STACKCHAN_LOCAL_HOST ?? "0.0.0.0",
     port: parseInteger(env.STACKCHAN_LOCAL_PORT, 8787),
@@ -120,19 +138,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
     faceTrackingEnabled: parseBoolean(env.STACKCHAN_FACE_TRACKING, false),
     faceTrackingFps: Math.min(10, Math.max(1, parseInteger(env.STACKCHAN_FACE_TRACKING_FPS, 4))),
     faceTrackingMirrorX: parseBoolean(env.STACKCHAN_FACE_TRACKING_MIRROR_X, false),
-    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 420), 0, 1000),
-    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.045), 0, 0.3),
-    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 42), 0, 150),
+    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 760), 0, 1000),
+    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.018), 0, 0.3),
+    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 78), 0, 150),
     faceTrackingYawKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KI, 0), 0, 50),
-    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 8), 0, 80),
-    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 30), 0, 150),
+    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 10), 0, 80),
+    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 54), 0, 150),
     faceTrackingPitchKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KI, 0), 0, 50),
-    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 6), 0, 80),
-    faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.35), 0, 2),
-    faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 20), 1, 45),
-    faceTrackingPython: env.STACKCHAN_FACE_TRACKING_PYTHON ?? "python3",
+    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 8), 0, 80),
+    faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.22), 0, 2),
+    faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 32), 1, 45),
+    faceTrackingPython: env.STACKCHAN_FACE_TRACKING_PYTHON ?? defaultFaceTrackingPython(),
     faceTrackingDetectorScript:
       env.STACKCHAN_FACE_TRACKING_DETECTOR ?? `${projectRoot}/desktop/scripts/face_detector.py`,
+    faceLandmarkerModel:
+      env.STACKCHAN_FACE_LANDMARKER_MODEL ?? `${projectRoot}/desktop/models/face_landmarker.task`,
+    faceTrackingMaxFaces: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_MAX_FACES, 1), 1, 4),
+    faceTrackingMinDetectionConfidence: clampNumber(
+      parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_DETECTION_CONFIDENCE, 0.18),
+      0,
+      1
+    ),
+    faceTrackingMinPresenceConfidence: clampNumber(
+      parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_PRESENCE_CONFIDENCE, 0.18),
+      0,
+      1
+    ),
+    faceTrackingMinTrackingConfidence: clampNumber(
+      parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_TRACKING_CONFIDENCE, 0.18),
+      0,
+      1
+    ),
+    faceTrackingCameraPreset: parseCameraPreset(env.STACKCHAN_FACE_TRACKING_CAMERA_PRESET),
     volcengineTtsEnabled: parseBoolean(env.STACKCHAN_VOLCENGINE_TTS_ENABLED, Boolean(env.VOLCENGINE_TTS_API_KEY)),
     volcengineTtsApiKey: env.VOLCENGINE_TTS_API_KEY,
     volcengineTtsEndpoint:
@@ -152,8 +189,57 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
   };
 }
 
+function loadDotEnv(projectRoot: string, env: NodeJS.ProcessEnv): void {
+  const envPath = path.join(projectRoot, ".env");
+  if (!existsSync(envPath)) {
+    return;
+  }
+
+  const content = readFileSync(envPath, "utf8");
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    const [, key, rawValue] = match;
+    if (typeof env[key] !== "undefined") {
+      continue;
+    }
+    env[key] = parseDotEnvValue(rawValue);
+  }
+}
+
+function parseDotEnvValue(rawValue: string): string {
+  const value = rawValue.trim();
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+  const commentIndex = value.search(/\s#/);
+  return commentIndex >= 0 ? value.slice(0, commentIndex).trim() : value;
+}
+
 function defaultProjectRoot(cwd: string): string {
   return path.basename(cwd) === "desktop" ? path.dirname(cwd) : cwd;
+}
+
+function defaultFaceTrackingPython(): string {
+  const candidates = [
+    "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+    "/opt/homebrew/opt/python@3.11/bin/python3.11",
+    "/usr/local/opt/python@3.11/bin/python3.11",
+    "/opt/homebrew/bin/python3",
+    "/usr/local/bin/python3"
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? "python3";
 }
 
 export function createLogger(level: LogLevel, sink?: LogSink): Logger {

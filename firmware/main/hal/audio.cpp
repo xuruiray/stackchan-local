@@ -6,6 +6,7 @@
 #include "hal.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <esp_heap_caps.h>
 #include <mooncake_log.h>
 #include <memory>
@@ -23,11 +24,63 @@ constexpr size_t _mic_test_playback_chunk_frames = 512;
 constexpr size_t _mic_waveform_point_count       = 128;
 constexpr size_t _mic_waveform_samples_per_point = 6;
 constexpr size_t _mic_waveform_capture_frames    = _mic_waveform_point_count * _mic_waveform_samples_per_point;
+constexpr size_t _mic_level_capture_frames       = 768;
+constexpr size_t _mic_level_meter_channels       = 1;
+constexpr size_t _mic_level_noise_history_size   = 24;
+constexpr float _mic_level_min_rms               = 0.000001f;
+constexpr float _mic_level_noise_gate_db         = 3.0f;
+constexpr float _mic_level_active_span_db        = 18.0f;
 
 struct MicTestFrame {
     int16_t mic;
     int16_t reference;
 };
+
+struct MicLevelChannelStats {
+    double mean = 0.0;
+    double sum_sq = 0.0;
+    int32_t peak = 0;
+};
+
+float dbfs_from_rms(float rms)
+{
+    return rms > _mic_level_min_rms ? 20.0f * std::log10(rms) : -96.0f;
+}
+
+float calibrated_mic_level(float dbfs)
+{
+    static std::array<float, _mic_level_noise_history_size> noise_history{};
+    static size_t noise_history_count = 0;
+    static size_t noise_history_index = 0;
+    static float noise_floor_dbfs = -30.0f;
+    static float smoothed_level = 0.0f;
+
+    noise_history[noise_history_index] = dbfs;
+    noise_history_index = (noise_history_index + 1) % noise_history.size();
+    noise_history_count = std::min(noise_history_count + 1, noise_history.size());
+
+    std::array<float, _mic_level_noise_history_size> sorted = noise_history;
+    std::sort(sorted.begin(), sorted.begin() + noise_history_count);
+    const size_t percentile_index = noise_history_count > 1 ? (noise_history_count - 1) / 4 : 0;
+    const float percentile_floor = sorted[percentile_index];
+
+    if (noise_history_count == 1) {
+        noise_floor_dbfs = percentile_floor;
+    } else {
+        const float alpha = noise_history_count < noise_history.size()
+                                ? 0.45f
+                                : (percentile_floor > noise_floor_dbfs ? 0.12f : 0.3f);
+        noise_floor_dbfs = noise_floor_dbfs * (1.0f - alpha) + percentile_floor * alpha;
+    }
+    noise_floor_dbfs = std::clamp(noise_floor_dbfs, -82.0f, -6.0f);
+
+    const float above_noise = dbfs - noise_floor_dbfs - _mic_level_noise_gate_db;
+    const float normalized = std::clamp(above_noise / _mic_level_active_span_db, 0.0f, 1.0f);
+    const float target_level = std::pow(normalized, 0.65f);
+    const float alpha = target_level > smoothed_level ? 0.55f : 0.2f;
+    smoothed_level = std::clamp(smoothed_level * (1.0f - alpha) + target_level * alpha, 0.0f, 1.0f);
+    return smoothed_level;
+}
 
 }  // namespace
 
@@ -154,6 +207,83 @@ void Hal::getMicWaveformFrame(std::vector<int16_t>& data)
 
         data[point_index] = selected_sample;
     }
+}
+
+LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
+{
+    LocalMicLevelSnapshot snapshot;
+
+    auto& board      = Board::GetInstance();
+    auto audio_codec = board.GetAudioCodec();
+    if (!audio_codec) {
+        snapshot.reason = "audio_codec_unavailable";
+        return snapshot;
+    }
+
+    const size_t input_channels = std::max(audio_codec->input_channels(), 1);
+    constexpr size_t measured_channels = _mic_level_meter_channels;
+    constexpr size_t capture_frames = _mic_level_capture_frames;
+    std::vector<int16_t> input_chunk(capture_frames * input_channels);
+
+    const bool was_input_enabled = audio_codec->input_enabled();
+    if (!was_input_enabled) {
+        audio_codec->EnableInput(true);
+        // The first DMA read after opening the ES7210 input often contains startup bias.
+        audio_codec->InputData(input_chunk);
+    }
+
+    const bool read_ok = audio_codec->InputData(input_chunk);
+
+    if (!was_input_enabled) {
+        audio_codec->EnableInput(false);
+    }
+
+    snapshot.available = true;
+    snapshot.channels = static_cast<uint8_t>(std::min<size_t>(input_channels, 2));
+    snapshot.updatedAt = GetHAL().millis();
+
+    if (!read_ok) {
+        snapshot.reason = "capture_failed";
+        return snapshot;
+    }
+
+    std::array<MicLevelChannelStats, _mic_level_meter_channels> stats{};
+    for (size_t frame_index = 0; frame_index < capture_frames; ++frame_index) {
+        for (size_t channel = 0; channel < measured_channels; ++channel) {
+            stats[channel].mean += input_chunk[frame_index * input_channels + channel];
+        }
+    }
+    for (size_t channel = 0; channel < measured_channels; ++channel) {
+        stats[channel].mean /= static_cast<double>(capture_frames);
+    }
+
+    float selected_rms = 0.0f;
+    float selected_peak = 0.0f;
+    for (size_t frame_index = 0; frame_index < capture_frames; ++frame_index) {
+        for (size_t channel = 0; channel < measured_channels; ++channel) {
+            const double centered =
+                static_cast<double>(input_chunk[frame_index * input_channels + channel]) - stats[channel].mean;
+            const int32_t magnitude = std::abs(static_cast<int32_t>(std::lround(centered)));
+            stats[channel].peak = std::max(stats[channel].peak, magnitude);
+            const double normalized = centered / 32768.0;
+            stats[channel].sum_sq += normalized * normalized;
+        }
+    }
+
+    for (size_t channel = 0; channel < measured_channels; ++channel) {
+        const float rms = static_cast<float>(std::sqrt(stats[channel].sum_sq / static_cast<double>(capture_frames)));
+        if (rms >= selected_rms) {
+            selected_rms = rms;
+            selected_peak = static_cast<float>(stats[channel].peak) / 32768.0f;
+        }
+    }
+
+    const float dbfs = dbfs_from_rms(selected_rms);
+    snapshot.rms = std::clamp(selected_rms, 0.0f, 1.0f);
+    snapshot.peak = std::clamp(selected_peak, 0.0f, 1.0f);
+    snapshot.dbfs = std::max(-96.0f, std::min(0.0f, dbfs));
+    snapshot.level = calibrated_mic_level(snapshot.dbfs);
+    return snapshot;
 }
 
 void Hal::clearupMicTest()

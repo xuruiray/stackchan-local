@@ -22,7 +22,7 @@ Responsibilities:
 - MCP stdio server for Codex tools.
 - Codex session watcher for `idle`, `thinking`, and completion events.
 - Optional completion TTS and RGB completion flash.
-- Optional face tracking through a local Python/OpenCV sidecar.
+- Optional face tracking through a local Python MediaPipe Tasks Face Landmarker sidecar.
 - WebUI/debug dashboard on `8788`.
 
 ## Firmware
@@ -62,4 +62,4 @@ Codex state changes such as `thinking` and `speaking` control expression, light,
 
 ## Privacy Model
 
-Camera frames stay on the local network between StackChan and the daemon. Face tracking detects a face box only and does not do identity recognition. Microphone sound localization was removed; microphones remain for wake word and voice audio.
+Camera frames stay on the local network between StackChan and the daemon. Face tracking detects landmarks, pose, and expressions for local motion control only; it does not do identity recognition. Microphone sound localization was removed; microphones remain for wake word and voice audio.

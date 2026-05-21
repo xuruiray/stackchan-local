@@ -35,7 +35,7 @@ describe("protocol validation", () => {
     ).toThrow("Invalid local protocol message");
   });
 
-  it("accepts camera stream and face tracking commands", () => {
+  it("accepts camera stream and face tracking commands with landmarks, pose, and official servo range", () => {
     expect(
       validator.parseMessage({
         type: "robot.command",
@@ -44,7 +44,23 @@ describe("protocol validation", () => {
           kind: "cameraStream",
           enabled: true,
           fps: 4,
+          width: 320,
+          height: 240,
+          quality: 20,
           format: "jpeg"
+        }
+      }).type
+    ).toBe("robot.command");
+
+    expect(
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-rgb",
+        command: {
+          kind: "setRgb",
+          enabled: true,
+          color: "#43D5B0",
+          brightness: 0.8
         }
       }).type
     ).toBe("robot.command");
@@ -63,7 +79,36 @@ describe("protocol validation", () => {
             y: 0.2,
             width: 0.3,
             height: 0.4,
-            confidence: 0.8
+            confidence: 0.8,
+            trackingId: "face-1",
+            landmarks: {
+              all: [
+                { x: 0.25, y: 0.39, z: -0.02 },
+                { x: 0.18, y: 0.31, z: 0.01 }
+              ],
+              nose: { x: 0.25, y: 0.39, z: -0.02 },
+              leftEye: { x: 0.18, y: 0.31 },
+              rightEye: { x: 0.32, y: 0.31 },
+              mouthCenter: { x: 0.25, y: 0.52 }
+            },
+            pose: {
+              yawDeg: -12.4,
+              pitchDeg: 4.2,
+              rollDeg: 1.1
+            },
+            transformMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 12, 4, -30, 1],
+            expression: {
+              smile: 0.2,
+              leftEyeOpen: 0.93,
+              rightEyeOpen: 0.88,
+              blendshapes: {
+                mouthSmileLeft: 0.21,
+                mouthSmileRight: 0.18,
+                eyeBlinkLeft: 0.07,
+                eyeBlinkRight: 0.12
+              }
+            },
+            detector: "mediapipe_tasks_face_landmarker"
           },
           confidence: 0.8,
           speed: 420,
@@ -73,7 +118,13 @@ describe("protocol validation", () => {
             yaw: { kp: 42, ki: 0, kd: 8 },
             pitch: { kp: 30, ki: 0, kd: 6 },
             integralLimit: 0.35,
-            outputLimitDeg: 20
+            outputLimitDeg: 20,
+            servoRange: {
+              yawMin: -1280,
+              yawMax: 1280,
+              pitchMin: 0,
+              pitchMax: 900
+            }
           }
         }
       }).type
@@ -404,11 +455,21 @@ describe("protocol validation", () => {
             streaming: true,
             width: 320,
             height: 240,
-            fps: 4
+            fps: 4,
+            requestedWidth: 640,
+            requestedHeight: 480,
+            actualWidth: 320,
+            actualHeight: 240,
+            quality: 30,
+            fallbackReason: "runtime_resolution_change_not_supported"
           },
           rgb: {
             available: true,
-            count: 12
+            count: 12,
+            enabled: true,
+            color: "#43D5B0",
+            brightness: 0.8,
+            driver: "neon-light"
           },
           rtc: {
             available: true,
@@ -416,30 +477,72 @@ describe("protocol validation", () => {
             timezone: "GMT0"
           },
           nfc: {
-            available: false,
-            reason: "driver_not_wired"
+            available: true,
+            driver: "st25r3916-probe",
+            address: 0x50,
+            status: "chip_detected"
           },
+          powerMonitor: {
+            available: true,
+            driver: "ina226",
+            address: 0x41,
+            busVoltage: 3.98,
+            shuntVoltage: 0.0012,
+            current: 0.12,
+            power: 0.48
+          },
+          i2cScan: [
+            {
+              stage: "after_board_init_axp2101",
+              uptimeMs: 1200,
+              addresses: [0x21, 0x23, 0x34, 0x38, 0x40, 0x41, 0x50, 0x51, 0x58, 0x68, 0x69, 0x6f],
+              targets: {
+                ltr553: true,
+                ina226: true,
+                nfc: true
+              }
+            }
+          ],
           ir: {
-            available: false,
-            reason: "driver_not_wired"
+            available: true,
+            driver: "gpio-ir-basic",
+            txPin: 5,
+            rxPin: 10
           },
           proximity: {
-            available: false,
-            reason: "driver_not_wired"
+            available: true,
+            value: 42,
+            raw: 42,
+            driver: "ltr553"
           },
           ambientLight: {
-            available: false,
-            reason: "driver_not_wired"
+            available: true,
+            lux: 18.5,
+            raw: 320,
+            driver: "ltr553"
           },
           magnetometer: {
-            available: false,
-            reason: "driver_not_wired"
+            available: true,
+            x: 0.1,
+            y: -0.2,
+            z: 0.3,
+            rawX: 12,
+            rawY: -24,
+            rawZ: 36,
+            headingDeg: 296.6,
+            driver: "bmi270-aux-bmm150"
           },
           mic: {
             available: true,
-            channels: 1,
+            channels: 2,
             mode: "mono_opus",
-            localization: "abandoned"
+            localization: "abandoned",
+            level: 0.42,
+            rms: 0.08,
+            peak: 0.31,
+            dbfs: -21.4,
+            updatedAt: 123455,
+            driver: "es7210-level-meter"
           }
         }
       }
@@ -484,6 +587,49 @@ describe("protocol validation", () => {
         }
       })
     ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.event",
+        eventId: "evt-bad-mic-level",
+        deviceId: "stackchan-001",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "sensorSnapshot",
+          uptimeMs: 123456,
+          peripherals: {
+            mic: {
+              available: true,
+              channels: 1,
+              mode: "mono_opus",
+              level: 1.5
+            }
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.event",
+        eventId: "evt-bad-i2c-scan",
+        deviceId: "stackchan-001",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "sensorSnapshot",
+          uptimeMs: 123456,
+          peripherals: {
+            i2cScan: [
+              {
+                stage: "after_py32_vm_en",
+                uptimeMs: 1000,
+                addresses: [0x21, 0x80]
+              }
+            ]
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
   });
 
   it("rejects invalid tracking bounds and stream fps", () => {
@@ -502,6 +648,48 @@ describe("protocol validation", () => {
     expect(() =>
       validator.parseMessage({
         type: "robot.command",
+        commandId: "cmd-bad-camera-quality",
+        command: {
+          kind: "cameraStream",
+          enabled: true,
+          fps: 4,
+          width: 640,
+          height: 480,
+          quality: 101
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-bad-camera-size",
+        command: {
+          kind: "cameraStream",
+          enabled: true,
+          fps: 4,
+          width: 123,
+          height: 480,
+          quality: 30
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-bad-rgb-color",
+        command: {
+          kind: "setRgb",
+          enabled: true,
+          color: "green"
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.command",
         commandId: "cmd-bad-face",
         command: {
           kind: "trackFace",
@@ -513,6 +701,50 @@ describe("protocol validation", () => {
             y: 0.1,
             width: 0,
             height: 0.4
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-bad-face-matrix",
+        command: {
+          kind: "trackFace",
+          detected: true,
+          centerX: 0.5,
+          centerY: 0.5,
+          bbox: {
+            x: 0.1,
+            y: 0.1,
+            width: 0.3,
+            height: 0.4,
+            transformMatrix: [1, 0, 0]
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-bad-blendshape",
+        command: {
+          kind: "trackFace",
+          detected: true,
+          centerX: 0.5,
+          centerY: 0.5,
+          bbox: {
+            x: 0.1,
+            y: 0.1,
+            width: 0.3,
+            height: 0.4,
+            expression: {
+              blendshapes: {
+                mouthSmileLeft: -0.1
+              }
+            }
           }
         }
       })

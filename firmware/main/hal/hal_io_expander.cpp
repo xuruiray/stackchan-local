@@ -33,6 +33,7 @@ void Hal::io_expander_init()
         }
 
         if (_io_expander->begin()) {
+            GetHAL().recordI2cDiagnosticScan("after_py32_begin");
             break;
         }
         mclog::tagInfo(_tag, "init failed, retrying...");
@@ -44,6 +45,7 @@ void Hal::io_expander_init()
         _io_expander->setPullMode(0, true);   // Pull-up
         GetHAL().setServoPowerEnabled(true);
         vTaskDelay(pdMS_TO_TICKS(200));
+        GetHAL().recordI2cDiagnosticScan("after_py32_vm_en");
 
         // RGB
         _io_expander->setDirection(13, true);   // Output

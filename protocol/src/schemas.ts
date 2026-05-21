@@ -78,17 +78,109 @@ export const faceTrackingPidAxisSchema = {
   }
 } as const;
 
+export const normalizedFacePointSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["x", "y"],
+  properties: {
+    x: { type: "number", minimum: 0, maximum: 1 },
+    y: { type: "number", minimum: 0, maximum: 1 },
+    z: { type: "number", minimum: -1, maximum: 1 }
+  }
+} as const;
+
+export const faceLandmarksSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    all: {
+      type: "array",
+      maxItems: 478,
+      items: normalizedFacePointSchema
+    },
+    nose: normalizedFacePointSchema,
+    leftEye: normalizedFacePointSchema,
+    rightEye: normalizedFacePointSchema,
+    mouthLeft: normalizedFacePointSchema,
+    mouthRight: normalizedFacePointSchema,
+    mouthCenter: normalizedFacePointSchema,
+    chin: normalizedFacePointSchema
+  }
+} as const;
+
+export const facePoseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["yawDeg", "pitchDeg", "rollDeg"],
+  properties: {
+    yawDeg: { type: "number", minimum: -180, maximum: 180 },
+    pitchDeg: { type: "number", minimum: -180, maximum: 180 },
+    rollDeg: { type: "number", minimum: -180, maximum: 180 }
+  }
+} as const;
+
+export const faceExpressionSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    smile: { type: "number", minimum: 0, maximum: 1 },
+    leftEyeOpen: { type: "number", minimum: 0, maximum: 1 },
+    rightEyeOpen: { type: "number", minimum: 0, maximum: 1 },
+    blendshapes: {
+      type: "object",
+      additionalProperties: { type: "number", minimum: 0, maximum: 1 }
+    }
+  }
+} as const;
+
+export const normalizedFaceBoxSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["x", "y", "width", "height"],
+  properties: {
+    x: { type: "number", minimum: 0, maximum: 1 },
+    y: { type: "number", minimum: 0, maximum: 1 },
+    width: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+    height: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    trackingId: { oneOf: [{ type: "string", minLength: 1 }, { type: "number" }] },
+    landmarks: faceLandmarksSchema,
+    pose: facePoseSchema,
+    transformMatrix: {
+      type: "array",
+      minItems: 16,
+      maxItems: 16,
+      items: { type: "number", minimum: -10000, maximum: 10000 }
+    },
+    expression: faceExpressionSchema,
+    detector: { type: "string", minLength: 1 }
+  }
+} as const;
+
+export const faceServoRangeSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["yawMin", "yawMax", "pitchMin", "pitchMax"],
+  properties: {
+    yawMin: { type: "number", minimum: -1800, maximum: 0 },
+    yawMax: { type: "number", minimum: 0, maximum: 1800 },
+    pitchMin: { type: "number", minimum: -900, maximum: 1200 },
+    pitchMax: { type: "number", minimum: -900, maximum: 1200 }
+  }
+} as const;
+
 export const faceTrackingControlSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["mode", "deadband", "yaw", "pitch", "integralLimit", "outputLimitDeg"],
+  required: ["mode", "deadband", "yaw", "pitch", "integralLimit", "outputLimitDeg", "servoRange"],
   properties: {
     mode: { const: "pid" },
     deadband: { type: "number", minimum: 0, maximum: 0.3 },
     yaw: faceTrackingPidAxisSchema,
     pitch: faceTrackingPidAxisSchema,
     integralLimit: { type: "number", minimum: 0, maximum: 2 },
-    outputLimitDeg: { type: "number", minimum: 1, maximum: 45 }
+    outputLimitDeg: { type: "number", minimum: 1, maximum: 45 },
+    servoRange: faceServoRangeSchema
   }
 } as const;
 
@@ -144,6 +236,9 @@ export const robotCommandSchema = {
             kind: { const: "cameraStream" },
             enabled: { type: "boolean" },
             fps: { type: "number", minimum: 1, maximum: 10 },
+            width: { enum: [320, 640] },
+            height: { enum: [240, 480] },
+            quality: { type: "integer", minimum: 1, maximum: 100 },
             format: { const: "jpeg" }
           }
         },
@@ -156,18 +251,7 @@ export const robotCommandSchema = {
             detected: { type: "boolean" },
             centerX: { type: "number", minimum: 0, maximum: 1 },
             centerY: { type: "number", minimum: 0, maximum: 1 },
-            bbox: {
-              type: "object",
-              additionalProperties: false,
-              required: ["x", "y", "width", "height"],
-              properties: {
-                x: { type: "number", minimum: 0, maximum: 1 },
-                y: { type: "number", minimum: 0, maximum: 1 },
-                width: { type: "number", exclusiveMinimum: 0, maximum: 1 },
-                height: { type: "number", exclusiveMinimum: 0, maximum: 1 },
-                confidence: { type: "number", minimum: 0, maximum: 1 }
-              }
-            },
+            bbox: normalizedFaceBoxSchema,
             confidence: { type: "number", minimum: 0, maximum: 1 },
             speed: { type: "number", minimum: 0, maximum: 1000 },
             control: faceTrackingControlSchema,
@@ -239,6 +323,17 @@ export const robotCommandSchema = {
             kind: { const: "setMode" },
             mode: { enum: ["idle", "connecting", "listening", "thinking", "speaking", "pairing", "sleeping", "error"] },
             reason: { type: "string" }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "enabled"],
+          properties: {
+            kind: { const: "setRgb" },
+            enabled: { type: "boolean" },
+            color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            brightness: { type: "number", minimum: 0, maximum: 1 }
           }
         }
       ]
@@ -406,6 +501,12 @@ const sensorSnapshotSchema = {
             width: { type: "integer", minimum: 1 },
             height: { type: "integer", minimum: 1 },
             fps: { type: "number", minimum: 0, maximum: 30 },
+            requestedWidth: { type: "integer", minimum: 1 },
+            requestedHeight: { type: "integer", minimum: 1 },
+            actualWidth: { type: "integer", minimum: 1 },
+            actualHeight: { type: "integer", minimum: 1 },
+            quality: { type: "integer", minimum: 1, maximum: 100 },
+            fallbackReason: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -416,6 +517,10 @@ const sensorSnapshotSchema = {
           properties: {
             available: { type: "boolean" },
             count: { type: "integer", minimum: 0, maximum: 64 },
+            enabled: { type: "boolean" },
+            color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+            brightness: { type: "number", minimum: 0, maximum: 1 },
+            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -430,8 +535,45 @@ const sensorSnapshotSchema = {
             reason: { type: "string" }
           }
         },
-        nfc: availabilitySchema,
-        ir: availabilitySchema,
+        nfc: {
+          type: "object",
+          additionalProperties: false,
+          required: ["available"],
+          properties: {
+            available: { type: "boolean" },
+            driver: { type: "string" },
+            address: { type: "integer", minimum: 0, maximum: 127 },
+            status: { enum: ["chip_detected", "ready", "card_detected", "inactive"] },
+            reason: { type: "string" }
+          }
+        },
+        powerMonitor: {
+          type: "object",
+          additionalProperties: false,
+          required: ["available"],
+          properties: {
+            available: { type: "boolean" },
+            driver: { type: "string" },
+            address: { type: "integer", minimum: 0, maximum: 127 },
+            busVoltage: { type: "number", minimum: -0.1, maximum: 40 },
+            shuntVoltage: { type: "number", minimum: -0.2, maximum: 0.2 },
+            current: { type: "number", minimum: -20, maximum: 20 },
+            power: { type: "number", minimum: -200, maximum: 200 },
+            reason: { type: "string" }
+          }
+        },
+        ir: {
+          type: "object",
+          additionalProperties: false,
+          required: ["available"],
+          properties: {
+            available: { type: "boolean" },
+            driver: { type: "string" },
+            txPin: { type: "integer", minimum: 0, maximum: 48 },
+            rxPin: { type: "integer", minimum: 0, maximum: 48 },
+            reason: { type: "string" }
+          }
+        },
         proximity: {
           type: "object",
           additionalProperties: false,
@@ -439,6 +581,8 @@ const sensorSnapshotSchema = {
           properties: {
             available: { type: "boolean" },
             value: { type: "number", minimum: 0 },
+            raw: { type: "number", minimum: 0 },
+            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -449,6 +593,8 @@ const sensorSnapshotSchema = {
           properties: {
             available: { type: "boolean" },
             lux: { type: "number", minimum: 0 },
+            raw: { type: "number", minimum: 0 },
+            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -461,7 +607,11 @@ const sensorSnapshotSchema = {
             x: { type: "number" },
             y: { type: "number" },
             z: { type: "number" },
+            rawX: { type: "number" },
+            rawY: { type: "number" },
+            rawZ: { type: "number" },
             headingDeg: { type: "number", minimum: 0, maximum: 360 },
+            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -474,7 +624,41 @@ const sensorSnapshotSchema = {
             channels: { type: "integer", minimum: 1, maximum: 2 },
             mode: { enum: ["mono_opus", "unknown"] },
             localization: { enum: ["abandoned", "unsupported"] },
+            level: { type: "number", minimum: 0, maximum: 1 },
+            rms: { type: "number", minimum: 0, maximum: 1 },
+            peak: { type: "number", minimum: 0, maximum: 1 },
+            dbfs: { type: "number", minimum: -120, maximum: 0 },
+            updatedAt: { type: "integer", minimum: 0 },
+            driver: { type: "string" },
             reason: { type: "string" }
+          }
+        },
+        i2cScan: {
+          type: "array",
+          maxItems: 8,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["stage", "uptimeMs", "addresses"],
+            properties: {
+              stage: { type: "string", minLength: 1, maxLength: 48 },
+              uptimeMs: { type: "integer", minimum: 0 },
+              addresses: {
+                type: "array",
+                maxItems: 117,
+                items: { type: "integer", minimum: 0, maximum: 127 }
+              },
+              targets: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  ltr553: { type: "boolean" },
+                  ina226: { type: "boolean" },
+                  nfc: { type: "boolean" }
+                }
+              },
+              reason: { type: "string" }
+            }
           }
         }
       }
@@ -667,6 +851,12 @@ export const envelopeSchema = {
 export const protocolSchemas = {
   audioParamsSchema,
   faceTrackingPidAxisSchema,
+  normalizedFacePointSchema,
+  faceLandmarksSchema,
+  facePoseSchema,
+  faceExpressionSchema,
+  normalizedFaceBoxSchema,
+  faceServoRangeSchema,
   faceTrackingControlSchema,
   handshakeSchema,
   daemonHelloSchema,

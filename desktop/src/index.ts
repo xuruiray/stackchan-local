@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     ? new PreviewServer({ host: config.previewHost, port: config.previewPort }, visionTracking, logger, {
         registry,
         debugLog,
+        robotController: controller,
         completionAnnouncer
       })
     : undefined;

@@ -12,7 +12,7 @@ The project is intended for makers who want a physical Codex companion that can 
 - **Local-only runtime**: desktop daemon and firmware communicate over your LAN; no cloud server is required for the core control loop.
 - **Codex state companion**: mirrors Codex activity into StackChan states such as `idle`, `thinking`, and `speaking`.
 - **Completion notifications**: optional task-completion TTS plus RGB light flash when a Codex task finishes.
-- **Face tracking**: StackChan camera streams low-FPS JPEG frames to the desktop daemon; local OpenCV detection drives smooth head tracking.
+- **Face tracking**: StackChan camera streams low-FPS JPEG frames to the desktop daemon; local MediaPipe Tasks Face Landmarker drives smooth head tracking with pose, landmarks, and expression hints.
 - **Hardware dashboard**: `http://localhost:8788` shows camera preview, face boxes, PID tuning, sensors, device state, command status, and structured logs.
 - **MCP tools**: Codex can control speech, emotion, head motion, animation, image capture, mode, and face tracking.
 - **Firmware local companion mode**: boots directly into the StackChan face UI with local WebSocket control, idle motion, blinking, sensor events, and offline shutdown behavior.
@@ -70,7 +70,7 @@ The project is intended for makers who want a physical Codex companion that can 
 flowchart LR
   Codex["Codex / MCP client"] --> Desktop["desktop daemon"]
   Browser["8788 WebUI"] --> Desktop
-  Desktop --> Vision["Python OpenCV detector"]
+  Desktop --> Vision["Python MediaPipe Tasks detector"]
   Desktop <-->|"ws://<mac-ip>:8787/stackchan/local"| Firmware["StackChan firmware"]
   Firmware --> Hardware["avatar, servos, RGB, camera, IMU, touch, audio"]
 ```
@@ -106,10 +106,22 @@ Face tracking uses a local Python sidecar.
 
 ```bash
 npm run vision:install
+npm run vision:model
 STACKCHAN_FACE_TRACKING=1 npm run dev
 ```
 
 ### 4. Build and flash firmware
+
+```bash
+source ~/esp/esp-idf-v5.5.4/export.sh
+python3 firmware/fetch_repos.py
+npm run firmware:build
+npm run firmware:check-local-only
+cd firmware
+idf.py -p /dev/cu.usbmodem21301 flash
+```
+
+Equivalent raw ESP-IDF commands:
 
 ```bash
 cd firmware
@@ -119,7 +131,17 @@ idf.py build
 idf.py flash monitor
 ```
 
-The firmware first connects to saved Wi-Fi. If no credentials are saved, it starts a Wi-Fi configuration hotspot named `Xiaozhi-XXXX`; connect to that hotspot and open `http://192.168.4.1`.
+The firmware first connects to saved Wi-Fi. If no credentials are saved, it starts a Wi-Fi configuration hotspot named `StackChan-XXXX`; connect to that hotspot and open `http://192.168.4.1`.
+
+### Local-Only Firmware Build
+
+The default firmware build is compile-time isolated from copied legacy cloud code. `CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD` defaults to `n`, and CMake excludes the copied launcher/cloud app surfaces, App Center, EzData, cloud avatar WebSocket, cloud OTA, Xiaozhi cloud application, MQTT/WebSocket protocol clients, and 4G/RNDIS board paths.
+
+For local-only builds, CMake defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, and links `firmware/main/local_xiaozhi/application_local_stub.cc` instead of the upstream cloud `application.cc`. Verify this boundary after every firmware build:
+
+```bash
+npm run firmware:check-local-only
+```
 
 ## Configuration
 
@@ -131,6 +153,7 @@ Important defaults:
 - `STACKCHAN_PREVIEW_PORT=8788`
 - `STACKCHAN_PAIRING_TOKEN=dev-local-token`
 - `STACKCHAN_FACE_TRACKING=0`
+- `STACKCHAN_FACE_TRACKING_CAMERA_PRESET=fast`
 - `STACKCHAN_CODEX_STATUS=1`
 - `STACKCHAN_VOLCENGINE_TTS_ENABLED=0`
 
@@ -144,7 +167,7 @@ Main panels:
 
 - **Overview**: device status, face tracking state, latest target, capabilities.
 - **Hardware**: battery, Wi-Fi, BLE, RTC, speaker, RGB, camera, servos, IMU, touch, and peripheral placeholders.
-- **Tuning**: PID controls, tracking presets, completion TTS volume, completion TTS toggle, completion light toggle.
+- **Tuning**: camera presets, PID controls, tracking presets, completion TTS volume, completion TTS toggle, completion light toggle.
 - **Debug**: session id, firmware version, last event, counters, raw snapshot.
 - **Logs**: daemon ring-buffer logs with level/type/search filters.
 
@@ -184,11 +207,24 @@ npm run typecheck
 npm test
 ```
 
+Combined desktop/protocol check:
+
+```bash
+npm run check
+```
+
 Firmware build:
 
 ```bash
-cd firmware
-idf.py build
+source ~/esp/esp-idf-v5.5.4/export.sh
+npm run firmware:build
+npm run firmware:check-local-only
+```
+
+Pre-publish hygiene check:
+
+```bash
+npm run open-source:check
 ```
 
 ## Privacy And Safety
@@ -210,7 +246,7 @@ This project builds on:
 - M5Stack StackChan firmware concepts and hardware
 - Xiaozhi ESP32 firmware components
 - ESP-IDF and ESP32 managed components
-- OpenCV for local face detection
+- MediaPipe Tasks Face Landmarker for local face tracking
 
 Third-party source and generated ESP-IDF dependencies keep their own licenses.
 
