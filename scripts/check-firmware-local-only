@@ -9,7 +9,7 @@ if [[ ! -f "$compile_db" ]]; then
   exit 1
 fi
 
-legacy_source_regex='firmware/main/apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/|firmware/main/hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\.cpp|firmware/xiaozhi-esp32/main/(application|mcp_server|ota)\.cc|firmware/xiaozhi-esp32/main/protocols/(mqtt_protocol|websocket_protocol)\.cc|firmware/xiaozhi-esp32/main/boards/common/(dual_network_board|esp32_camera|esp_video|ml307_board|nt26_board|press_to_talk_mcp_tool|rndis_board|sleep_timer)\.cc'
+legacy_source_regex='firmware/main/apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/|firmware/main/hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\.cpp|firmware/main/embedded_runtime/(application|mcp_server|ota)\.cc|firmware/main/embedded_runtime/protocols/(mqtt_protocol|websocket_protocol)\.cc|firmware/main/embedded_runtime/boards/common/(dual_network_board|esp32_camera|esp_video|ml307_board|nt26_board|press_to_talk_mcp_tool|rndis_board|sleep_timer)\.cc'
 
 if rg -n "$legacy_source_regex" "$compile_db"; then
   echo "Legacy cloud sources are still present in the firmware compile database." >&2
@@ -21,9 +21,21 @@ if ! rg -q 'STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1|STACKCHAN_LOCAL_DISABLE_LEGAC
   exit 1
 fi
 
-if ! rg -q 'firmware/main/local_xiaozhi/application_local_stub\.cc' "$compile_db"; then
-  echo "Local Application stub is missing from the firmware compile database." >&2
+if ! rg -q 'firmware/main/local_runtime_adapters/application_local_stub\.cc' "$compile_db"; then
+    echo "Local Application stub is missing from the firmware compile database." >&2
+    exit 1
+fi
+
+if rg -q 'firmware/xiaozhi-esp32/' "$compile_db"; then
+  echo "Build still references the external xiaozhi-esp32 checkout." >&2
   exit 1
 fi
+
+for file in firmware/main/idf_component.yml firmware/dependencies.lock; do
+  if rg -n '78/esp-ml307|78/uart-eth-modem|esp-now' "$file"; then
+    echo "Legacy network/control dependency found in $file." >&2
+    exit 1
+  fi
+done
 
 echo "Firmware local-only compile guard passed."

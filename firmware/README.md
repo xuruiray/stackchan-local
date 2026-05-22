@@ -3,19 +3,17 @@
 
 This directory contains the ESP-IDF firmware workspace for StackChan Local.
 
-It keeps the original StackChan/XiaoZhi source layout, but the runtime is Local Companion mode: the device connects to the desktop daemon on the local network instead of requiring the original cloud server path.
+The project-owned firmware lives in `main/`. ESP-IDF Component Manager resolves registry and Git dependencies into `managed_components/`; the retained embedded runtime subset lives in `main/embedded_runtime/`. Generated ESP-IDF outputs stay ignored.
+
+`main/embedded_runtime/` contains the selected audio, display, LED, board-common, settings, assets, and device-state runtime code used by Local Companion. The original cloud application, cloud protocol clients, OTA runtime, 4G/RNDIS board support, ESP-NOW control path, and launcher app stack are not compiled.
+
+`main/local_runtime_adapters/` contains the project-owned compatibility surface for retained upstream runtime APIs. It links a local `Application` stub and a small Wi-Fi network adapter that implements only the WebSocket path needed by StackChan Local; HTTP, MQTT, UDP, 4G modem, ESP-NOW, and upstream cloud OTA paths are intentionally excluded from the runtime build.
+
+`main/robot_expression_motion_runtime/` contains the robot expression and motion runtime: avatar rendering, emotions, idle modifiers, animation playback, servo motion, RGB control, and JSON command adapters.
 
 ## Toolchain
 
 Use ESP-IDF v5.5.x for ESP32-S3.
-
-## Fetch Dependencies
-
-```bash
-python3 ./fetch_repos.py
-```
-
-This creates ignored dependency directories such as `components/` and `xiaozhi-esp32/`.
 
 ## Build
 

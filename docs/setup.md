@@ -30,11 +30,10 @@ The model download is cached at `desktop/models/face_landmarker.task` by default
 
 ## Firmware
 
-Install ESP-IDF v5.5.x, then fetch firmware dependencies and build:
+Install ESP-IDF v5.5.x, then build:
 
 ```bash
 source ~/esp/esp-idf-v5.5.4/export.sh
-python3 firmware/fetch_repos.py
 npm run firmware:build
 npm run firmware:check-local-only
 cd firmware
@@ -68,4 +67,4 @@ npm run typecheck
 npm test
 ```
 
-Generated directories such as `node_modules/`, `desktop/dist/`, `protocol/dist/`, `firmware/build/`, `firmware/components/`, `firmware/managed_components/`, and `firmware/xiaozhi-esp32/` are intentionally ignored.
+Generated directories such as `node_modules/`, `desktop/dist/`, `protocol/dist/`, `firmware/build/`, and `firmware/managed_components/` are intentionally ignored.

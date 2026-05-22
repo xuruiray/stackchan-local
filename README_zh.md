@@ -111,7 +111,6 @@ STACKCHAN_FACE_TRACKING=1 npm run dev
 
 ```bash
 source ~/esp/esp-idf-v5.5.4/export.sh
-python3 firmware/fetch_repos.py
 npm run firmware:build
 npm run firmware:check-local-only
 cd firmware
@@ -122,7 +121,6 @@ idf.py -p /dev/cu.usbmodem21301 flash
 
 ```bash
 cd firmware
-python3 ./fetch_repos.py
 idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
@@ -132,9 +130,9 @@ idf.py flash monitor
 
 ### 固件本地构建隔离
 
-默认固件构建已经对复制进来的 legacy cloud 代码做编译级隔离。`CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD` 默认是 `n`，CMake 会排除旧 Launcher/cloud App、App Center、EzData、云 Avatar WebSocket、云 OTA、Xiaozhi cloud Application、MQTT/WebSocket protocol client 和 4G/RNDIS board 路径。
+固件树只保留 `firmware/main` 下的 Local Companion app/HAL 代码。标准依赖由 ESP-IDF Component Manager 解析到 `firmware/managed_components/`：ArduinoJson 来自 ESP Component Registry，Mooncake、Mooncake Log 和 Smooth UI Toolkit 使用 Git dependency。保留的嵌入式运行时子集已经放入 `firmware/main/embedded_runtime/`，固件构建时不再 clone 单独的上游项目。
 
-local-only 构建会定义 `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`，编译裁掉 camera explain HTTP 路径，并使用 `firmware/main/local_xiaozhi/application_local_stub.cc` 替代上游 cloud `application.cc`。每次固件构建后可以用下面命令确认 legacy cloud 源码没有进入编译数据库：
+local-only 构建会定义 `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`，编译裁掉 camera explain HTTP 路径，使用 `firmware/main/local_runtime_adapters/` 下的本项目本地运行时适配层，并把机器人表情/动作引擎放在 `firmware/main/robot_expression_motion_runtime/`。上游 cloud application、云端 MQTT/WebSocket 协议客户端、OTA、4G modem、ESP-NOW 和旧 StackChan app launcher 源码都不进入本地运行时。每次固件构建后可以用下面命令确认 legacy cloud 源码没有进入编译数据库：
 
 ```bash
 npm run firmware:check-local-only

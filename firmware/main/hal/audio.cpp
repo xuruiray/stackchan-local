@@ -234,9 +234,8 @@ LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
 
     const bool read_ok = audio_codec->InputData(input_chunk);
 
-    if (!was_input_enabled) {
-        audio_codec->EnableInput(false);
-    }
+    // Keep the input path open for the 1 Hz level meter. Reopening ES7210 on
+    // every sensor snapshot causes I2S disable warnings and noisy level spikes.
 
     snapshot.available = true;
     snapshot.channels = static_cast<uint8_t>(std::min<size_t>(input_channels, 2));

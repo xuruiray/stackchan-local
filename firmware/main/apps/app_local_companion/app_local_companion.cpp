@@ -6,13 +6,13 @@
 #include "app_local_companion.h"
 
 #include <ArduinoJson.hpp>
-#include <apps/common/common.h>
+#include <apps/common/status_bar/status_bar.h>
 #include <assets/assets.h>
 #include <hal/hal.h>
 #include <mooncake_log.h>
 #include <smooth_lvgl.hpp>
-#include <stackchan/animation/animation.h>
-#include <stackchan/stackchan.h>
+#include <robot_expression_motion_runtime/animation/animation.h>
+#include <robot_expression_motion_runtime/stackchan.h>
 #include <algorithm>
 #include <cmath>
 #include <string>

@@ -114,7 +114,6 @@ STACKCHAN_FACE_TRACKING=1 npm run dev
 
 ```bash
 source ~/esp/esp-idf-v5.5.4/export.sh
-python3 firmware/fetch_repos.py
 npm run firmware:build
 npm run firmware:check-local-only
 cd firmware
@@ -125,7 +124,6 @@ Equivalent raw ESP-IDF commands:
 
 ```bash
 cd firmware
-python3 ./fetch_repos.py
 idf.py set-target esp32s3
 idf.py build
 idf.py flash monitor
@@ -135,9 +133,9 @@ The firmware first connects to saved Wi-Fi. If no credentials are saved, it star
 
 ### Local-Only Firmware Build
 
-The default firmware build is compile-time isolated from copied legacy cloud code. `CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD` defaults to `n`, and CMake excludes the copied launcher/cloud app surfaces, App Center, EzData, cloud avatar WebSocket, cloud OTA, Xiaozhi cloud application, MQTT/WebSocket protocol clients, and 4G/RNDIS board paths.
+The firmware tree keeps only the local companion app/HAL surface in `firmware/main`. ESP-IDF Component Manager resolves standard dependencies into `firmware/managed_components/`: ArduinoJson comes from the ESP Component Registry, while Mooncake, Mooncake Log, and Smooth UI Toolkit are Git dependencies. The retained embedded runtime subset is checked into `firmware/main/embedded_runtime/`, so firmware builds no longer clone a separate upstream project during compilation.
 
-For local-only builds, CMake defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, and links `firmware/main/local_xiaozhi/application_local_stub.cc` instead of the upstream cloud `application.cc`. Verify this boundary after every firmware build:
+CMake defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, links project-owned local runtime adapters from `firmware/main/local_runtime_adapters/`, and keeps the robot expression/motion engine in `firmware/main/robot_expression_motion_runtime/`. The upstream cloud application, cloud MQTT/WebSocket protocol clients, OTA, 4G modem, ESP-NOW, and old StackChan app launcher sources are not part of the local runtime. Verify this boundary after every firmware build:
 
 ```bash
 npm run firmware:check-local-only
@@ -244,12 +242,12 @@ This is an experimental hardware/software project. The current target is macOS d
 This project builds on:
 
 - M5Stack StackChan firmware concepts and hardware
-- Xiaozhi ESP32 firmware components
+- retained ESP32 assistant runtime components
 - ESP-IDF and ESP32 managed components
 - MediaPipe Tasks Face Landmarker for local face tracking
 
-Third-party source and generated ESP-IDF dependencies keep their own licenses.
+Third-party source, Git dependencies, and generated ESP-IDF dependencies keep their own licenses.
 
 ## License
 
-MIT for the StackChan Local project code unless a subdirectory or vendored dependency states otherwise.
+MIT for the StackChan Local project code unless a subdirectory or managed dependency states otherwise.

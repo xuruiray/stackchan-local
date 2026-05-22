@@ -5,7 +5,7 @@
  */
 #include "hal.h"
 #include "drivers/FTServo_Arduino/src/SCSCL.h"
-#include <stackchan/stackchan.h>
+#include <robot_expression_motion_runtime/stackchan.h>
 #include <smooth_ui_toolkit.hpp>
 #include <mooncake_log.h>
 #include <settings.h>

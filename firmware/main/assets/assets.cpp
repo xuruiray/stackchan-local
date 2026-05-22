@@ -29,7 +29,7 @@ lv_image_dsc_t get_image(std::string_view name)
     void* data_ptr   = nullptr;
     size_t data_size = 0;
 
-    // Attempt to access singleton from xiaozhi-esp32/main/assets.h
+    // Attempt to access singleton from the vendored base runtime assets API.
     // Since we include <assets.h>, we expect class Assets to be available.
     if (!Assets::GetInstance().GetAssetData(key, data_ptr, data_size)) {
         mclog::tagError(_tag, "get image asset {} failed: not found", name);

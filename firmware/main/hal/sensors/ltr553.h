@@ -1,0 +1,31 @@
+/*
+ * SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
+ *
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+#include "sensor_types.h"
+
+#include <driver/i2c_master.h>
+
+namespace stackchan::hal::sensors {
+
+class Ltr553 {
+public:
+    static constexpr uint8_t kAddress = 0x23;
+    static constexpr uint8_t kPartIdRegister = 0x86;
+
+    explicit Ltr553(i2c_master_bus_handle_t bus) : bus_(bus)
+    {
+    }
+
+    void init(LocalPeripheralProbeSnapshot& snapshot);
+    void refresh(LocalPeripheralProbeSnapshot& snapshot);
+
+private:
+    i2c_master_bus_handle_t bus_ = nullptr;
+    i2c_master_dev_handle_t dev_ = nullptr;
+};
+
+}  // namespace stackchan::hal::sensors

@@ -14,7 +14,7 @@
 #include <settings.h>
 #include <lvgl.h>
 #include <lvgl_theme.h>
-#include <stackchan/stackchan.h>
+#include <robot_expression_motion_runtime/stackchan.h>
 #include <assets/lang_config.h>
 #include <hal/hal.h>
 

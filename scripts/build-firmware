@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/../firmware"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root/firmware"
 idf.py build
-

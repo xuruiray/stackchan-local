@@ -138,49 +138,12 @@ void Hal::updateHeapStatusLog()
 /* -------------------------------------------------------------------------- */
 /*                                   Xiaozhi                                  */
 /* -------------------------------------------------------------------------- */
-#include <stackchan/stackchan.h>
-#include <apps/common/common.h>
-#include <assets/assets.h>
 
 void Hal::xiaozhi_board_init()
 {
     mclog::tagInfo(_tag, "xiaozhi board init");
 
     hal_bridge::xiaozhi_board_init();
-}
-
-static void _stackchan_update_task(void* param)
-{
-    bool is_setup_done = false;
-
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-
-        tools::update_reminders();
-
-        LvglLockGuard lock;
-
-        if (!hal_bridge::is_xiaozhi_idle()) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-        }
-
-        GetStackChan().update();
-
-        if (!hal_bridge::is_xiaozhi_ready()) {
-            continue;
-        }
-
-        if (!is_setup_done) {
-            // Setup when xiaozhi ready
-            GetHAL().startSntp();
-            view::create_home_indicator([]() { GetHAL().requestWarmReboot(0); }, 0x81DBBD, 0x134233);
-            view::create_status_bar(0x81DBBD, 0x134233);
-            is_setup_done = true;
-        }
-
-        view::update_home_indicator();
-        view::update_status_bar();
-    }
 }
 
 void Hal::startXiaozhi()
@@ -263,7 +226,7 @@ uint8_t Hal::getSpeakerVolume()
 /*                                    Lvgl                                    */
 /* -------------------------------------------------------------------------- */
 #include "board/hal_bridge.h"
-#include <stackchan/stackchan.h>
+#include <robot_expression_motion_runtime/stackchan.h>
 
 static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {

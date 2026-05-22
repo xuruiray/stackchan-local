@@ -13,7 +13,6 @@
 #include "esp_video_device.h"
 #include "esp_video_init.h"
 #include "esp_video_ioctl.h"
-#include "gc0308.h"
 #include "linux/videodev2.h"
 
 #include "board.h"
@@ -104,20 +103,6 @@ static void log_available_video_devices()
 #else
 #define CAM_PRINT_FOURCC(pixelformat) (void)0;
 #endif  // CONFIG_XIAOZHI_ENABLE_CAMERA_DEBUG_MODE
-
-static esp_cam_sensor_output_format_t sensor_format_from_v4l2(v4l2_pix_fmt_t format)
-{
-    switch (format) {
-        case V4L2_PIX_FMT_YUV422P:
-            return ESP_CAM_SENSOR_PIXFORMAT_YUV422;
-        case V4L2_PIX_FMT_RGB565:
-            return ESP_CAM_SENSOR_PIXFORMAT_RGB565;
-        case V4L2_PIX_FMT_GREY:
-            return ESP_CAM_SENSOR_PIXFORMAT_GRAYSCALE;
-        default:
-            return static_cast<esp_cam_sensor_output_format_t>(0);
-    }
-}
 
 StackChanCamera::StackChanCamera(const esp_video_init_config_t& config)
 {
@@ -473,19 +458,6 @@ bool StackChanCamera::SetFrameSize(int width, int height)
     };
 
     auto configure_stream = [this, buffer_count](int target_width, int target_height) {
-        const esp_cam_sensor_output_format_t sensor_format = sensor_format_from_v4l2(sensor_format_);
-        const esp_cam_sensor_format_t* gc0308_format = sensor_format != 0
-                                                           ? gc0308_find_dvp_format(target_width, target_height, sensor_format)
-                                                           : nullptr;
-        if (gc0308_format) {
-            esp_cam_sensor_format_t requested_sensor_format = *gc0308_format;
-            if (ioctl(video_fd_, VIDIOC_S_SENSOR_FMT, &requested_sensor_format) != 0) {
-                ESP_LOGE(TAG, "VIDIOC_S_SENSOR_FMT resize %dx%d failed, errno=%d(%s)", target_width, target_height,
-                         errno, strerror(errno));
-                return false;
-            }
-        }
-
         struct v4l2_format setformat = {};
         setformat.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         setformat.fmt.pix.width      = target_width;

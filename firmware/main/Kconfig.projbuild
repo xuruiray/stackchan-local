@@ -1,12 +1,6 @@
 menu "StackChan Local"
 
-config STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD
-    bool "Build copied legacy cloud runtime sources"
-    default n
-    help
-        StackChan Local is designed to run without the copied Xiaozhi/cloud app
-        launcher, cloud avatar WebSocket, App Center, EzData, cloud OTA, and
-        camera explain HTTP paths. Keep this disabled for local-only firmware.
+comment "Local-only firmware; copied legacy cloud runtime sources are not part of this project."
 
 endmenu
 
