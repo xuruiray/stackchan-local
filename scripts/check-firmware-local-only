@@ -21,7 +21,7 @@ if ! rg -q 'STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1|STACKCHAN_LOCAL_DISABLE_LEGAC
   exit 1
 fi
 
-if ! rg -q 'firmware/main/local_runtime_adapters/application_local_stub\.cc' "$compile_db"; then
+if ! rg -q 'firmware/main/runtime_compat/application_local_stub\.cc' "$compile_db"; then
     echo "Local Application stub is missing from the firmware compile database." >&2
     exit 1
 fi

@@ -135,7 +135,7 @@ The firmware first connects to saved Wi-Fi. If no credentials are saved, it star
 
 The firmware tree keeps only the local companion app/HAL surface in `firmware/main`. ESP-IDF Component Manager resolves standard dependencies into `firmware/managed_components/`: ArduinoJson comes from the ESP Component Registry, while Mooncake, Mooncake Log, and Smooth UI Toolkit are Git dependencies. The retained embedded runtime subset is checked into `firmware/main/embedded_runtime/`, so firmware builds no longer clone a separate upstream project during compilation.
 
-CMake defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, links project-owned local runtime adapters from `firmware/main/local_runtime_adapters/`, and keeps the robot expression/motion engine in `firmware/main/robot_expression_motion_runtime/`. The upstream cloud application, cloud MQTT/WebSocket protocol clients, OTA, 4G modem, ESP-NOW, and old StackChan app launcher sources are not part of the local runtime. Verify this boundary after every firmware build:
+CMake defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, links project-owned runtime compatibility code from `firmware/main/runtime_compat/`, and keeps the robot expression/motion engine in `firmware/main/robot_expression_motion_runtime/`. Network transport shims remain under `firmware/main/local_runtime_adapters/network/`. The upstream cloud application, cloud MQTT/WebSocket protocol clients, OTA, 4G modem, ESP-NOW, and old StackChan app launcher sources are not part of the local runtime. Verify this boundary after every firmware build:
 
 ```bash
 npm run firmware:check-local-only

@@ -1,6 +1,6 @@
 # Firmware
 
-`firmware/` is the StackChan Local firmware workspace. It keeps the original firmware dependency structure but changes the runtime target to Local Companion mode.
+`firmware/` is the StackChan Local firmware workspace. It keeps the retained embedded runtime subset, but the project-owned firmware surface is now layered around Local Companion mode.
 
 ## Dependencies
 
@@ -22,7 +22,26 @@ idf.py -p /dev/cu.usbmodem21301 flash
 
 `CONFIG_STACKCHAN_LOCAL_ENABLE_LEGACY_CLOUD` defaults to `n`. In the default build, CMake excludes copied launcher/cloud app surfaces, App Center, EzData, cloud avatar WebSocket, cloud OTA, upstream cloud application, MQTT/WebSocket protocol clients, and 4G/RNDIS board paths.
 
-The local-only build defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, and links `firmware/main/local_runtime_adapters/application_local_stub.cc` instead of the original cloud `application.cc`.
+The local-only build defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, and links `firmware/main/runtime_compat/application_local_stub.cc` instead of the original cloud `application.cc`.
+
+## Firmware Layout
+
+Project-owned firmware code is organized by responsibility:
+
+```text
+firmware/main/
+  app/local_companion/       Local Companion UI app
+  system/                    boot, NVS, runtime state, time, power, diagnostics
+  hardware/                  board, I2C, PMIC, display, camera, audio, RGB, servo, touch, network
+  sensors/                   one driver-facing module per sensor plus sensor snapshot aggregation
+  services/local_companion/  WebSocket companion service, commands, telemetry, camera, audio playback
+  runtime_compat/            narrow bridge to the retained embedded runtime
+  embedded_runtime/          vendored runtime subset retained for board/audio/display primitives
+```
+
+The `hardware/` and `sensors/` directories intentionally keep each basic device or sensor in its own `.h/.cpp` pair. Aggregation files compose modules and publish HAL-facing behavior; they do not hide unrelated driver logic.
+
+`runtime_compat/embedded_runtime_bridge.{h,cpp}` is the compatibility boundary for retained runtime calls such as `Board::GetInstance()`, settings, display locks, camera access, battery state, speaker volume, and power-off. New local firmware code should prefer that bridge instead of scattering direct runtime calls through services.
 
 ## Local Companion Mode
 

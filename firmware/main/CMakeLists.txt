@@ -2,31 +2,74 @@
 set(EMBEDDED_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/embedded_runtime")
 set(GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated_include")
 
-# StackChan Local owns only the desktop-companion firmware surface. Upstream
-# runtime code has been vendored into embedded_runtime and selected below;
-# legacy cloud apps/HAL files are intentionally not present in this project tree.
-file(GLOB_RECURSE STACK_CHAN_SOURCES
-    "apps/app_local_companion/*.c"
-    "apps/app_local_companion/*.cc"
-    "apps/app_local_companion/*.cpp"
-    "apps/common/status_bar/*.c"
-    "apps/common/status_bar/*.cc"
-    "apps/common/status_bar/*.cpp"
-    "assets/*.c"
-    "assets/*.cc"
-    "assets/*.cpp"
-    "hal/*.c"
-    "hal/*.cc"
-    "hal/*.cpp"
+# StackChan Local owns only the desktop-companion firmware surface. Core app,
+# system, hardware, sensors, services, and runtime compatibility files are
+# listed explicitly so directory ownership stays visible in review.
+set(STACK_CHAN_SOURCES
+    "main.cpp"
+    "app/local_companion/local_companion_app.cpp"
+    "app/common/status_bar/status_bar.cpp"
+    "assets/assets.cpp"
+    "system/boot.cpp"
+    "system/diagnostics.cpp"
+    "system/nvs_settings.cpp"
+    "system/power_manager.cpp"
+    "system/runtime_state.cpp"
+    "system/time_service.cpp"
+    "hardware/audio/audio_device.cpp"
+    "hardware/board/stackchan_board.cpp"
+    "hardware/camera/camera_device.cpp"
+    "hardware/display/display_device.cpp"
+    "hardware/i2c/i2c_bus.cpp"
+    "hardware/io_expander/io_expander.cpp"
+    "hardware/network/network_service.cpp"
+    "hardware/network/wifi_ble.cpp"
+    "hardware/pmic/axp2101_power.cpp"
+    "hardware/rgb/rgb_light.cpp"
+    "hardware/screen_touch/screen_touch.cpp"
+    "hardware/servo/servo_controller.cpp"
+    "runtime_compat/application_local_stub.cc"
+    "runtime_compat/embedded_runtime_bridge.cpp"
+    "sensors/head_touch/head_touch_sensor.cpp"
+    "sensors/imu/imu_sensor.cpp"
+    "sensors/ina226/ina226_sensor.cpp"
+    "sensors/ir/ir_sensor.cpp"
+    "sensors/ltr553/ltr553_sensor.cpp"
+    "sensors/mic_level/mic_level_sensor.cpp"
+    "sensors/nfc/nfc_probe.cpp"
+    "sensors/rtc/rtc_sensor.cpp"
+    "sensors/sensor_snapshot.cpp"
+    "services/local_companion/audio_playback_service.cpp"
+    "services/local_companion/camera_stream_service.cpp"
+    "services/local_companion/command_dispatcher.cpp"
+    "services/local_companion/local_companion_service.cpp"
+    "services/local_companion/protocol_utils.cpp"
+    "services/local_companion/telemetry_service.cpp"
+    "local_runtime_adapters/network/esp_network.cpp"
+)
+
+file(GLOB_RECURSE HAL_DRIVER_SOURCES
+    "hal/drivers/*.c"
+    "hal/drivers/*.cc"
+    "hal/drivers/*.cpp"
+    "hal/utils/*.c"
+    "hal/utils/*.cc"
+    "hal/utils/*.cpp"
+)
+
+file(GLOB_RECURSE STACKCHAN_EXPRESSION_SOURCES
     "robot_expression_motion_runtime/*.c"
     "robot_expression_motion_runtime/*.cc"
     "robot_expression_motion_runtime/*.cpp"
 )
 
-set(STACK_CHAN_INCLUDE_DIRS 
+list(APPEND STACK_CHAN_SOURCES ${HAL_DRIVER_SOURCES} ${STACKCHAN_EXPRESSION_SOURCES})
+
+set(STACK_CHAN_INCLUDE_DIRS
     "."
+    "hal"
+    "hal/utils"
 )
-list(APPEND STACK_CHAN_SOURCES main.cpp)
 list(REMOVE_DUPLICATES STACK_CHAN_SOURCES)
 
 # Minimal retained runtime pieces used by StackChan Local. The original cloud
@@ -83,8 +126,6 @@ list(APPEND SOURCES
     "${EMBEDDED_RUNTIME_DIR}/boards/common/backlight.cc"
     "${EMBEDDED_RUNTIME_DIR}/boards/common/i2c_device.cc"
     "${EMBEDDED_RUNTIME_DIR}/boards/common/power_save_timer.cc"
-    "${CMAKE_CURRENT_SOURCE_DIR}/local_runtime_adapters/application_local_stub.cc"
-    "${CMAKE_CURRENT_SOURCE_DIR}/local_runtime_adapters/network/esp_network.cpp"
     ${STACK_CHAN_SOURCES}
 )
 list(APPEND INCLUDE_DIRS

@@ -7,7 +7,7 @@
 #include <uitk/short_namespace.hpp>
 #include <mooncake_log.h>
 #include <mooncake.h>
-#include <apps/app_local_companion/app_local_companion.h>
+#include <app/local_companion/local_companion_app.h>
 #include <hal/hal.h>
 
 using namespace mooncake;

@@ -132,7 +132,7 @@ idf.py flash monitor
 
 固件树只保留 `firmware/main` 下的 Local Companion app/HAL 代码。标准依赖由 ESP-IDF Component Manager 解析到 `firmware/managed_components/`：ArduinoJson 来自 ESP Component Registry，Mooncake、Mooncake Log 和 Smooth UI Toolkit 使用 Git dependency。保留的嵌入式运行时子集已经放入 `firmware/main/embedded_runtime/`，固件构建时不再 clone 单独的上游项目。
 
-local-only 构建会定义 `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`，编译裁掉 camera explain HTTP 路径，使用 `firmware/main/local_runtime_adapters/` 下的本项目本地运行时适配层，并把机器人表情/动作引擎放在 `firmware/main/robot_expression_motion_runtime/`。上游 cloud application、云端 MQTT/WebSocket 协议客户端、OTA、4G modem、ESP-NOW 和旧 StackChan app launcher 源码都不进入本地运行时。每次固件构建后可以用下面命令确认 legacy cloud 源码没有进入编译数据库：
+local-only 构建会定义 `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`，编译裁掉 camera explain HTTP 路径，使用 `firmware/main/runtime_compat/` 下的本项目运行时兼容层，并把机器人表情/动作引擎放在 `firmware/main/robot_expression_motion_runtime/`。网络传输 shim 仍保留在 `firmware/main/local_runtime_adapters/network/`。上游 cloud application、云端 MQTT/WebSocket 协议客户端、OTA、4G modem、ESP-NOW 和旧 StackChan app launcher 源码都不进入本地运行时。每次固件构建后可以用下面命令确认 legacy cloud 源码没有进入编译数据库：
 
 ```bash
 npm run firmware:check-local-only

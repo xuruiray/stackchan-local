@@ -16,16 +16,7 @@
 #include <vector>
 #include <lvgl_image.h>
 #include <string_view>
-#include "sensors/sensor_types.h"
-
-/**
- * @brief
- *
- */
-enum class WsSignalSource {
-    Local = 0,
-    Remote,
-};
+#include <sensors/sensor_snapshot.h>
 
 /**
  * @brief
@@ -70,47 +61,11 @@ enum class CommonLogLevel {
  * @brief
  *
  */
-namespace app_center {
-
-struct AppInfo_t {
-    std::string name;
-    std::string iconUrl;
-    std::string description;
-    std::string firmwareUrl;
-};
-
-using AppInfoList_t = std::vector<AppInfo_t>;
-
-};  // namespace app_center
-
-/**
- * @brief
- *
- */
 enum class WifiStatus {
     None = 0,
     Low,
     Medium,
     High,
-};
-
-/**
- * @brief
- *
- */
-struct UserAccountInfo_t {
-    std::string username;
-    std::string deviceName;
-};
-
-/**
- * @brief
- *
- */
-struct XiaozhiConfig_t {
-    uint32_t idleShutdownTimeSeconds = 600;
-    bool allowShutdownWhenCharging   = false;
-    uint8_t idleRandomMovementLevel  = 2;
 };
 
 /**
@@ -183,19 +138,6 @@ public:
     void setBackLightBrightness(uint8_t brightness, bool permanent = false);
     uint8_t getBackLightBrightness();
 
-    /* --------------------------------- Xiaozhi -------------------------------- */
-    void requestXiaozhiStart()
-    {
-        // Legacy cloud runtime is disabled in StackChan Local.
-    }
-    bool isXiaozhiStartRequested()
-    {
-        return false;
-    }
-    void startXiaozhi();
-    XiaozhiConfig_t getXiaozhiConfig();
-    void setXiaozhiConfig(XiaozhiConfig_t config);
-
     /* ----------------------------------- BLE ---------------------------------- */
     uitk::Signal<const char*> onBleMotionData;
     uitk::Signal<const char*> onBleAvatarData;
@@ -223,23 +165,12 @@ public:
     bool isServoPowerEnabled();
     bool isIoExpanderAvailable();
 
-    /* -------------------------------- Websocket ------------------------------- */
-    uitk::Signal<std::string_view> onWsMotionData;
-    uitk::Signal<std::string_view> onWsAvatarData;
-    uitk::Signal<std::string> onWsCallRequest;
-    uitk::Signal<bool> onWsCallResponse;
-    uitk::Signal<WsSignalSource> onWsCallEnd;
+    /* ---------------------------- Local Companion ---------------------------- */
     uitk::Signal<const WsTextMessage_t&> onWsTextMessage;
     uitk::Signal<const WsReactMessage_t&> onWsReactMessage;
-    uitk::Signal<bool> onWsVideoModeChange;
-    uitk::Signal<std::shared_ptr<LvglImage>> onWsVideoFrame;
     uitk::Signal<std::string_view> onWsDanceData;
-    uitk::Signal<CommonLogLevel, std::string_view> onWsLog;
     uitk::Signal<const char*> onLocalCompanionActivity;
 
-    void startWebSocketAvatarService(std::function<void(std::string_view)> onStartLog);
-
-    /* ---------------------------- Local Companion ---------------------------- */
     void startLocalCompanionService(std::function<void(std::string_view)> onStartLog);
     LocalCompanionState getLocalCompanionState();
     LocalFaceTrackingTarget getLocalFaceTrackingTarget();
@@ -254,12 +185,6 @@ public:
     void setTimezone(std::string_view tz);
     std::string getTimezone();
 
-    /* --------------------------------- EspNow --------------------------------- */
-    uitk::Signal<const std::vector<uint8_t>&> onEspNowData;
-    void startEspNow(int channel);
-    bool espNowSend(const std::vector<uint8_t>& data, const uint8_t* destAddr = nullptr);
-    void setLaserEnabled(bool enabled);
-
     /* ------------------------------- Warm Reboot ------------------------------ */
     void requestWarmReboot(int appIndex);
     int getWarmRebootTarget();
@@ -269,22 +194,6 @@ public:
     void startNetwork(std::function<void(std::string_view)> onLog);
     WifiStatus getWifiStatus();
     void startSntp();
-
-    /* -------------------------------- App center ------------------------------- */
-    app_center::AppInfoList_t fetchAppList();
-    void launchApp(std::string_view url, std::function<void(int)> onProgress);
-
-    /* --------------------------------- EzData --------------------------------- */
-    void startEzDataService(std::function<void(std::string_view)> onStartLog);
-    uitk::Signal<std::string_view> onEzdataPairCode;
-
-    /* ------------------------------- User Acount ------------------------------ */
-    UserAccountInfo_t getUserAccountInfo();
-    bool updateAccountInfo(std::function<void(std::string_view)> onLog);
-    bool unbindAccount(std::function<void(std::string_view)> onLog);
-
-    /* ----------------------------------- OTA ---------------------------------- */
-    bool updateFirmware(std::function<void(std::string_view)> onLog);
 
     /* ---------------------------------- Audio --------------------------------- */
     void setSpeakerVolume(uint8_t volume, bool permanent = false);
@@ -296,7 +205,7 @@ public:
     LocalPeripheralProbeSnapshot getLocalPeripheralProbeSnapshot();
 
 private:
-    void xiaozhi_board_init();
+    void board_init();
     void lvgl_init();
     void ble_init(bool useAltUuid);
     void servo_init();

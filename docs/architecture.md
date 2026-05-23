@@ -27,7 +27,7 @@ Responsibilities:
 
 ## Firmware
 
-Firmware lives under `firmware/` and is an ESP-IDF project overlay built from StackChan and XiaoZhi sources.
+Firmware lives under `firmware/` as an ESP-IDF project with a retained embedded runtime subset and a local-only project layer.
 
 Responsibilities:
 
@@ -37,6 +37,14 @@ Responsibilities:
 - Low-rate `sensorSnapshot` reports for the WebUI.
 - Idle motion and blinking when no higher-priority controller is active.
 - Offline behavior: reconnect while active, then power off after the configured disconnected idle timeout.
+
+Project-owned firmware code is split into:
+
+- `firmware/main/system/`: boot, NVS, runtime state, time, power, and diagnostics.
+- `firmware/main/hardware/`: basic hardware modules for board composition, I2C, PMIC, display, camera, audio, RGB, servo, screen touch, IO expander, and network.
+- `firmware/main/sensors/`: one file pair per sensor, plus sensor snapshot aggregation.
+- `firmware/main/services/local_companion/`: local WebSocket service, command dispatch, telemetry, camera stream, audio playback, and protocol helpers.
+- `firmware/main/runtime_compat/`: the narrow bridge into retained embedded runtime APIs.
 
 ## Protocol
 
