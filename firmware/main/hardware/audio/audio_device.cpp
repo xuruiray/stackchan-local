@@ -1,10 +1,26 @@
 #include <hardware/audio/audio_device.h>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
 
 #define TAG "CoreS3AudioCodec"
+
+namespace {
+
+void LogCodecIoErrorThrottled(const char* operation, esp_err_t err)
+{
+    static int64_t last_log_ms = 0;
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    if (now_ms - last_log_ms < 2000) {
+        return;
+    }
+    last_log_ms = now_ms;
+    ESP_LOGW(TAG, "%s failed: %s", operation, esp_err_to_name(err));
+}
+
+}  // namespace
 
 CoreS3AudioCodec::CoreS3AudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
@@ -196,7 +212,7 @@ void CoreS3AudioCodec::EnableInput(bool enable) {
             .bits_per_sample = 16,
             .channel = 2,
             .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
-            .sample_rate = (uint32_t)output_sample_rate_,
+            .sample_rate = (uint32_t)input_sample_rate_,
             .mclk_multiple = 0,
         };
         if (input_reference_) {
@@ -235,15 +251,27 @@ void CoreS3AudioCodec::EnableOutput(bool enable) {
 }
 
 int CoreS3AudioCodec::Read(int16_t* dest, int samples) {
-    if (input_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+    if (!input_enabled_) {
+        return 0;
+    }
+
+    const esp_err_t err = esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t));
+    if (err != ESP_OK) {
+        LogCodecIoErrorThrottled("audio input read", err);
+        return 0;
     }
     return samples;
 }
 
 int CoreS3AudioCodec::Write(const int16_t* data, int samples) {
-    if (output_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
+    if (!output_enabled_) {
+        return 0;
+    }
+
+    const esp_err_t err = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+    if (err != ESP_OK) {
+        LogCodecIoErrorThrottled("audio output write", err);
+        return 0;
     }
     return samples;
 }

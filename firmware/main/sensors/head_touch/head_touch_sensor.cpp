@@ -7,6 +7,8 @@
 #include <hal/hal.h>
 #include "drivers/Si12T/Si12T.h"
 #include <runtime_compat/embedded_runtime_bridge.h>
+#include <esp_err.h>
+#include <esp_timer.h>
 #include <mooncake_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -129,12 +131,29 @@ static void _head_touch_update_task(void* param)
 
     GestureRecognizer recognizer;
     HeadPetGesture gesture;
+    int64_t last_error_log_ms = 0;
 
     vTaskDelay(pdMS_TO_TICKS(200));
 
     while (1) {
-        // Read data
-        si12t_read_touch_result(si12t, &touch_result);
+        const esp_err_t read_err = si12t_read_touch_result(si12t, &touch_result);
+        if (read_err != ESP_OK) {
+            const int64_t now_ms = esp_timer_get_time() / 1000;
+            if (now_ms - last_error_log_ms >= 2000) {
+                last_error_log_ms = now_ms;
+                mclog::tagWarn(_tag, "read failed: {}", esp_err_to_name(read_err));
+            }
+            {
+                std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
+                _head_touch_snapshot.available = false;
+                _head_touch_snapshot.pressed = false;
+                _head_touch_snapshot.intensity = {0, 0, 0};
+                _head_touch_snapshot.gesture = HeadPetGesture::None;
+                _head_touch_snapshot.updatedAt = GetHAL().millis();
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         si12t_parse_touch_result_to(touch_result, data.intensity);
         data.timestamp = xTaskGetTickCount();
 
@@ -169,12 +188,37 @@ void Hal::head_touch_init()
         .dev_addr = SI12T_GND_ADDRESS,
     };
     static si12t_handle_t si12t;
-    si12t_init(&si12t_cfg, &si12t);
-    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
+    esp_err_t err = si12t_init(&si12t_cfg, &si12t);
+    if (err != ESP_OK) {
+        mclog::tagError(_tag, "init failed: {}", esp_err_to_name(err));
+        std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
+        _head_touch_snapshot.available = false;
+        _head_touch_snapshot.updatedAt = GetHAL().millis();
+        return;
+    }
+
+    err = si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
+    if (err != ESP_OK) {
+        mclog::tagError(_tag, "setup failed: {}", esp_err_to_name(err));
+        si12t_delete(si12t);
+        si12t = nullptr;
+        std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
+        _head_touch_snapshot.available = false;
+        _head_touch_snapshot.updatedAt = GetHAL().millis();
+        return;
+    }
 
     // xTaskCreateWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, MALLOC_CAP_SPIRAM);
-    xTaskCreatePinnedToCoreWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, 1,
-                                    MALLOC_CAP_SPIRAM);
+    const BaseType_t task_result = xTaskCreatePinnedToCoreWithCaps(_head_touch_update_task, "headtouch", 1024 * 6,
+                                                                   si12t, 2, NULL, 1, MALLOC_CAP_SPIRAM);
+    if (task_result != pdPASS) {
+        mclog::tagError(_tag, "failed to create update task");
+        si12t_delete(si12t);
+        si12t = nullptr;
+        std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
+        _head_touch_snapshot.available = false;
+        _head_touch_snapshot.updatedAt = GetHAL().millis();
+    }
 }
 
 LocalHeadTouchSnapshot Hal::getLocalHeadTouchSnapshot()

@@ -201,6 +201,7 @@ public:
     std::string startMicTest(std::function<void(MicTestStatus)> onStatusUpdate);
     void getMicWaveformFrame(std::vector<int16_t>& data);
     LocalMicLevelSnapshot getMicLevelSnapshot();
+    void releaseMicLevelInput();
     void clearupMicTest();
     LocalPeripheralProbeSnapshot getLocalPeripheralProbeSnapshot();
 

@@ -455,6 +455,7 @@ bool StackChanCamera::SetFrameSize(int width, int height)
             frame_.data = nullptr;
         }
         frame_.len = 0;
+        frame_.capacity = 0;
     };
 
     auto configure_stream = [this, buffer_count](int target_width, int target_height) {
@@ -570,6 +571,7 @@ bool StackChanCamera::Capture()
                 heap_caps_free(frame_.data);
                 frame_.data   = nullptr;
                 frame_.format = 0;
+                frame_.capacity = 0;
             }
             frame_.len  = buf.bytesused;
             frame_.data = (uint8_t*)heap_caps_malloc(frame_.len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -580,6 +582,7 @@ bool StackChanCamera::Capture()
                 }
                 return false;
             }
+            frame_.capacity = frame_.len;
 
 #ifdef CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
             ESP_LOGW(TAG, "mmap_buffers_[buf.index].length = %d, sensor_width = %d, sensor_height = %d",
@@ -727,6 +730,7 @@ bool StackChanCamera::Capture()
             }
 
             frame_.data = rotate_dst;
+            frame_.capacity = frame_.len;
 
             heap_caps_free(rotate_src);
             rotate_src = nullptr;
@@ -800,6 +804,7 @@ bool StackChanCamera::Capture()
                     heap_caps_free(frame_.data);
                     frame_.data = rotate_src;
                     frame_.len  = frame_.width * frame_.height * 3;
+                    frame_.capacity = frame_.len;
                     break;
                 }
                 default:
@@ -879,6 +884,7 @@ bool StackChanCamera::Capture()
 
             frame_.data   = rotate_dst;
             frame_.len    = frame_.width * frame_.height * 2;
+            frame_.capacity = frame_.len;
             frame_.format = V4L2_PIX_FMT_RGB565;
             heap_caps_free(rotate_src);
             rotate_src = nullptr;
@@ -1021,20 +1027,24 @@ bool StackChanCamera::StreamCaptures()
             return false;
         }
         {
-            // 保存帧副本到PSRAM
-            if (frame_.data) {
+            // 保存帧副本到PSRAM，流式预览复用缓冲区以减少 PSRAM 碎片和帧延迟。
+            if (frame_.data && frame_.capacity < buf.bytesused) {
                 heap_caps_free(frame_.data);
                 frame_.data   = nullptr;
                 frame_.format = 0;
+                frame_.capacity = 0;
             }
             frame_.len  = buf.bytesused;
-            frame_.data = (uint8_t*)heap_caps_malloc(frame_.len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
             if (!frame_.data) {
-                ESP_LOGE(TAG, "alloc frame copy failed: need allocate %lu bytes", buf.bytesused);
-                if (ioctl(video_fd_, VIDIOC_QBUF, &buf) != 0) {
-                    ESP_LOGE(TAG, "Cleanup: VIDIOC_QBUF failed");
+                frame_.data = (uint8_t*)heap_caps_malloc(frame_.len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (!frame_.data) {
+                    ESP_LOGE(TAG, "alloc frame copy failed: need allocate %lu bytes", buf.bytesused);
+                    if (ioctl(video_fd_, VIDIOC_QBUF, &buf) != 0) {
+                        ESP_LOGE(TAG, "Cleanup: VIDIOC_QBUF failed");
+                    }
+                    return false;
                 }
-                return false;
+                frame_.capacity = frame_.len;
             }
 
 #ifdef CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE

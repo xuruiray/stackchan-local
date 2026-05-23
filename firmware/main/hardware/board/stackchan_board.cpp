@@ -293,7 +293,6 @@ public:
         InitializeAxp2101();
         InitializePowerSaveTimer();
         InitializeAw9523();
-        I2cDetect();
         InitializeSpi();
         InitializeIli9342Display();
         InitializeCamera();
@@ -327,13 +326,9 @@ public:
 
     virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override
     {
-        static bool last_discharging = false;
-        charging                     = pmic_->IsCharging();
-        discharging                  = pmic_->IsDischarging();
-        if (discharging != last_discharging) {
-            power_save_timer_->SetEnabled(discharging);
-            last_discharging = discharging;
-        }
+        charging    = pmic_->IsCharging();
+        discharging = pmic_->IsDischarging();
+        UpdatePowerSaveEnabled(pmic_->IsExternalPowerConnected(), discharging);
 
         level = pmic_->GetBatteryLevel();
         return true;

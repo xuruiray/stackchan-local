@@ -24,6 +24,7 @@ private:
     struct FrameBuffer {
         uint8_t* data         = nullptr;
         size_t len            = 0;
+        size_t capacity       = 0;
         uint16_t width        = 0;
         uint16_t height       = 0;
         v4l2_pix_fmt_t format = 0;

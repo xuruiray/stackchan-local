@@ -31,6 +31,7 @@ constexpr size_t _mic_level_noise_history_size   = 24;
 constexpr float _mic_level_min_rms               = 0.000001f;
 constexpr float _mic_level_noise_gate_db         = 3.0f;
 constexpr float _mic_level_active_span_db        = 18.0f;
+bool _mic_level_owns_input                       = false;
 
 struct MicTestFrame {
     int16_t mic;
@@ -229,6 +230,7 @@ LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
     const bool was_input_enabled = audio_codec->input_enabled();
     if (!was_input_enabled) {
         audio_codec->EnableInput(true);
+        _mic_level_owns_input = true;
         // The first DMA read after opening the ES7210 input often contains startup bias.
         audio_codec->InputData(input_chunk);
     }
@@ -238,14 +240,20 @@ LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
     // Keep the input path open for the 1 Hz level meter. Reopening ES7210 on
     // every sensor snapshot causes I2S disable warnings and noisy level spikes.
 
-    snapshot.available = true;
     snapshot.channels = static_cast<uint8_t>(std::min<size_t>(input_channels, 2));
     snapshot.updatedAt = GetHAL().millis();
 
     if (!read_ok) {
+        snapshot.available = false;
         snapshot.reason = "capture_failed";
+        if (_mic_level_owns_input && audio_codec->input_enabled()) {
+            audio_codec->EnableInput(false);
+            _mic_level_owns_input = false;
+        }
         return snapshot;
     }
+
+    snapshot.available = true;
 
     std::array<MicLevelChannelStats, _mic_level_meter_channels> stats{};
     for (size_t frame_index = 0; frame_index < capture_frames; ++frame_index) {
@@ -286,6 +294,21 @@ LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
     return snapshot;
 }
 
+void Hal::releaseMicLevelInput()
+{
+    auto& board      = Board::GetInstance();
+    auto audio_codec = board.GetAudioCodec();
+    if (!audio_codec) {
+        _mic_level_owns_input = false;
+        return;
+    }
+
+    if (_mic_level_owns_input && audio_codec->input_enabled()) {
+        audio_codec->EnableInput(false);
+    }
+    _mic_level_owns_input = false;
+}
+
 void Hal::clearupMicTest()
 {
     auto& board      = Board::GetInstance();
@@ -301,4 +324,5 @@ void Hal::clearupMicTest()
     if (audio_codec->input_enabled()) {
         audio_codec->EnableInput(false);
     }
+    _mic_level_owns_input = false;
 }

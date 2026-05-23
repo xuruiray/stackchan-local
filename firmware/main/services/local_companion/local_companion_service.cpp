@@ -29,6 +29,7 @@
 #include <jpg/image_to_jpeg.h>
 #include <lwip/ip_addr.h>
 #include <algorithm>
+#include <cstdint>
 #include <ctime>
 #include <cstring>
 #include <mutex>
@@ -69,9 +70,41 @@ struct PlaybackEvent {
     std::string message;
 };
 
+struct PowerTelemetryCache {
+    uint8_t batteryLevel = 100;
+    bool charging = false;
+    uint8_t backlight = 0;
+    uint8_t speakerVolume = 0;
+};
+
+struct NetworkTelemetryCache {
+    std::string wifiStatus = "disconnected";
+    int rssi = 0;
+    std::string ssid;
+    bool bleConnected = false;
+};
+
+struct ServoTelemetryCache {
+    bool ioExpanderAvailable = false;
+    bool servoPower = false;
+    float yawAngle = 0.0f;
+    bool yawMoving = false;
+    bool yawTorque = false;
+    float pitchAngle = 0.0f;
+    bool pitchMoving = false;
+    bool pitchTorque = false;
+};
+
 static constexpr size_t kMaxAudioBytes = 262144;
 static constexpr size_t kMaxAudioChunkBase64Bytes = 8192;
 static constexpr size_t kMaxAudioChunks = 128;
+static constexpr uint32_t kImuCacheIntervalMs = 250;
+static constexpr uint32_t kHeadTouchCacheIntervalMs = 250;
+static constexpr uint32_t kPowerCacheIntervalMs = 1000;
+static constexpr uint32_t kNetworkCacheIntervalMs = 1000;
+static constexpr uint32_t kServoCacheIntervalMs = 1000;
+static constexpr uint32_t kMicCacheIntervalMs = 1000;
+static constexpr uint32_t kPeripheralCacheIntervalMs = 1000;
 
 using namespace stackchan::hal::local_companion;
 
@@ -134,6 +167,16 @@ std::string discover_daemon_url()
 
     mdns_query_results_free(results);
     return discovered_url;
+}
+
+uint8_t clamp_percent(int value)
+{
+    return static_cast<uint8_t>(std::max(0, std::min(100, value)));
+}
+
+bool time_due(uint32_t now, uint32_t due_at)
+{
+    return due_at == 0 || static_cast<int32_t>(now - due_at) >= 0;
 }
 
 class LocalCompanionSocket {
@@ -209,6 +252,13 @@ private:
     uint32_t _last_imu_event_time = 0;
     uint32_t _last_sensor_snapshot_event_time = 0;
     uint32_t _last_screen_touch_event_time = 0;
+    uint32_t _next_imu_cache_time = 0;
+    uint32_t _next_head_touch_cache_time = 0;
+    uint32_t _next_power_cache_time = 0;
+    uint32_t _next_network_cache_time = 0;
+    uint32_t _next_servo_cache_time = 0;
+    uint32_t _next_mic_cache_time = 0;
+    uint32_t _next_peripheral_cache_time = 0;
     uint32_t _camera_frame_id = 0;
     uint32_t _event_counter = 0;
     std::mutex _camera_mutex;
@@ -218,10 +268,18 @@ private:
     float _rgb_control_brightness = 1.0f;
     embedded_runtime_bridge::TouchPoint_t _last_screen_touch;
     HeadPetGesture _pending_head_touch = HeadPetGesture::None;
+    LocalHeadTouchSnapshot _head_touch_cache;
+    LocalImuSnapshot _imu_cache;
+    LocalMicLevelSnapshot _mic_cache;
+    LocalPeripheralProbeSnapshot _peripheral_cache;
+    PowerTelemetryCache _power_cache;
+    NetworkTelemetryCache _network_cache;
+    ServoTelemetryCache _servo_cache;
     int _head_touch_connection = -1;
     bool _use_mdns                   = true;
     bool _last_screen_touch_valid    = false;
     bool _has_pending_head_touch     = false;
+    bool _sensor_cache_initialized   = false;
 
     void connect()
     {
@@ -256,11 +314,14 @@ private:
             mclog::tagInfo(_tag, "connected to local daemon");
             _local_state          = LocalCompanionState::Connected;
             _last_heartbeat_time = GetHAL().millis();
+            reset_sensor_cache_schedule(_last_heartbeat_time);
             send_handshake();
         });
 
         _websocket->OnDisconnected([this]() {
             mclog::tagWarn(_tag, "local daemon disconnected");
+            GetHAL().releaseMicLevelInput();
+            _sensor_cache_initialized = false;
             if (_local_state != LocalCompanionState::PairingFailed) {
                 _local_state = LocalCompanionState::Disconnected;
             }
@@ -273,6 +334,8 @@ private:
 
         if (!_websocket->Connect(_url.c_str())) {
             _local_state = LocalCompanionState::Disconnected;
+            GetHAL().releaseMicLevelInput();
+            _sensor_cache_initialized = false;
             mclog::tagWarn(_tag, "failed to connect to {}", _url);
         }
         _last_reconnect_attempt = GetHAL().millis();
@@ -698,6 +761,7 @@ private:
 
     void send_sensor_events_if_needed(uint32_t now)
     {
+        refresh_sensor_snapshot_cache_if_needed(now);
         send_pending_head_touch();
         send_screen_touch_if_needed(now);
 
@@ -722,6 +786,128 @@ private:
         }
     }
 
+    void reset_sensor_cache_schedule(uint32_t now)
+    {
+        _sensor_cache_initialized = false;
+        _next_imu_cache_time = now;
+        _next_head_touch_cache_time = now;
+        _next_power_cache_time = now;
+        _next_network_cache_time = now;
+        _next_servo_cache_time = now;
+        _next_mic_cache_time = now;
+        _next_peripheral_cache_time = now;
+    }
+
+    void refresh_sensor_snapshot_cache_if_needed(uint32_t now)
+    {
+        if (!_sensor_cache_initialized) {
+            refresh_imu_cache();
+            refresh_head_touch_cache();
+            refresh_power_cache();
+            refresh_network_cache();
+            refresh_servo_cache();
+            refresh_mic_cache();
+            refresh_peripheral_cache();
+            _sensor_cache_initialized = true;
+
+            _next_imu_cache_time = now + kImuCacheIntervalMs;
+            _next_head_touch_cache_time = now + kHeadTouchCacheIntervalMs;
+            _next_power_cache_time = now + kPowerCacheIntervalMs;
+            _next_network_cache_time = now + kNetworkCacheIntervalMs + 100;
+            _next_servo_cache_time = now + kServoCacheIntervalMs + 200;
+            _next_mic_cache_time = now + kMicCacheIntervalMs + 300;
+            _next_peripheral_cache_time = now + kPeripheralCacheIntervalMs + 400;
+            return;
+        }
+
+        if (time_due(now, _next_imu_cache_time)) {
+            refresh_imu_cache();
+            _next_imu_cache_time = now + kImuCacheIntervalMs;
+        }
+        if (time_due(now, _next_head_touch_cache_time)) {
+            refresh_head_touch_cache();
+            _next_head_touch_cache_time = now + kHeadTouchCacheIntervalMs;
+        }
+        if (time_due(now, _next_power_cache_time)) {
+            refresh_power_cache();
+            _next_power_cache_time = now + kPowerCacheIntervalMs;
+        }
+        if (time_due(now, _next_network_cache_time)) {
+            refresh_network_cache();
+            _next_network_cache_time = now + kNetworkCacheIntervalMs;
+        }
+        if (time_due(now, _next_servo_cache_time)) {
+            refresh_servo_cache();
+            _next_servo_cache_time = now + kServoCacheIntervalMs;
+        }
+        if (time_due(now, _next_mic_cache_time)) {
+            refresh_mic_cache();
+            _next_mic_cache_time = now + kMicCacheIntervalMs;
+        }
+        if (time_due(now, _next_peripheral_cache_time)) {
+            refresh_peripheral_cache();
+            _next_peripheral_cache_time = now + kPeripheralCacheIntervalMs;
+        }
+    }
+
+    void refresh_imu_cache()
+    {
+        _imu_cache = GetHAL().getLocalImuSnapshot();
+    }
+
+    void refresh_head_touch_cache()
+    {
+        _head_touch_cache = GetHAL().getLocalHeadTouchSnapshot();
+    }
+
+    void refresh_power_cache()
+    {
+        _power_cache.batteryLevel = clamp_percent(GetHAL().getBatteryLevel());
+        _power_cache.charging = GetHAL().isBatteryCharging();
+        _power_cache.backlight = clamp_percent(GetHAL().getBackLightBrightness());
+        _power_cache.speakerVolume = clamp_percent(GetHAL().getSpeakerVolume());
+    }
+
+    void refresh_network_cache()
+    {
+        auto& wifi = WifiManager::GetInstance();
+        _network_cache.rssi = 0;
+        _network_cache.ssid.clear();
+        if (wifi.IsConnected()) {
+            _network_cache.wifiStatus = "connected";
+            _network_cache.rssi = wifi.GetRssi();
+            _network_cache.ssid = wifi.GetSsid();
+        } else if (wifi.IsConfigMode()) {
+            _network_cache.wifiStatus = "connecting";
+        } else {
+            _network_cache.wifiStatus = "disconnected";
+        }
+        _network_cache.bleConnected = GetHAL().isBleConnected();
+    }
+
+    void refresh_servo_cache()
+    {
+        _servo_cache.ioExpanderAvailable = GetHAL().isIoExpanderAvailable();
+        _servo_cache.servoPower = GetHAL().isServoPowerEnabled();
+        auto& motion = GetStackChan().motion();
+        _servo_cache.yawAngle = motion.yawServo().getCurrentAngle() / 10.0f;
+        _servo_cache.yawMoving = motion.yawServo().isMoving();
+        _servo_cache.yawTorque = motion.yawServo().getTorqueEnabled();
+        _servo_cache.pitchAngle = motion.pitchServo().getCurrentAngle() / 10.0f;
+        _servo_cache.pitchMoving = motion.pitchServo().isMoving();
+        _servo_cache.pitchTorque = motion.pitchServo().getTorqueEnabled();
+    }
+
+    void refresh_mic_cache()
+    {
+        _mic_cache = GetHAL().getMicLevelSnapshot();
+    }
+
+    void refresh_peripheral_cache()
+    {
+        _peripheral_cache = GetHAL().getLocalPeripheralProbeSnapshot();
+    }
+
     void prepare_event_doc(ArduinoJson::JsonDocument& doc, const char* kind)
     {
         prepare_robot_event(doc, kind, _event_counter++);
@@ -731,25 +917,22 @@ private:
     {
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "battery");
-        doc["event"]["level"]    = std::min<uint8_t>(100, GetHAL().getBatteryLevel());
-        doc["event"]["charging"] = GetHAL().isBatteryCharging();
+        doc["event"]["level"]    = _power_cache.batteryLevel;
+        doc["event"]["charging"] = _power_cache.charging;
         send_json(doc);
     }
 
     void send_wifi_event()
     {
-        auto& wifi = WifiManager::GetInstance();
-
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "wifi");
-        if (wifi.IsConnected()) {
+        if (_network_cache.wifiStatus == "connected") {
             doc["event"]["status"] = "connected";
-            doc["event"]["rssi"]   = wifi.GetRssi();
-            auto ssid              = wifi.GetSsid();
-            if (!ssid.empty()) {
-                doc["event"]["ssid"] = ssid;
+            doc["event"]["rssi"]   = _network_cache.rssi;
+            if (!_network_cache.ssid.empty()) {
+                doc["event"]["ssid"] = _network_cache.ssid;
             }
-        } else if (wifi.IsConfigMode()) {
+        } else if (_network_cache.wifiStatus == "connecting") {
             doc["event"]["status"] = "connecting";
         } else {
             doc["event"]["status"] = "disconnected";
@@ -759,7 +942,7 @@ private:
 
     void send_imu_event()
     {
-        const auto imu = GetHAL().getLocalImuSnapshot();
+        const auto& imu = _imu_cache;
         if (!imu.available) {
             return;
         }
@@ -779,38 +962,36 @@ private:
 
     void send_sensor_snapshot_event(uint32_t now)
     {
-        auto& wifi = WifiManager::GetInstance();
         auto camera = embedded_runtime_bridge::board_get_camera();
         const auto touch = embedded_runtime_bridge::get_touch_point();
-        const auto head_touch = GetHAL().getLocalHeadTouchSnapshot();
-        const auto imu = GetHAL().getLocalImuSnapshot();
-        const auto mic = GetHAL().getMicLevelSnapshot();
-        const auto peripherals = GetHAL().getLocalPeripheralProbeSnapshot();
+        const auto& head_touch = _head_touch_cache;
+        const auto& imu = _imu_cache;
+        const auto& mic = _mic_cache;
+        const auto& peripherals = _peripheral_cache;
 
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "sensorSnapshot");
         doc["event"]["uptimeMs"] = now;
 
-        doc["event"]["power"]["batteryLevel"] = std::min<uint8_t>(100, GetHAL().getBatteryLevel());
-        doc["event"]["power"]["charging"] = GetHAL().isBatteryCharging();
-        doc["event"]["power"]["backlight"] = std::min<uint8_t>(100, GetHAL().getBackLightBrightness());
-        doc["event"]["power"]["speakerVolume"] = std::min<uint8_t>(100, GetHAL().getSpeakerVolume());
-        doc["event"]["power"]["servoPower"] = GetHAL().isServoPowerEnabled();
+        doc["event"]["power"]["batteryLevel"] = _power_cache.batteryLevel;
+        doc["event"]["power"]["charging"] = _power_cache.charging;
+        doc["event"]["power"]["backlight"] = _power_cache.backlight;
+        doc["event"]["power"]["speakerVolume"] = _power_cache.speakerVolume;
+        doc["event"]["power"]["servoPower"] = _servo_cache.servoPower;
 
-        if (wifi.IsConnected()) {
+        if (_network_cache.wifiStatus == "connected") {
             doc["event"]["network"]["wifi"]["status"] = "connected";
-            doc["event"]["network"]["wifi"]["rssi"] = wifi.GetRssi();
-            auto ssid = wifi.GetSsid();
-            if (!ssid.empty()) {
-                doc["event"]["network"]["wifi"]["ssid"] = ssid;
+            doc["event"]["network"]["wifi"]["rssi"] = _network_cache.rssi;
+            if (!_network_cache.ssid.empty()) {
+                doc["event"]["network"]["wifi"]["ssid"] = _network_cache.ssid;
             }
-        } else if (wifi.IsConfigMode()) {
+        } else if (_network_cache.wifiStatus == "connecting") {
             doc["event"]["network"]["wifi"]["status"] = "connecting";
         } else {
             doc["event"]["network"]["wifi"]["status"] = "disconnected";
         }
         doc["event"]["network"]["ble"]["available"] = true;
-        doc["event"]["network"]["ble"]["connected"] = GetHAL().isBleConnected();
+        doc["event"]["network"]["ble"]["connected"] = _network_cache.bleConnected;
         doc["event"]["network"]["ble"]["provisioning"] = true;
 
         doc["event"]["motion"]["imu"]["available"] = imu.available;
@@ -828,14 +1009,13 @@ private:
         }
 
         doc["event"]["motion"]["servos"]["available"] = true;
-        doc["event"]["motion"]["servos"]["power"] = GetHAL().isServoPowerEnabled();
-        auto& motion = GetStackChan().motion();
-        doc["event"]["motion"]["servos"]["yaw"]["angle"] = motion.yawServo().getCurrentAngle() / 10.0f;
-        doc["event"]["motion"]["servos"]["yaw"]["moving"] = motion.yawServo().isMoving();
-        doc["event"]["motion"]["servos"]["yaw"]["torque"] = motion.yawServo().getTorqueEnabled();
-        doc["event"]["motion"]["servos"]["pitch"]["angle"] = motion.pitchServo().getCurrentAngle() / 10.0f;
-        doc["event"]["motion"]["servos"]["pitch"]["moving"] = motion.pitchServo().isMoving();
-        doc["event"]["motion"]["servos"]["pitch"]["torque"] = motion.pitchServo().getTorqueEnabled();
+        doc["event"]["motion"]["servos"]["power"] = _servo_cache.servoPower;
+        doc["event"]["motion"]["servos"]["yaw"]["angle"] = _servo_cache.yawAngle;
+        doc["event"]["motion"]["servos"]["yaw"]["moving"] = _servo_cache.yawMoving;
+        doc["event"]["motion"]["servos"]["yaw"]["torque"] = _servo_cache.yawTorque;
+        doc["event"]["motion"]["servos"]["pitch"]["angle"] = _servo_cache.pitchAngle;
+        doc["event"]["motion"]["servos"]["pitch"]["moving"] = _servo_cache.pitchMoving;
+        doc["event"]["motion"]["servos"]["pitch"]["torque"] = _servo_cache.pitchTorque;
 
         doc["event"]["interaction"]["screenTouch"]["available"] = true;
         doc["event"]["interaction"]["screenTouch"]["pressed"] = touch.num > 0;
@@ -863,7 +1043,7 @@ private:
         doc["event"]["interaction"]["wakeWord"]["available"] = true;
         doc["event"]["interaction"]["wakeWord"]["text"] = "Hi, Stack Chan";
 
-        const bool io_expander_available = GetHAL().isIoExpanderAvailable();
+        const bool io_expander_available = _servo_cache.ioExpanderAvailable;
         doc["event"]["peripherals"]["ioExpander"]["available"] = io_expander_available;
         if (!io_expander_available) {
             doc["event"]["peripherals"]["ioExpander"]["reason"] = "driver_unavailable";

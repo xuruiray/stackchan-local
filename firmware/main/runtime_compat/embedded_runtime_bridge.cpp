@@ -168,10 +168,7 @@ void app_play_sound_and_wait(const std::string_view& sound, int volume)
         if (volume > 100) {
             volume = 100;
         }
-        uint8_t playback_volume = static_cast<uint8_t>(volume);
-        if (playback_volume < previous_volume) {
-            playback_volume = previous_volume;
-        }
+        const uint8_t playback_volume = static_cast<uint8_t>(volume);
         board_set_speaker_volume(playback_volume, false);
     }
     service->PlaySound(sound);
