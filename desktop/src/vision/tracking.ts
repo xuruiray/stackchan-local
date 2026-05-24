@@ -2,6 +2,7 @@ import type {
   FaceExpression,
   FaceTrackingControl,
   NormalizedFaceBox,
+  ProtocolTrace,
   RobotEmotion,
   RobotEventMessage
 } from "@stackchan-local/protocol";
@@ -38,6 +39,7 @@ export interface VisionTrackingStatus {
   fps: number;
   mirrorX: boolean;
   control: VisionTrackingSettings;
+  adaptive: VisionAdaptiveStatus;
   detectorAvailable: boolean;
   lastFrameAt?: string;
   lastDetectionAt?: string;
@@ -51,6 +53,18 @@ export interface VisionTrackingStatus {
   framesReceived: number;
   framesDropped: number;
   detectorLatencyMs?: number;
+  latency: VisionLatencyStatus;
+  mediaCredit: VisionMediaCreditStatus;
+}
+
+export interface VisionAdaptiveStatus {
+  level: number;
+  active: boolean;
+  fps: number;
+  quality: number;
+  dropRate: number;
+  reason?: string;
+  lastChangedAt?: string;
 }
 
 export interface VisionFrameSnapshot {
@@ -60,6 +74,25 @@ export interface VisionFrameSnapshot {
   height: number;
   dataBase64: string;
   timestamp: string;
+  seq?: number;
+  receivedAt: string;
+  captureTimestamp?: string;
+  sentAt?: string;
+  trace?: ProtocolTrace;
+}
+
+export interface VisionLatencyStatus {
+  frameAgeMs?: number;
+  deviceToDaemonMs?: number;
+  captureToDaemonMs?: number;
+  detectorEndToEndMs?: number;
+}
+
+export interface VisionMediaCreditStatus {
+  enabled: boolean;
+  grantedFrames: number;
+  lastGrantedAt?: string;
+  reason?: string;
 }
 
 export interface VisionPreviewSnapshot {
@@ -94,12 +127,16 @@ export interface VisionTrackingOptions {
   commandMaxHz?: number;
   lostTimeoutMs?: number;
   streamRetryMs?: number;
+  adaptivePressureMs?: number;
+  adaptiveStableMs?: number;
 }
 
 const DEFAULT_OPTIONS: Required<VisionTrackingOptions> = {
   commandMaxHz: 10,
   lostTimeoutMs: 1500,
-  streamRetryMs: 1000
+  streamRetryMs: 1000,
+  adaptivePressureMs: 5000,
+  adaptiveStableMs: 15000
 };
 
 const CAMERA_STREAM_HEALTHY_REFRESH_MS = 10_000;
@@ -107,6 +144,13 @@ const CAMERA_STREAM_STALE_MS = 8_000;
 const CAMERA_STREAM_MAX_RETRY_MS = 15_000;
 const CAMERA_STREAM_RECONNECT_AFTER_FAILURES = 3;
 const CAMERA_STREAM_RECONNECT_COOLDOWN_MS = 20_000;
+const ADAPTIVE_DROP_RATE_THRESHOLD = 0.08;
+const ADAPTIVE_LATENCY_FRAME_RATIO = 0.8;
+const ADAPTIVE_WINDOW_MS = 5_000;
+const ADAPTIVE_MAX_LEVEL = 2;
+const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 2;
+const CAMERA_MEDIA_STEADY_CREDIT_FRAMES = 1;
+const CAMERA_MEDIA_MAX_IN_FLIGHT = 2;
 const EXPRESSION_CHANGED_INTERVAL_MS = 450;
 const EXPRESSION_REFRESH_INTERVAL_MS = 900;
 const EXPRESSION_REACT_DURATION_MS = 1200;
@@ -159,6 +203,18 @@ export class VisionTrackingService {
   private lastCameraRecoveryAt = 0;
   private framesReceived = 0;
   private framesDropped = 0;
+  private mediaCreditGrantedFrames = 0;
+  private mediaCreditLastGrantedAt = 0;
+  private mediaCreditReason?: string;
+  private adaptiveLevel = 0;
+  private adaptiveReason?: string;
+  private adaptiveLastChangedAt = 0;
+  private adaptivePressureSince = 0;
+  private adaptiveStableSince = 0;
+  private adaptiveWindowStartedAt = 0;
+  private adaptiveWindowFrames = 0;
+  private adaptiveWindowDropped = 0;
+  private adaptiveDropRate = 0;
   private settings: VisionTrackingSettings;
   private readonly previewListeners = new Set<VisionPreviewListener>();
 
@@ -215,13 +271,14 @@ export class VisionTrackingService {
     this.lastError = undefined;
     if (enabled) {
       this.logger.info("face tracking enabled", {
-        fps: this.settings.camera.fps,
-        camera: this.settings.camera,
+        fps: this.effectiveCameraSettings().fps,
+        camera: this.effectiveCameraSettings(),
         mirrorX: this.config.faceTrackingMirrorX
       });
       this.ensureCameraStream(true);
     } else {
       this.logger.info("face tracking disabled");
+      this.resetAdaptiveState("face tracking disabled");
       void this.controller.cameraStream({
         enabled: false,
         fps: this.settings.camera.fps,
@@ -265,6 +322,7 @@ export class VisionTrackingService {
         previousCamera.fps !== this.settings.camera.fps ||
         previousCamera.quality !== this.settings.camera.quality)
     ) {
+      this.resetAdaptiveState("camera control updated");
       this.lastStreamCommandAt = 0;
       this.ensureCameraStream(true);
     }
@@ -273,11 +331,21 @@ export class VisionTrackingService {
   }
 
   status(): VisionTrackingStatus {
+    const camera = this.effectiveCameraSettings();
     return {
       enabled: this.enabled,
-      fps: this.settings.camera.fps,
+      fps: camera.fps,
       mirrorX: this.config.faceTrackingMirrorX,
       control: this.settings,
+      adaptive: {
+        level: this.adaptiveLevel,
+        active: this.adaptiveLevel > 0,
+        fps: camera.fps,
+        quality: camera.quality,
+        dropRate: this.adaptiveDropRate,
+        reason: this.adaptiveReason,
+        lastChangedAt: this.adaptiveLastChangedAt > 0 ? new Date(this.adaptiveLastChangedAt).toISOString() : undefined
+      },
       detectorAvailable: this.detectorAvailable,
       lastFrameAt: this.lastFrameAt?.toISOString(),
       lastDetectionAt: this.lastDetectionAt?.toISOString(),
@@ -291,7 +359,14 @@ export class VisionTrackingService {
       lastError: this.lastError,
       framesReceived: this.framesReceived,
       framesDropped: this.framesDropped,
-      detectorLatencyMs: this.detectorLatencyMs
+      detectorLatencyMs: this.detectorLatencyMs,
+      latency: this.latencyStatus(),
+      mediaCredit: {
+        enabled: this.mediaCreditEnabled(),
+        grantedFrames: this.mediaCreditGrantedFrames,
+        lastGrantedAt: this.mediaCreditLastGrantedAt > 0 ? new Date(this.mediaCreditLastGrantedAt).toISOString() : undefined,
+        reason: this.mediaCreditReason
+      }
     };
   }
 
@@ -329,12 +404,13 @@ export class VisionTrackingService {
       return;
     }
     this.cameraStreamInFlight = true;
+    const camera = this.effectiveCameraSettings();
     const resultPromise = this.controller.cameraStream({
       enabled: true,
-      fps: this.settings.camera.fps,
-      width: this.settings.camera.width,
-      height: this.settings.camera.height,
-      quality: this.settings.camera.quality,
+      fps: camera.fps,
+      width: camera.width,
+      height: camera.height,
+      quality: camera.quality,
       format: "jpeg"
     });
     this.lastStreamCommandAt = now;
@@ -342,6 +418,7 @@ export class VisionTrackingService {
       this.cameraStreamInFlight = false;
       if (result.sent && (!result.ack || result.ack.status === "accepted")) {
         this.cameraStreamAckFailures = 0;
+        this.grantCameraMediaCredit(CAMERA_MEDIA_INITIAL_CREDIT_FRAMES, "camera stream active");
         return;
       }
       this.cameraStreamAckFailures += 1;
@@ -376,7 +453,13 @@ export class VisionTrackingService {
       return;
     }
     const receivedAt = new Date();
+    const daemonReceivedAt = message.event.trace?.daemonReceivedAt ?? receivedAt.toISOString();
+    const trace: ProtocolTrace = {
+      ...message.event.trace,
+      daemonReceivedAt
+    };
     this.framesReceived += 1;
+    this.adaptiveWindowFrames += 1;
     this.cameraStreamAckFailures = 0;
     this.lastFrameAt = receivedAt;
     this.lastFrame = {
@@ -385,18 +468,26 @@ export class VisionTrackingService {
       width: message.event.width,
       height: message.event.height,
       dataBase64: message.event.dataBase64,
-      timestamp: receivedAt.toISOString()
+      timestamp: message.event.captureTimestamp ?? message.timestamp,
+      seq: message.event.seq ?? message.seq,
+      receivedAt: receivedAt.toISOString(),
+      captureTimestamp: message.event.captureTimestamp,
+      sentAt: message.event.sentAt,
+      trace
     };
     this.emitPreviewUpdate();
 
     if (this.inFlight) {
       this.framesDropped += 1;
+      this.adaptiveWindowDropped += 1;
+      this.evaluateAdaptiveBackpressure();
       return;
     }
 
     this.inFlight = true;
     try {
       const detectorStart = Date.now();
+      const detectorStartedAt = new Date(detectorStart).toISOString();
       const result = await this.detector.detect({
         frameId: message.event.frameId,
         width: message.event.width,
@@ -408,6 +499,13 @@ export class VisionTrackingService {
       this.lastError = undefined;
       this.detectorLatencyMs = Date.now() - detectorStart;
       this.lastDetectionAt = new Date();
+      if (this.lastFrame?.frameId === message.event.frameId) {
+        this.lastFrame.trace = {
+          ...trace,
+          detectorStartedAt,
+          detectorFinishedAt: this.lastDetectionAt.toISOString()
+        };
+      }
       this.handleDetection(result);
     } catch (error) {
       this.detectorAvailable = false;
@@ -415,6 +513,134 @@ export class VisionTrackingService {
       this.logger.warn("face tracking detection failed", { error: this.lastError });
     } finally {
       this.inFlight = false;
+      this.grantCameraMediaCredit(CAMERA_MEDIA_STEADY_CREDIT_FRAMES, "detector ready");
+      this.evaluateAdaptiveBackpressure();
+    }
+  }
+
+  private grantCameraMediaCredit(creditFrames: number, reason: string): void {
+    if (!this.enabled || !this.mediaCreditEnabled()) {
+      return;
+    }
+    this.mediaCreditGrantedFrames += creditFrames;
+    this.mediaCreditLastGrantedAt = Date.now();
+    this.mediaCreditReason = reason;
+    void this.controller.mediaFlowControl(
+      {
+        stream: "camera",
+        creditFrames,
+        maxInFlight: CAMERA_MEDIA_MAX_IN_FLIGHT,
+        reason
+      },
+      { waitForAck: false }
+    );
+  }
+
+  private mediaCreditEnabled(): boolean {
+    return this.registry.getActiveSession()?.capabilities.includes("mediaCredit") ?? false;
+  }
+
+  private effectiveCameraSettings(): CameraStreamSettings {
+    return adaptiveCameraSettings(this.settings.camera, this.adaptiveLevel);
+  }
+
+  private evaluateAdaptiveBackpressure(): void {
+    const now = Date.now();
+    if (this.adaptiveWindowStartedAt === 0) {
+      this.adaptiveWindowStartedAt = now;
+    }
+    if (now - this.adaptiveWindowStartedAt >= ADAPTIVE_WINDOW_MS) {
+      this.adaptiveDropRate =
+        this.adaptiveWindowFrames > 0 ? this.adaptiveWindowDropped / this.adaptiveWindowFrames : 0;
+      this.adaptiveWindowStartedAt = now;
+      this.adaptiveWindowFrames = 0;
+      this.adaptiveWindowDropped = 0;
+    }
+
+    const camera = this.effectiveCameraSettings();
+    const frameIntervalMs = camera.fps > 0 ? 1000 / camera.fps : Number.POSITIVE_INFINITY;
+    const latencyPressure =
+      this.detectorLatencyMs !== undefined && this.detectorLatencyMs > frameIntervalMs * ADAPTIVE_LATENCY_FRAME_RATIO;
+    const dropPressure = this.adaptiveDropRate > ADAPTIVE_DROP_RATE_THRESHOLD;
+    const pressure = latencyPressure || dropPressure;
+    if (pressure) {
+      this.adaptiveStableSince = 0;
+      if (this.adaptivePressureSince === 0) {
+        this.adaptivePressureSince = now;
+      }
+      if (now - this.adaptivePressureSince >= this.options.adaptivePressureMs) {
+        this.setAdaptiveLevel(
+          Math.min(ADAPTIVE_MAX_LEVEL, this.adaptiveLevel + 1),
+          latencyPressure ? "detector latency backpressure" : "camera frame drop backpressure"
+        );
+        this.adaptivePressureSince = now;
+      }
+      return;
+    }
+
+    this.adaptivePressureSince = 0;
+    if (this.adaptiveLevel === 0) {
+      return;
+    }
+    if (this.adaptiveStableSince === 0) {
+      this.adaptiveStableSince = now;
+    }
+    if (now - this.adaptiveStableSince >= this.options.adaptiveStableMs) {
+      this.setAdaptiveLevel(Math.max(0, this.adaptiveLevel - 1), "camera stream stable");
+      this.adaptiveStableSince = now;
+    }
+  }
+
+  private setAdaptiveLevel(level: number, reason: string): void {
+    if (level === this.adaptiveLevel) {
+      return;
+    }
+    this.adaptiveLevel = level;
+    this.adaptiveReason = reason;
+    this.adaptiveLastChangedAt = Date.now();
+    this.lastStreamCommandAt = 0;
+    this.logger.info("face tracking adaptive camera stream changed", {
+      type: "vision",
+      level,
+      reason,
+      camera: this.effectiveCameraSettings(),
+      dropRate: this.adaptiveDropRate,
+      detectorLatencyMs: this.detectorLatencyMs
+    });
+    this.ensureCameraStream(true);
+    void this.controller.telemetryConfig(
+      {
+        sensorSnapshotHz: level > 0 ? 0.5 : 1,
+        imuHz: level > 0 ? 2 : 4,
+        includeI2cScan: level === 0,
+        reason
+      },
+      { waitForAck: false }
+    );
+    this.emitPreviewUpdate();
+  }
+
+  private resetAdaptiveState(reason: string): void {
+    const wasAdaptive = this.adaptiveLevel > 0;
+    this.adaptiveLevel = 0;
+    this.adaptiveReason = wasAdaptive ? reason : undefined;
+    this.adaptiveLastChangedAt = wasAdaptive ? Date.now() : 0;
+    this.adaptivePressureSince = 0;
+    this.adaptiveStableSince = 0;
+    this.adaptiveWindowStartedAt = 0;
+    this.adaptiveWindowFrames = 0;
+    this.adaptiveWindowDropped = 0;
+    this.adaptiveDropRate = 0;
+    if (wasAdaptive) {
+      void this.controller.telemetryConfig(
+        {
+          sensorSnapshotHz: 1,
+          imuHz: 4,
+          includeI2cScan: true,
+          reason
+        },
+        { waitForAck: false }
+      );
     }
   }
 
@@ -523,6 +749,19 @@ export class VisionTrackingService {
     for (const listener of this.previewListeners) {
       listener(snapshot);
     }
+  }
+
+  private latencyStatus(): VisionLatencyStatus {
+    const frame = this.lastFrame;
+    if (!frame) {
+      return {};
+    }
+    return {
+      frameAgeMs: this.lastFrameAt ? Date.now() - this.lastFrameAt.getTime() : undefined,
+      deviceToDaemonMs: deltaMs(frame.sentAt, frame.receivedAt),
+      captureToDaemonMs: deltaMs(frame.captureTimestamp, frame.receivedAt),
+      detectorEndToEndMs: deltaMs(frame.captureTimestamp, frame.trace?.detectorFinishedAt)
+    };
   }
 }
 
@@ -875,4 +1114,36 @@ function cameraSettingsFromPreset(
     return { ...CAMERA_STREAM_PRESETS[preset] };
   }
   return { ...fallback };
+}
+
+function adaptiveCameraSettings(base: CameraStreamSettings, level: number): CameraStreamSettings {
+  if (level <= 0) {
+    return { ...base };
+  }
+  const minimumFps = Math.min(base.fps, 4);
+  if (level === 1) {
+    return {
+      ...base,
+      fps: Math.max(minimumFps, Math.min(base.fps, Math.ceil(base.fps * 0.75))),
+      quality: Math.max(14, Math.min(base.quality, base.quality - 2))
+    };
+  }
+  return {
+    ...base,
+    fps: Math.max(minimumFps, Math.min(base.fps, 4)),
+    quality: Math.max(14, Math.min(base.quality, 14))
+  };
+}
+
+function deltaMs(start: string | undefined, end: string | undefined): number | undefined {
+  if (!start || !end) {
+    return undefined;
+  }
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return undefined;
+  }
+  const delta = endMs - startMs;
+  return delta >= 0 && delta < 60_000 ? delta : undefined;
 }

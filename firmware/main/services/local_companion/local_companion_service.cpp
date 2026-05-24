@@ -105,6 +105,12 @@ static constexpr uint32_t kNetworkCacheIntervalMs = 1000;
 static constexpr uint32_t kServoCacheIntervalMs = 1000;
 static constexpr uint32_t kMicCacheIntervalMs = 1000;
 static constexpr uint32_t kPeripheralCacheIntervalMs = 1000;
+static constexpr uint32_t kDefaultHeartbeatIntervalMs = 15000;
+static constexpr uint32_t kMinHeartbeatIntervalMs = 1000;
+static constexpr uint32_t kMaxHeartbeatIntervalMs = 60000;
+static constexpr uint8_t kBinaryCameraFrameKind = 0x01;
+static constexpr int kDefaultCameraCreditFrames = 2;
+static constexpr int kMaxCameraCreditFrames = 12;
 
 using namespace stackchan::hal::local_companion;
 
@@ -223,7 +229,7 @@ public:
         send_pending_playback_events();
 
         const auto now = GetHAL().millis();
-        if (now - _last_heartbeat_time > 5000) {
+        if (now - _last_heartbeat_time > _heartbeat_interval_ms) {
             send_heartbeat();
             _last_heartbeat_time = now;
         }
@@ -246,11 +252,14 @@ private:
     AudioTransferState _audio_transfer;
     uint32_t _last_reconnect_attempt = 0;
     uint32_t _last_heartbeat_time    = 0;
+    uint32_t _heartbeat_interval_ms  = kDefaultHeartbeatIntervalMs;
     uint32_t _last_camera_frame_time = 0;
     uint32_t _last_battery_event_time = 0;
     uint32_t _last_wifi_event_time = 0;
     uint32_t _last_imu_event_time = 0;
     uint32_t _last_sensor_snapshot_event_time = 0;
+    uint32_t _sensor_snapshot_interval_ms = 1000;
+    uint32_t _imu_event_interval_ms = 250;
     uint32_t _last_screen_touch_event_time = 0;
     uint32_t _next_imu_cache_time = 0;
     uint32_t _next_head_touch_cache_time = 0;
@@ -260,7 +269,7 @@ private:
     uint32_t _next_mic_cache_time = 0;
     uint32_t _next_peripheral_cache_time = 0;
     uint32_t _camera_frame_id = 0;
-    uint32_t _event_counter = 0;
+    uint32_t _outgoing_seq = 0;
     std::mutex _camera_mutex;
     CameraStreamConfig _camera_stream;
     bool _rgb_control_enabled = false;
@@ -280,6 +289,12 @@ private:
     bool _last_screen_touch_valid    = false;
     bool _has_pending_head_touch     = false;
     bool _sensor_cache_initialized   = false;
+    bool _binary_camera_frame_enabled = false;
+    bool _camera_credit_enabled = false;
+    int _camera_credit_frames = 0;
+    int _camera_max_in_flight = kDefaultCameraCreditFrames;
+    bool _include_i2c_scan = true;
+    uint8_t _adaptive_level = 0;
 
     void connect()
     {
@@ -314,6 +329,12 @@ private:
             mclog::tagInfo(_tag, "connected to local daemon");
             _local_state          = LocalCompanionState::Connected;
             _last_heartbeat_time = GetHAL().millis();
+            _heartbeat_interval_ms = kDefaultHeartbeatIntervalMs;
+            _binary_camera_frame_enabled = false;
+            _camera_credit_enabled = false;
+            _camera_credit_frames = 0;
+            _camera_max_in_flight = kDefaultCameraCreditFrames;
+            _adaptive_level = 0;
             reset_sensor_cache_schedule(_last_heartbeat_time);
             send_handshake();
         });
@@ -382,7 +403,7 @@ private:
     {
         const char* type = doc["type"] | "";
         if (strcmp(type, "daemon.hello") == 0) {
-            _local_state = LocalCompanionState::Connected;
+            handle_daemon_hello(doc);
             send_state_event("idle", "daemon hello received");
             return;
         }
@@ -402,6 +423,72 @@ private:
         }
     }
 
+    void handle_daemon_hello(ArduinoJson::JsonObject doc)
+    {
+        _local_state = LocalCompanionState::Connected;
+        const uint32_t requested_heartbeat = doc["heartbeatIntervalMs"] | kDefaultHeartbeatIntervalMs;
+        _heartbeat_interval_ms = std::max(kMinHeartbeatIntervalMs, std::min(kMaxHeartbeatIntervalMs, requested_heartbeat));
+        _binary_camera_frame_enabled = false;
+        _camera_credit_enabled = false;
+
+        auto flags = doc["featureFlags"].as<ArduinoJson::JsonArray>();
+        for (auto flag : flags) {
+            const char* value = flag | "";
+            if (strcmp(value, "binaryCameraFrame") == 0) {
+                _binary_camera_frame_enabled = true;
+            }
+            if (strcmp(value, "mediaCredit") == 0) {
+                _camera_credit_enabled = true;
+            }
+        }
+
+        auto media_credit = doc["featureParams"]["mediaCredit"].as<ArduinoJson::JsonObject>();
+        if (!media_credit.isNull()) {
+            _camera_max_in_flight = std::max(1, std::min(kMaxCameraCreditFrames,
+                                                         media_credit["maxCreditFrames"] | kDefaultCameraCreditFrames));
+        }
+
+        mclog::tagInfo(_tag, "daemon hello heartbeat={}ms binaryCameraFrame={} mediaCredit={}",
+                       _heartbeat_interval_ms, _binary_camera_frame_enabled ? "yes" : "no",
+                       _camera_credit_enabled ? "yes" : "no");
+    }
+
+    void handle_telemetry_config(ArduinoJson::JsonObject command)
+    {
+        if (!command["sensorSnapshotHz"].isNull()) {
+            const float hz = command["sensorSnapshotHz"] | 1.0f;
+            _sensor_snapshot_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
+        }
+
+        if (!command["imuHz"].isNull()) {
+            const float hz = command["imuHz"] | 4.0f;
+            _imu_event_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
+        }
+
+        if (!command["includeI2cScan"].isNull()) {
+            _include_i2c_scan = command["includeI2cScan"] | true;
+        }
+
+        _adaptive_level =
+            (_sensor_snapshot_interval_ms > 1000 || _imu_event_interval_ms > 250 || !_include_i2c_scan) ? 1 : 0;
+        mclog::tagInfo(_tag, "telemetry config snapshot={}ms imu={}ms i2cScan={} adaptiveLevel={}",
+                       _sensor_snapshot_interval_ms, _imu_event_interval_ms, _include_i2c_scan ? "yes" : "no",
+                       static_cast<int>(_adaptive_level));
+    }
+
+    void handle_media_flow_control(ArduinoJson::JsonObject command)
+    {
+        const char* stream = command["stream"] | "";
+        if (strcmp(stream, "camera") != 0) {
+            return;
+        }
+
+        const int credit = std::max(0, std::min(kMaxCameraCreditFrames, command["creditFrames"] | 0));
+        const int max_in_flight = std::max(1, std::min(kMaxCameraCreditFrames, command["maxInFlight"] | _camera_max_in_flight));
+        _camera_max_in_flight = max_in_flight;
+        _camera_credit_frames = std::min(_camera_credit_frames + credit, _camera_max_in_flight);
+    }
+
     void handle_command(ArduinoJson::JsonObject doc)
     {
         auto command = doc["command"].as<ArduinoJson::JsonObject>();
@@ -418,6 +505,7 @@ private:
             GetHAL().onWsTextMessage.emit(message);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_state_event("speaking", "say command");
+            send_command_status(command_id, kind, nullptr, "completed", "text displayed", 1.0f);
             return;
         }
 
@@ -434,6 +522,7 @@ private:
             }
             GetHAL().onWsReactMessage.emit(message);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "reaction applied", 1.0f);
             return;
         }
 
@@ -458,6 +547,7 @@ private:
             _rgb_control_color = color;
             _rgb_control_brightness = clamp_float(command["brightness"] | 1.0f, 0.0f, 1.0f);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "rgb applied", 1.0f);
             return;
         }
 
@@ -473,6 +563,7 @@ private:
             ArduinoJson::serializeJson(motion, motion_json);
             GetStackChan().updateMotionFromJson(motion_json.c_str());
             send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "motion command applied", 1.0f);
             return;
         }
 
@@ -495,12 +586,28 @@ private:
                 _face_tracking_hold_until = GetHAL().millis() + 3500;
             }
             send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "camera stream configured", 1.0f);
+            return;
+        }
+
+        if (strcmp(kind, "telemetryConfig") == 0) {
+            handle_telemetry_config(command);
+            send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "telemetry configured", 1.0f);
+            return;
+        }
+
+        if (strcmp(kind, "mediaFlowControl") == 0) {
+            handle_media_flow_control(command);
+            send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "media credit applied", 1.0f);
             return;
         }
 
         if (strcmp(kind, "trackFace") == 0) {
             handle_track_face(command);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "completed", "face target applied", 1.0f);
             return;
         }
 
@@ -509,6 +616,7 @@ private:
             ArduinoJson::serializeJson(command["sequence"], sequence_json);
             GetHAL().onWsDanceData.emit(sequence_json);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
+            send_command_status(command_id, kind, nullptr, "started", "animation started", 0.0f);
             return;
         }
 
@@ -531,8 +639,10 @@ private:
             const char* request_id = command["requestId"] | "";
             if (handle_capture_image(command_id, request_id)) {
                 send_command_ack(command_id, kind, request_id, true, "accepted");
+                send_command_status(command_id, kind, request_id, "completed", "image captured", 1.0f);
             } else {
                 send_command_ack(command_id, kind, request_id, false, "capture failed");
+                send_command_status(command_id, kind, request_id, "failed", "capture failed", 1.0f);
             }
             return;
         }
@@ -542,10 +652,12 @@ private:
             _local_state = mode_from_string(mode);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_state_event(mode, command["reason"] | "setMode command");
+            send_command_status(command_id, kind, nullptr, "completed", "mode applied", 1.0f);
             return;
         }
 
         send_command_ack(command_id, kind, nullptr, false, "unsupported robot command");
+        send_command_status(command_id, kind, nullptr, "failed", "unsupported robot command", 1.0f);
         send_error("unknown_command", "unsupported robot command", true, command_id);
     }
 
@@ -604,6 +716,7 @@ private:
         _audio_transfer.audio.clear();
         _audio_transfer.audio.reserve(total_bytes);
         send_command_ack(command_id, "playAudioStart", request_id, true, "accepted");
+        send_command_status(command_id, "playAudioStart", request_id, "completed", "audio transfer opened", 1.0f);
     }
 
     void handle_play_audio_chunk(ArduinoJson::JsonObject command, const char* command_id)
@@ -640,6 +753,7 @@ private:
         _audio_transfer.audio.append(decoded);
         _audio_transfer.nextChunkIndex++;
         send_command_ack(command_id, "playAudioChunk", request_id, true, "accepted");
+        send_command_status(command_id, "playAudioChunk", request_id, "completed", "audio chunk accepted", 1.0f);
     }
 
     void handle_play_audio_end(ArduinoJson::JsonObject command, const char* command_id)
@@ -673,12 +787,14 @@ private:
         send_command_ack(command_id, "playAudioEnd", request_id, true, "accepted");
         send_state_event("speaking", "playAudio command");
         send_playback_event(request_id, "started", "");
+        send_command_status(command_id, "playAudioEnd", request_id, "started", "playback started", 0.0f);
         start_playback_task(request_id, std::move(audio), volume);
     }
 
     void reject_audio_command(const char* command_id, const char* kind, const char* request_id, const char* message)
     {
         send_command_ack(command_id, kind, request_id, false, message);
+        send_command_status(command_id, kind, request_id, "failed", message, 1.0f);
         send_error("invalid_audio_command", message, true, command_id);
     }
 
@@ -724,6 +840,9 @@ private:
         if (!_camera_stream.enabled || now - _last_camera_frame_time < _camera_stream.intervalMs) {
             return;
         }
+        if (_camera_credit_enabled && _camera_credit_frames <= 0) {
+            return;
+        }
         _last_camera_frame_time = now;
 
         auto camera = embedded_runtime_bridge::board_get_camera();
@@ -755,7 +874,10 @@ private:
             }
         }
 
-        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height);
+        if (send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height) && _camera_credit_enabled &&
+            _camera_credit_frames > 0) {
+            _camera_credit_frames--;
+        }
         free(jpeg_data);
     }
 
@@ -765,7 +887,7 @@ private:
         send_pending_head_touch();
         send_screen_touch_if_needed(now);
 
-        if (now - _last_imu_event_time >= 250) {
+        if (_imu_event_interval_ms > 0 && now - _last_imu_event_time >= _imu_event_interval_ms) {
             send_imu_event();
             _last_imu_event_time = now;
         }
@@ -780,7 +902,7 @@ private:
             _last_wifi_event_time = now;
         }
 
-        if (now - _last_sensor_snapshot_event_time >= 1000) {
+        if (_sensor_snapshot_interval_ms > 0 && now - _last_sensor_snapshot_event_time >= _sensor_snapshot_interval_ms) {
             send_sensor_snapshot_event(now);
             _last_sensor_snapshot_event_time = now;
         }
@@ -798,6 +920,11 @@ private:
         _next_peripheral_cache_time = now;
     }
 
+    uint32_t active_imu_cache_interval_ms() const
+    {
+        return _imu_event_interval_ms > 0 ? _imu_event_interval_ms : kImuCacheIntervalMs;
+    }
+
     void refresh_sensor_snapshot_cache_if_needed(uint32_t now)
     {
         if (!_sensor_cache_initialized) {
@@ -810,7 +937,7 @@ private:
             refresh_peripheral_cache();
             _sensor_cache_initialized = true;
 
-            _next_imu_cache_time = now + kImuCacheIntervalMs;
+            _next_imu_cache_time = now + active_imu_cache_interval_ms();
             _next_head_touch_cache_time = now + kHeadTouchCacheIntervalMs;
             _next_power_cache_time = now + kPowerCacheIntervalMs;
             _next_network_cache_time = now + kNetworkCacheIntervalMs + 100;
@@ -822,7 +949,7 @@ private:
 
         if (time_due(now, _next_imu_cache_time)) {
             refresh_imu_cache();
-            _next_imu_cache_time = now + kImuCacheIntervalMs;
+            _next_imu_cache_time = now + active_imu_cache_interval_ms();
         }
         if (time_due(now, _next_head_touch_cache_time)) {
             refresh_head_touch_cache();
@@ -910,7 +1037,7 @@ private:
 
     void prepare_event_doc(ArduinoJson::JsonDocument& doc, const char* kind)
     {
-        prepare_robot_event(doc, kind, _event_counter++);
+        prepare_robot_event(doc, kind, _outgoing_seq++);
     }
 
     void send_battery_event()
@@ -1054,6 +1181,9 @@ private:
         doc["event"]["peripherals"]["camera"]["requestedWidth"] = _camera_stream.requestedWidth;
         doc["event"]["peripherals"]["camera"]["requestedHeight"] = _camera_stream.requestedHeight;
         doc["event"]["peripherals"]["camera"]["quality"] = _camera_stream.jpegQuality;
+        doc["event"]["peripherals"]["camera"]["transport"] =
+            _binary_camera_frame_enabled ? "binary" : "jsonBase64";
+        doc["event"]["peripherals"]["camera"]["adaptiveLevel"] = _adaptive_level;
         if (camera) {
             if (camera->GetFrameWidth() > 0) {
                 doc["event"]["peripherals"]["camera"]["width"] = camera->GetFrameWidth();
@@ -1157,20 +1287,22 @@ private:
             doc["event"]["peripherals"]["magnetometer"]["reason"] = peripherals.magnetometerReason.c_str();
         }
 
-        auto i2c_scans = doc["event"]["peripherals"]["i2cScan"].to<ArduinoJson::JsonArray>();
-        for (const auto& scan : peripherals.i2cScans) {
-            auto scan_doc = i2c_scans.add<ArduinoJson::JsonObject>();
-            scan_doc["stage"] = scan.stage.c_str();
-            scan_doc["uptimeMs"] = scan.uptimeMs;
-            auto addresses = scan_doc["addresses"].to<ArduinoJson::JsonArray>();
-            for (const auto address : scan.addresses) {
-                addresses.add(static_cast<int>(address));
-            }
-            scan_doc["targets"]["ltr553"] = scan.foundLtr553;
-            scan_doc["targets"]["ina226"] = scan.foundIna226;
-            scan_doc["targets"]["nfc"] = scan.foundNfc;
-            if (!scan.reason.empty()) {
-                scan_doc["reason"] = scan.reason.c_str();
+        if (_include_i2c_scan) {
+            auto i2c_scans = doc["event"]["peripherals"]["i2cScan"].to<ArduinoJson::JsonArray>();
+            for (const auto& scan : peripherals.i2cScans) {
+                auto scan_doc = i2c_scans.add<ArduinoJson::JsonObject>();
+                scan_doc["stage"] = scan.stage.c_str();
+                scan_doc["uptimeMs"] = scan.uptimeMs;
+                auto addresses = scan_doc["addresses"].to<ArduinoJson::JsonArray>();
+                for (const auto address : scan.addresses) {
+                    addresses.add(static_cast<int>(address));
+                }
+                scan_doc["targets"]["ltr553"] = scan.foundLtr553;
+                scan_doc["targets"]["ina226"] = scan.foundIna226;
+                scan_doc["targets"]["nfc"] = scan.foundNfc;
+                if (!scan.reason.empty()) {
+                    scan_doc["reason"] = scan.reason.c_str();
+                }
             }
         }
 
@@ -1247,29 +1379,86 @@ private:
         send_json(doc);
     }
 
-    void send_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height)
+    bool send_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height)
     {
+        const uint32_t frame_id = _camera_frame_id++;
+        const uint32_t seq = _outgoing_seq++;
+        const std::string capture_timestamp = iso_now();
+        if (_binary_camera_frame_enabled &&
+            send_binary_camera_frame(jpeg_data, jpeg_len, width, height, frame_id, seq, capture_timestamp)) {
+            return true;
+        }
+
         size_t encoded_len = 0;
         mbedtls_base64_encode(nullptr, 0, &encoded_len, jpeg_data, jpeg_len);
 
         std::string encoded(encoded_len, '\0');
         if (mbedtls_base64_encode((unsigned char*)encoded.data(), encoded.size(), &encoded_len, jpeg_data, jpeg_len) != 0) {
-            return;
+            return false;
         }
         encoded.resize(encoded_len);
 
+        const std::string sent_at = iso_now();
         ArduinoJson::JsonDocument doc;
+        doc["seq"]                 = seq;
         doc["type"]                = "robot.event";
-        doc["eventId"]             = GetHAL().getFactoryMacString("") + "-frame-" + std::to_string(_camera_frame_id);
+        doc["eventId"]             = GetHAL().getFactoryMacString("") + "-frame-" + std::to_string(frame_id);
         doc["deviceId"]            = GetHAL().getFactoryMacString(":");
-        doc["timestamp"]           = iso_now();
+        doc["timestamp"]           = capture_timestamp;
         doc["event"]["kind"]       = "cameraFrame";
-        doc["event"]["frameId"]    = std::to_string(_camera_frame_id++);
+        doc["event"]["frameId"]    = std::to_string(frame_id);
         doc["event"]["mimeType"]   = "image/jpeg";
         doc["event"]["width"]      = width;
         doc["event"]["height"]     = height;
         doc["event"]["dataBase64"] = encoded;
-        send_json(doc);
+        doc["event"]["seq"]        = seq;
+        doc["event"]["captureTimestamp"] = capture_timestamp;
+        doc["event"]["sentAt"]     = sent_at;
+        doc["event"]["trace"]["deviceCapturedAt"] = capture_timestamp;
+        doc["event"]["trace"]["deviceSentAt"] = sent_at;
+        return send_json(doc);
+    }
+
+    bool send_binary_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height, uint32_t frame_id,
+                                  uint32_t seq, const std::string& capture_timestamp)
+    {
+        if (!_websocket || !_websocket->IsConnected() || jpeg_data == nullptr || jpeg_len == 0) {
+            return false;
+        }
+
+        ArduinoJson::JsonDocument header_doc;
+        header_doc["frameId"] = std::to_string(frame_id);
+        header_doc["deviceId"] = GetHAL().getFactoryMacString(":");
+        const std::string sent_at = iso_now();
+        header_doc["timestamp"] = capture_timestamp;
+        header_doc["mimeType"] = "image/jpeg";
+        header_doc["width"] = width;
+        header_doc["height"] = height;
+        header_doc["byteLength"] = jpeg_len;
+        header_doc["transport"] = "binary";
+        header_doc["seq"] = seq;
+        header_doc["captureTimestamp"] = capture_timestamp;
+        header_doc["sentAt"] = sent_at;
+
+        std::string header;
+        ArduinoJson::serializeJson(header_doc, header);
+        if (header.empty() || header.size() > 0xffff) {
+            return false;
+        }
+
+        std::vector<uint8_t> envelope;
+        envelope.resize(8 + header.size() + jpeg_len);
+        envelope[0] = 'S';
+        envelope[1] = 'C';
+        envelope[2] = 'L';
+        envelope[3] = '1';
+        envelope[4] = kBinaryCameraFrameKind;
+        envelope[5] = 0;
+        envelope[6] = static_cast<uint8_t>((header.size() >> 8) & 0xff);
+        envelope[7] = static_cast<uint8_t>(header.size() & 0xff);
+        memcpy(envelope.data() + 8, header.data(), header.size());
+        memcpy(envelope.data() + 8 + header.size(), jpeg_data, jpeg_len);
+        return _websocket->SendBinary(reinterpret_cast<const char*>(envelope.data()), envelope.size());
     }
 
     void send_handshake()
@@ -1303,6 +1492,7 @@ private:
         capabilities.add("mic");
         capabilities.add("display");
         capabilities.add("bleProvisioning");
+        capabilities.add("mediaCredit");
 
         doc["audioParams"]["format"]          = "opus";
         doc["audioParams"]["sampleRate"]      = 16000;
@@ -1316,6 +1506,7 @@ private:
     {
         ArduinoJson::JsonDocument doc;
         doc["type"]      = "heartbeat";
+        doc["seq"]       = _outgoing_seq++;
         doc["deviceId"]  = GetHAL().getFactoryMacString(":");
         doc["timestamp"] = iso_now();
         send_json(doc);
@@ -1324,10 +1515,7 @@ private:
     void send_state_event(const char* mode, const char* detail)
     {
         ArduinoJson::JsonDocument doc;
-        doc["type"]        = "robot.event";
-        doc["eventId"]     = GetHAL().getFactoryMacString("") + "-" + std::to_string(GetHAL().millis());
-        doc["deviceId"]    = GetHAL().getFactoryMacString(":");
-        doc["timestamp"]   = iso_now();
+        prepare_event_doc(doc, "state");
         doc["event"]["kind"]   = "state";
         doc["event"]["mode"]   = mode;
         doc["event"]["detail"] = detail;
@@ -1342,6 +1530,24 @@ private:
         doc["event"]["commandId"]   = command_id ? command_id : "";
         doc["event"]["commandKind"] = known_command_kind_or_unknown(command_kind);
         doc["event"]["status"]      = accepted ? "accepted" : "rejected";
+        if (request_id && strlen(request_id) > 0) {
+            doc["event"]["requestId"] = request_id;
+        }
+        if (message && strlen(message) > 0) {
+            doc["event"]["message"] = message;
+        }
+        send_json(doc);
+    }
+
+    void send_command_status(const char* command_id, const char* command_kind, const char* request_id, const char* status,
+                             const char* message, float progress)
+    {
+        ArduinoJson::JsonDocument doc;
+        prepare_event_doc(doc, "commandStatus");
+        doc["event"]["commandId"]   = command_id ? command_id : "";
+        doc["event"]["commandKind"] = known_command_kind_or_unknown(command_kind);
+        doc["event"]["status"]      = status ? status : "completed";
+        doc["event"]["progress"]    = clamp_float(progress, 0.0f, 1.0f);
         if (request_id && strlen(request_id) > 0) {
             doc["event"]["requestId"] = request_id;
         }
@@ -1393,10 +1599,7 @@ private:
         }
 
         ArduinoJson::JsonDocument doc;
-        doc["type"]              = "robot.event";
-        doc["eventId"]           = GetHAL().getFactoryMacString("") + "-" + std::to_string(GetHAL().millis());
-        doc["deviceId"]          = GetHAL().getFactoryMacString(":");
-        doc["timestamp"]         = iso_now();
+        prepare_event_doc(doc, "image");
         doc["event"]["kind"]     = "image";
         doc["event"]["requestId"] = request_id;
         doc["event"]["mimeType"] = "image/jpeg";
@@ -1418,14 +1621,14 @@ private:
         send_json(doc);
     }
 
-    void send_json(ArduinoJson::JsonDocument& doc)
+    bool send_json(ArduinoJson::JsonDocument& doc)
     {
         if (!_websocket || !_websocket->IsConnected()) {
-            return;
+            return false;
         }
         std::string payload;
         ArduinoJson::serializeJson(doc, payload);
-        _websocket->Send(payload.c_str());
+        return _websocket->Send(payload.c_str());
     }
 };
 

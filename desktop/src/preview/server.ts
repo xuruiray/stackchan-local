@@ -453,7 +453,12 @@ export class PreviewServer {
             mimeType: snapshot.frame.mimeType,
             width: snapshot.frame.width,
             height: snapshot.frame.height,
-            timestamp: snapshot.frame.timestamp
+            timestamp: snapshot.frame.timestamp,
+            seq: snapshot.frame.seq,
+            receivedAt: snapshot.frame.receivedAt,
+            captureTimestamp: snapshot.frame.captureTimestamp,
+            sentAt: snapshot.frame.sentAt,
+            trace: snapshot.frame.trace
           }
         : undefined,
       devices: this.extras.registry?.listSnapshots(),

@@ -12,6 +12,7 @@ import {
 
 import type { DesktopConfig, Logger } from "../config.js";
 import type { DeviceRegistry, DeviceSession } from "../device/registry.js";
+import { parseStackChanBinaryFrame } from "./binary-frame.js";
 
 const LOCAL_WS_PATH = "/stackchan/local";
 const SHUTDOWN_CLOSE_TIMEOUT_MS = 500;
@@ -144,7 +145,7 @@ export class StackChanWebSocketServer {
         return;
       }
 
-      session = this.registry.register(parsed, socket);
+      session = this.registry.register(parsed, socket, this.config.heartbeatIntervalMs);
       this.sendDaemonHello(socket, parsed, session);
       socket.on("message", (nextData, nextIsBinary) => {
         if (!session) {
@@ -167,7 +168,58 @@ export class StackChanWebSocketServer {
 
   private handleSessionMessage(session: DeviceSession, data: RawData, isBinary: boolean): void {
     if (isBinary) {
-      this.registry.recordAudioFrame(session.deviceId);
+      let parsedBinary: ReturnType<typeof parseStackChanBinaryFrame>;
+      try {
+        parsedBinary = parseStackChanBinaryFrame(data);
+      } catch (error) {
+        this.sendError(
+          session.ws,
+          "invalid_binary_frame",
+          error instanceof Error ? error.message : "invalid StackChan binary frame",
+          true
+        );
+        return;
+      }
+      if (!parsedBinary || parsedBinary.kind === "unknown") {
+        this.registry.recordAudioFrame(session.deviceId);
+        return;
+      }
+      if (parsedBinary.header.deviceId !== session.deviceId) {
+        this.sendError(session.ws, "device_id_mismatch", "binary camera frame deviceId does not match this session", true);
+        return;
+      }
+      const daemonReceivedAt = new Date().toISOString();
+      const message: RobotEventMessage = {
+        type: "robot.event",
+        seq: parsedBinary.header.seq,
+        eventId: `${session.deviceId.replace(/[^a-zA-Z0-9_-]/g, "")}-binary-frame-${parsedBinary.header.frameId}`,
+        deviceId: session.deviceId,
+        timestamp: parsedBinary.header.timestamp,
+        event: {
+          kind: "cameraFrame",
+          frameId: parsedBinary.header.frameId,
+          mimeType: parsedBinary.header.mimeType,
+          width: parsedBinary.header.width,
+          height: parsedBinary.header.height,
+          dataBase64: parsedBinary.payload.toString("base64"),
+          seq: parsedBinary.header.seq,
+          captureTimestamp: parsedBinary.header.captureTimestamp,
+          sentAt: parsedBinary.header.sentAt,
+          trace: {
+            deviceCapturedAt: parsedBinary.header.captureTimestamp,
+            deviceSentAt: parsedBinary.header.sentAt,
+            daemonReceivedAt
+          }
+        }
+      };
+      try {
+        this.validator.parseMessage(message);
+      } catch (error) {
+        this.sendError(session.ws, "invalid_binary_frame", error instanceof Error ? error.message : "invalid camera frame", true);
+        return;
+      }
+      this.registry.recordEvent(message);
+      this.handleRobotEvent(session, message);
       return;
     }
 
@@ -190,7 +242,7 @@ export class StackChanWebSocketServer {
         this.sendError(session.ws, "device_id_mismatch", "heartbeat deviceId does not match this session", true);
         return;
       }
-      this.registry.recordHeartbeat(message.deviceId);
+      this.registry.recordHeartbeatMessage(message);
       return;
     }
 
@@ -240,6 +292,7 @@ export class StackChanWebSocketServer {
   private sendDaemonHello(socket: WebSocket, handshake: HandshakeMessage, session: DeviceSession): void {
     const hello: DaemonHelloMessage = {
       type: "daemon.hello",
+      protocolVersion: "1.2",
       sessionId: session.sessionId,
       heartbeatIntervalMs: this.config.heartbeatIntervalMs,
       featureFlags: [
@@ -251,8 +304,30 @@ export class StackChanWebSocketServer {
         "audioPlayback",
         "rgbControl",
         "sensorTelemetry",
-        "robotCommand"
+        "robotCommand",
+        "binaryCameraFrame",
+        "adaptiveCameraStream",
+        "telemetryConfig",
+        "commandStatus",
+        "mediaCredit",
+        "qosProfiles"
       ],
+      featureParams: {
+        binaryCameraFrame: {
+          envelope: "SCL1",
+          cameraKind: 1
+        },
+        mediaCredit: {
+          defaultCreditFrames: 2,
+          maxCreditFrames: 12
+        }
+      },
+      qosProfiles: {
+        robotCommand: "reliable",
+        cameraFrame: "latestOnly",
+        telemetry: "bestEffort",
+        audio: "reliableChunked"
+      },
       audioParams: handshake.audioParams
     };
     this.validator.assertOutgoing(hello);

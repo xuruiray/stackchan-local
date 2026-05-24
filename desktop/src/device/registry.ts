@@ -19,6 +19,9 @@ export interface DeviceSession {
   mode: RobotMode;
   connectedAt: Date;
   lastSeenAt: Date;
+  heartbeatIntervalMs: number;
+  lastHeartbeatAt?: Date;
+  lastSeq?: number;
   audioFramesReceived: number;
   lastEvent?: RobotEventMessage;
   lastImageBase64?: string;
@@ -56,6 +59,10 @@ export interface DeviceSnapshot {
   mode: RobotMode;
   connectedAt: string;
   lastSeenAt: string;
+  heartbeatIntervalMs: number;
+  lastHeartbeatAt?: string;
+  offlineDeadlineAt: string;
+  lastSeq?: number;
   audioFramesReceived: number;
   lastEvent?: SanitizedRobotEvent;
   lastImageAt?: string;
@@ -82,12 +89,13 @@ export class DeviceRegistry {
     return () => this.eventListeners.delete(listener);
   }
 
-  register(handshake: HandshakeMessage, ws: WebSocket): DeviceSession {
+  register(handshake: HandshakeMessage, ws: WebSocket, heartbeatIntervalMs = 15_000): DeviceSession {
     const existing = this.sessions.get(handshake.deviceId);
     if (existing && existing.ws !== ws) {
       existing.status = "offline";
       existing.ws.close(4000, "replaced by a newer local session");
     }
+    const now = new Date();
 
     const session: DeviceSession = {
       deviceId: handshake.deviceId,
@@ -97,8 +105,9 @@ export class DeviceRegistry {
       audioParams: handshake.audioParams,
       status: "online",
       mode: "idle",
-      connectedAt: new Date(),
-      lastSeenAt: new Date(),
+      connectedAt: now,
+      lastSeenAt: now,
+      heartbeatIntervalMs: clampHeartbeatInterval(heartbeatIntervalMs),
       audioFramesReceived: 0,
       sensors: {},
       ws
@@ -129,8 +138,22 @@ export class DeviceRegistry {
     if (!session) {
       return;
     }
+    const now = new Date();
     session.status = "online";
-    session.lastSeenAt = new Date();
+    session.lastSeenAt = now;
+    session.lastHeartbeatAt = now;
+  }
+
+  recordHeartbeatMessage(message: { deviceId: string; seq?: number }): void {
+    const session = this.sessions.get(message.deviceId);
+    if (!session) {
+      return;
+    }
+    const now = new Date();
+    session.status = "online";
+    session.lastSeenAt = now;
+    session.lastHeartbeatAt = now;
+    this.recordSeq(session, message.seq);
   }
 
   recordAudioFrame(deviceId: string): void {
@@ -139,6 +162,7 @@ export class DeviceRegistry {
       return;
     }
     session.audioFramesReceived += 1;
+    session.status = "online";
     session.lastSeenAt = new Date();
   }
 
@@ -147,8 +171,10 @@ export class DeviceRegistry {
     if (!session) {
       return;
     }
+    session.status = "online";
     session.lastSeenAt = new Date();
     session.lastEvent = message;
+    this.recordSeq(session, message.seq ?? ("seq" in message.event ? message.event.seq : undefined));
     if (message.event.kind === "state") {
       session.mode = message.event.mode;
     }
@@ -172,10 +198,12 @@ export class DeviceRegistry {
   }
 
   listSnapshots(): DeviceSnapshot[] {
+    this.markTimedOutSessions();
     return [...this.sessions.values()].map((session) => this.snapshot(session));
   }
 
   getActiveSession(): DeviceSession | undefined {
+    this.markTimedOutSessions();
     return [...this.sessions.values()]
       .filter((session) => session.status === "online" && session.ws.readyState === session.ws.OPEN)
       .sort((a, b) => b.lastSeenAt.getTime() - a.lastSeenAt.getTime())[0];
@@ -207,7 +235,6 @@ export class DeviceRegistry {
     }
 
     session.ws.send(JSON.stringify(message));
-    session.lastSeenAt = new Date();
     if (message.command.kind === "setMode") {
       session.mode = message.command.mode;
     }
@@ -229,11 +256,33 @@ export class DeviceRegistry {
       mode: session.mode,
       connectedAt: session.connectedAt.toISOString(),
       lastSeenAt: session.lastSeenAt.toISOString(),
+      heartbeatIntervalMs: session.heartbeatIntervalMs,
+      lastHeartbeatAt: session.lastHeartbeatAt?.toISOString(),
+      offlineDeadlineAt: offlineDeadlineAt(session).toISOString(),
+      lastSeq: session.lastSeq,
       audioFramesReceived: session.audioFramesReceived,
       lastEvent: this.sanitizeEvent(session.lastEvent?.event),
       lastImageAt: session.lastImageAt?.toISOString(),
       sensors: { ...session.sensors }
     };
+  }
+
+  private markTimedOutSessions(now = new Date()): void {
+    for (const session of this.sessions.values()) {
+      if (session.status !== "online") {
+        continue;
+      }
+      if (session.ws.readyState !== session.ws.OPEN || now.getTime() >= offlineDeadlineAt(session).getTime()) {
+        session.status = "offline";
+        this.logger.warn("device heartbeat timed out", {
+          type: "device",
+          deviceId: session.deviceId,
+          lastSeenAt: session.lastSeenAt.toISOString(),
+          heartbeatIntervalMs: session.heartbeatIntervalMs,
+          offlineDeadlineAt: offlineDeadlineAt(session).toISOString()
+        });
+      }
+    }
   }
 
   private sanitizeEvent(event: RobotEventMessage["event"] | undefined): SanitizedRobotEvent | undefined {
@@ -280,4 +329,23 @@ export class DeviceRegistry {
         break;
     }
   }
+
+  private recordSeq(session: DeviceSession, seq: number | undefined): void {
+    if (typeof seq !== "number" || !Number.isFinite(seq)) {
+      return;
+    }
+    session.lastSeq = seq;
+  }
+}
+
+function clampHeartbeatInterval(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 15_000;
+  }
+  return Math.min(60_000, Math.max(1_000, Math.round(value)));
+}
+
+function offlineDeadlineAt(session: Pick<DeviceSession, "lastSeenAt" | "heartbeatIntervalMs">): Date {
+  const timeoutMs = Math.max(session.heartbeatIntervalMs * 3, 30_000);
+  return new Date(session.lastSeenAt.getTime() + timeoutMs);
 }

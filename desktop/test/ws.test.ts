@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createLogger, type DesktopConfig } from "../src/config.js";
 import { DeviceRegistry } from "../src/device/registry.js";
 import { RobotController } from "../src/robot/controller.js";
+import { encodeStackChanBinaryCameraFrame } from "../src/ws/binary-frame.js";
 import { StackChanWebSocketServer } from "../src/ws/server.js";
 
 const baseConfig: DesktopConfig = {
@@ -89,8 +90,143 @@ describe("StackChanWebSocketServer", () => {
     const message = JSON.parse(data.toString("utf8"));
 
     expect(message.type).toBe("daemon.hello");
+    expect(message.protocolVersion).toBe("1.2");
+    expect(message.featureFlags).toContain("binaryCameraFrame");
+    expect(message.featureFlags).toContain("telemetryConfig");
+    expect(message.featureFlags).toContain("mediaCredit");
+    expect(message.qosProfiles).toMatchObject({
+      robotCommand: "reliable",
+      cameraFrame: "latestOnly",
+      telemetry: "bestEffort",
+      audio: "reliableChunked"
+    });
+    expect(message.heartbeatIntervalMs).toBe(1000);
     expect(registry.listSnapshots()).toHaveLength(1);
     ws.close();
+  });
+
+  it("normalizes negotiated binary camera frames into cameraFrame events", async () => {
+    const registry = new DeviceRegistry(createLogger("error"));
+    server = new StackChanWebSocketServer(baseConfig, registry, createLogger("error"));
+    const port = await server.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/stackchan/local`);
+    await once(ws, "open");
+    ws.send(
+      JSON.stringify({
+        type: "handshake",
+        deviceId: "stackchan-test",
+        firmwareVersion: "local-test",
+        pairingToken: "test-token",
+        capabilities: ["audio", "face", "motion", "camera"],
+        audioParams: {
+          format: "opus",
+          sampleRate: 16000,
+          channels: 1,
+          frameDurationMs: 30
+        }
+      })
+    );
+    await once(ws, "message");
+
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const timestamp = new Date().toISOString();
+    ws.send(
+      encodeStackChanBinaryCameraFrame(
+        {
+          frameId: "frame-bin-1",
+          deviceId: "stackchan-test",
+          timestamp,
+          mimeType: "image/jpeg",
+          width: 320,
+          height: 240,
+          byteLength: jpeg.byteLength,
+          transport: "binary",
+          seq: 12,
+          captureTimestamp: timestamp,
+          sentAt: timestamp
+        },
+        jpeg
+      )
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const [snapshot] = registry.listSnapshots();
+    expect(snapshot.lastEvent).toMatchObject({
+      kind: "cameraFrame",
+      frameId: "frame-bin-1",
+      mimeType: "image/jpeg",
+      width: 320,
+      height: 240,
+      seq: 12
+    });
+    expect(snapshot.lastEvent && "dataLength" in snapshot.lastEvent ? snapshot.lastEvent.dataLength : undefined).toBe(
+      jpeg.toString("base64").length
+    );
+    expect(snapshot.audioFramesReceived).toBe(0);
+    ws.close();
+  });
+
+  it("keeps unknown binary frames on the legacy audio counter", async () => {
+    const registry = new DeviceRegistry(createLogger("error"));
+    server = new StackChanWebSocketServer(baseConfig, registry, createLogger("error"));
+    const port = await server.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/stackchan/local`);
+    await once(ws, "open");
+    ws.send(
+      JSON.stringify({
+        type: "handshake",
+        deviceId: "stackchan-test",
+        firmwareVersion: "local-test",
+        pairingToken: "test-token",
+        capabilities: ["audio", "face", "motion"],
+        audioParams: {
+          format: "opus",
+          sampleRate: 16000,
+          channels: 1,
+          frameDurationMs: 30
+        }
+      })
+    );
+    await once(ws, "message");
+
+    ws.send(Buffer.from([1, 2, 3, 4, 5, 6]));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(registry.listSnapshots()[0]?.audioFramesReceived).toBe(1);
+    ws.close();
+  });
+
+  it("marks a device offline after the session heartbeat deadline", () => {
+    const registry = new DeviceRegistry(createLogger("error"));
+    const fakeSocket = {
+      readyState: WebSocket.OPEN,
+      OPEN: WebSocket.OPEN,
+      close: () => {}
+    } as unknown as WebSocket;
+    const session = registry.register(
+      {
+        type: "handshake",
+        deviceId: "stackchan-timeout",
+        firmwareVersion: "local-test",
+        pairingToken: "test-token",
+        capabilities: ["audio"],
+        audioParams: {
+          format: "opus",
+          sampleRate: 16000,
+          channels: 1,
+          frameDurationMs: 30
+        }
+      },
+      fakeSocket,
+      1000
+    );
+    session.lastSeenAt = new Date(Date.now() - 31_000);
+
+    const [snapshot] = registry.listSnapshots();
+    expect(snapshot.status).toBe("offline");
+    expect(snapshot.heartbeatIntervalMs).toBe(1000);
+    expect(snapshot.offlineDeadlineAt).toBeDefined();
   });
 
   it("stops promptly while a device websocket is still connected", async () => {
@@ -298,6 +434,76 @@ describe("StackChanWebSocketServer", () => {
     const result = await resultPromise;
     expect(result.sent).toBe(true);
     expect(result.ack).toMatchObject({ received: true, status: "accepted" });
+    ws.close();
+  });
+
+  it("can wait for commandStatus completion after commandAck", async () => {
+    const registry = new DeviceRegistry(createLogger("error"));
+    const controller = new RobotController(registry, createLogger("error"));
+    server = new StackChanWebSocketServer(baseConfig, registry, createLogger("error"));
+    const port = await server.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/stackchan/local`);
+    await once(ws, "open");
+    ws.send(
+      JSON.stringify({
+        type: "handshake",
+        deviceId: "stackchan-test",
+        firmwareVersion: "local-test",
+        pairingToken: "test-token",
+        capabilities: ["audio", "face", "motion"],
+        audioParams: {
+          format: "opus",
+          sampleRate: 16000,
+          channels: 1,
+          frameDurationMs: 30
+        }
+      })
+    );
+    await once(ws, "message");
+
+    const resultPromise = controller.setRgb(
+      { enabled: true, color: "#43D5B0", brightness: 0.5 },
+      { waitForCompletion: true, completionTimeoutMs: 1000 }
+    );
+    const [data] = (await once(ws, "message")) as [Buffer];
+    const command = JSON.parse(data.toString("utf8"));
+    expect(command.seq).toBeGreaterThan(0);
+    expect(command.command.kind).toBe("setRgb");
+
+    ws.send(
+      JSON.stringify({
+        type: "robot.event",
+        eventId: "ack-rgb",
+        deviceId: "stackchan-test",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "commandAck",
+          commandId: command.commandId,
+          commandKind: "setRgb",
+          status: "accepted"
+        }
+      })
+    );
+    ws.send(
+      JSON.stringify({
+        type: "robot.event",
+        eventId: "status-rgb",
+        deviceId: "stackchan-test",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "commandStatus",
+          commandId: command.commandId,
+          commandKind: "setRgb",
+          status: "completed",
+          progress: 1
+        }
+      })
+    );
+
+    const result = await resultPromise;
+    expect(result.ack).toMatchObject({ received: true, status: "accepted" });
+    expect(result.completion).toMatchObject({ received: true, status: "completed", progress: 1 });
     ws.close();
   });
 

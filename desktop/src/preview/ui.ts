@@ -856,6 +856,9 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
             <div class="metric"><span>Device id</span><span id="debugDeviceId">${html(initial.debugDeviceId)}</span></div>
             <div class="metric"><span>Session id</span><span id="debugSessionId">${html(initial.debugSessionId)}</span></div>
             <div class="metric"><span>Firmware</span><span id="debugFirmware">${html(initial.debugFirmware)}</span></div>
+            <div class="metric"><span>Heartbeat</span><span id="debugHeartbeatInterval">${html(initial.debugHeartbeatInterval)}</span></div>
+            <div class="metric"><span>Last heartbeat</span><span id="debugLastHeartbeat">${html(initial.debugLastHeartbeat)}</span></div>
+            <div class="metric"><span>Offline deadline</span><span id="debugOfflineDeadline">${html(initial.debugOfflineDeadline)}</span></div>
             <div class="metric"><span>Audio frames</span><span id="debugAudioFrames">${html(initial.debugAudioFrames)}</span></div>
             <div class="metric"><span>Last event</span><span id="debugLastEvent">${html(initial.debugLastEvent)}</span></div>
           </div>
@@ -864,7 +867,14 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
             <div class="metric"><span>Vision frames</span><span id="debugVisionFrames">${html(initial.debugVisionFrames)}</span></div>
             <div class="metric"><span>Vision drops</span><span id="debugVisionDrops">${html(initial.debugVisionDrops)}</span></div>
             <div class="metric"><span>Detector latency</span><span id="debugDetectorLatency">${html(initial.cameraDetectorLatency)}</span></div>
+            <div class="metric"><span>Frame seq</span><span id="debugFrameSeq">${html(initial.debugFrameSeq)}</span></div>
+            <div class="metric"><span>Frame age</span><span id="debugFrameLatency">${html(initial.debugFrameLatency)}</span></div>
+            <div class="metric"><span>Device to daemon</span><span id="debugDeviceToDaemon">${html(initial.debugDeviceToDaemon)}</span></div>
+            <div class="metric"><span>Capture to detector</span><span id="debugDetectorEndToEnd">${html(initial.debugDetectorEndToEnd)}</span></div>
             <div class="metric"><span>Camera preset</span><span id="debugCameraPreset">${html(initial.cameraPresetCurrent)}</span></div>
+            <div class="metric"><span>Camera transport</span><span id="debugCameraTransport">${html(initial.debugCameraTransport)}</span></div>
+            <div class="metric"><span>Adaptive stream</span><span id="debugAdaptiveStream">${html(initial.debugAdaptiveStream)}</span></div>
+            <div class="metric"><span>Media credit</span><span id="debugMediaCredit">${html(initial.debugMediaCredit)}</span></div>
           </div>
           <div class="group">
             <div class="group-title">Raw Snapshot</div>
@@ -1108,7 +1118,8 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       const size = Number.isFinite(actualWidth) && Number.isFinite(actualHeight) ? actualWidth + ' x ' + actualHeight : '-';
       const fps = Number.isFinite(item.fps) ? ' / ' + num(item.fps, 1) + ' fps' : '';
       const quality = Number.isFinite(item.quality) ? ' / q' + item.quality : '';
-      return (item.streaming ? 'streaming ' : 'ready ') + size + fps + quality;
+      const transport = item.transport ? ' / ' + item.transport : '';
+      return (item.streaming ? 'streaming ' : 'ready ') + size + fps + quality + transport;
     }
 
     function cameraRequested(item, settings) {
@@ -1137,8 +1148,29 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       return item && item.fallbackReason ? item.fallbackReason : '-';
     }
 
+    function formatAdaptiveStatus(adaptive, camera) {
+      const level = firstDefined(camera && camera.adaptiveLevel, adaptive && adaptive.level);
+      if (!Number.isFinite(level)) return '-';
+      const parts = ['level ' + level];
+      if (adaptive && adaptive.active) parts.push('active');
+      if (adaptive && Number.isFinite(adaptive.fps)) parts.push(num(adaptive.fps, 1) + ' fps');
+      if (adaptive && Number.isFinite(adaptive.quality)) parts.push('q' + adaptive.quality);
+      if (adaptive && Number.isFinite(adaptive.dropRate)) parts.push('drops ' + pct(adaptive.dropRate));
+      if (adaptive && adaptive.reason) parts.push(adaptive.reason);
+      return parts.join(' / ');
+    }
+
     function formatLatency(ms) {
       return Number.isFinite(ms) ? Math.round(ms) + ' ms' : '-';
+    }
+
+    function formatMediaCredit(mediaCredit) {
+      if (!mediaCredit) return '-';
+      const parts = [mediaCredit.enabled ? 'enabled' : 'fallback'];
+      if (Number.isFinite(mediaCredit.grantedFrames)) parts.push(mediaCredit.grantedFrames + ' granted');
+      if (mediaCredit.reason) parts.push(mediaCredit.reason);
+      if (mediaCredit.lastGrantedAt) parts.push('last ' + age(mediaCredit.lastGrantedAt));
+      return parts.join(' / ');
     }
 
     function updateCameraPresetButtons(preset) {
@@ -1680,12 +1712,22 @@ export function renderPreviewHtml(snapshot: PreviewInitialSnapshot = {}): string
       setText('debugDeviceId', device && device.deviceId || '-');
       setText('debugSessionId', device && device.sessionId || '-');
       setText('debugFirmware', device && device.firmwareVersion || '-');
+      setText('debugHeartbeatInterval', Number.isFinite(device && device.heartbeatIntervalMs) ? device.heartbeatIntervalMs + ' ms' : '-');
+      setText('debugLastHeartbeat', age(device && device.lastHeartbeatAt));
+      setText('debugOfflineDeadline', device && device.offlineDeadlineAt ? fmtTime(device.offlineDeadlineAt) : '-');
       setText('debugAudioFrames', firstDefined(device && device.audioFramesReceived, '-'));
       setText('debugLastEvent', device && device.lastEvent && device.lastEvent.kind || '-');
       setText('debugVisionFrames', firstDefined(status.framesReceived, '-'));
       setText('debugVisionDrops', firstDefined(status.framesDropped, '-'));
       setText('debugDetectorLatency', formatLatency(status.detectorLatencyMs));
+      setText('debugFrameSeq', firstDefined(snapshot.frame && snapshot.frame.seq, device && device.lastSeq, '-'));
+      setText('debugFrameLatency', formatLatency(status.latency && status.latency.frameAgeMs));
+      setText('debugDeviceToDaemon', formatLatency(status.latency && firstDefined(status.latency.captureToDaemonMs, status.latency.deviceToDaemonMs)));
+      setText('debugDetectorEndToEnd', formatLatency(status.latency && status.latency.detectorEndToEndMs));
       setText('debugCameraPreset', cameraSettings.preset || '-');
+      setText('debugCameraTransport', peripherals.camera && peripherals.camera.transport || '-');
+      setText('debugAdaptiveStream', formatAdaptiveStatus(status.adaptive, peripherals.camera));
+      setText('debugMediaCredit', formatMediaCredit(status.mediaCredit));
       updateRawSnapshot(snapshot);
 
       renderControls(status.control);
@@ -2336,10 +2378,20 @@ function buildInitialView(snapshot: PreviewInitialSnapshot) {
     debugDeviceId: valueOrDash(device?.deviceId),
     debugSessionId: valueOrDash(device?.sessionId),
     debugFirmware: valueOrDash(device?.firmwareVersion),
+    debugHeartbeatInterval: Number.isFinite(device?.heartbeatIntervalMs) ? `${device.heartbeatIntervalMs} ms` : "-",
+    debugLastHeartbeat: age(device?.lastHeartbeatAt),
+    debugOfflineDeadline: timeText(device?.offlineDeadlineAt),
     debugAudioFrames: valueOrDash(device?.audioFramesReceived),
     debugLastEvent: valueOrDash(device?.lastEvent?.kind),
     debugVisionFrames: valueOrDash(status.framesReceived),
     debugVisionDrops: valueOrDash(status.framesDropped),
+    debugFrameSeq: valueOrDash(frame?.seq ?? device?.lastSeq),
+    debugFrameLatency: formatInitialLatency(status.latency?.frameAgeMs),
+    debugDeviceToDaemon: formatInitialLatency(status.latency?.captureToDaemonMs ?? status.latency?.deviceToDaemonMs),
+    debugDetectorEndToEnd: formatInitialLatency(status.latency?.detectorEndToEndMs),
+    debugCameraTransport: valueOrDash(peripherals.camera?.transport),
+    debugAdaptiveStream: formatInitialAdaptiveStatus(status.adaptive, peripherals.camera),
+    debugMediaCredit: formatInitialMediaCredit(status.mediaCredit),
     cameraPresetCurrent: valueOrDash(cameraSettings.preset),
     cameraPresetRequested: formatInitialCameraRequested(peripherals.camera, cameraSettings),
     cameraPresetActual: formatInitialCameraActual(peripherals.camera, frame),
@@ -2394,6 +2446,12 @@ function age(value: unknown): string {
   const ms = Date.now() - date.getTime();
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function timeText(value: unknown): string {
+  if (!value) return "-";
+  const date = new Date(String(value));
+  return Number.isFinite(date.getTime()) ? date.toLocaleTimeString() : "-";
 }
 
 function accelMagnitude(sensor: Record<string, any> | undefined): number {
@@ -2508,7 +2566,8 @@ function formatInitialCamera(sensor: Record<string, any> | undefined): string {
   const size = Number.isFinite(width) && Number.isFinite(height) ? `${width} x ${height}` : "-";
   const fps = Number.isFinite(sensor.fps) ? ` / ${numberText(sensor.fps, 1)} fps` : "";
   const quality = Number.isFinite(sensor.quality) ? ` / q${sensor.quality}` : "";
-  return `${sensor.streaming ? "streaming" : "ready"} ${size}${fps}${quality}`;
+  const transport = sensor.transport ? ` / ${sensor.transport}` : "";
+  return `${sensor.streaming ? "streaming" : "ready"} ${size}${fps}${quality}${transport}`;
 }
 
 function formatInitialCameraRequested(
@@ -2546,8 +2605,35 @@ function formatInitialCameraFallback(sensor: Record<string, any> | undefined): s
   return sensor?.fallbackReason ? String(sensor.fallbackReason) : "-";
 }
 
+function formatInitialAdaptiveStatus(
+  adaptive: Record<string, any> | undefined,
+  camera: Record<string, any> | undefined
+): string {
+  const level = firstInitialDefined(camera?.adaptiveLevel, adaptive?.level);
+  if (!Number.isFinite(level)) return "-";
+  const parts = [`level ${level}`];
+  if (adaptive?.active) parts.push("active");
+  const fps = adaptive?.fps;
+  const quality = adaptive?.quality;
+  const dropRate = adaptive?.dropRate;
+  if (Number.isFinite(fps)) parts.push(`${numberText(fps, 1)} fps`);
+  if (Number.isFinite(quality)) parts.push(`q${quality}`);
+  if (Number.isFinite(dropRate)) parts.push(`drops ${percent(dropRate)}`);
+  if (adaptive?.reason) parts.push(String(adaptive.reason));
+  return parts.join(" / ");
+}
+
 function formatInitialLatency(value: unknown): string {
   return Number.isFinite(value) ? `${Math.round(Number(value))} ms` : "-";
+}
+
+function formatInitialMediaCredit(mediaCredit: Record<string, any> | undefined): string {
+  if (!mediaCredit) return "-";
+  const parts = [mediaCredit.enabled ? "enabled" : "fallback"];
+  if (Number.isFinite(mediaCredit.grantedFrames)) parts.push(`${mediaCredit.grantedFrames} granted`);
+  if (mediaCredit.reason) parts.push(String(mediaCredit.reason));
+  if (mediaCredit.lastGrantedAt) parts.push(`last ${age(mediaCredit.lastGrantedAt)}`);
+  return parts.join(" / ");
 }
 
 function firstInitialDefined(...values: unknown[]): unknown {

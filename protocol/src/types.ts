@@ -18,7 +18,8 @@ export const DEVICE_CAPABILITIES = [
   "magnetometer",
   "mic",
   "display",
-  "bleProvisioning"
+  "bleProvisioning",
+  "mediaCredit"
 ] as const;
 
 export type DeviceCapability = (typeof DEVICE_CAPABILITIES)[number];
@@ -61,9 +62,26 @@ export interface HandshakeMessage {
 
 export interface DaemonHelloMessage {
   type: "daemon.hello";
+  protocolVersion?: "1.1" | "1.2";
   sessionId: string;
   heartbeatIntervalMs: number;
   featureFlags: string[];
+  featureParams?: {
+    binaryCameraFrame?: {
+      envelope: "SCL1";
+      cameraKind: 1;
+    };
+    mediaCredit?: {
+      defaultCreditFrames: number;
+      maxCreditFrames: number;
+    };
+  };
+  qosProfiles?: {
+    robotCommand: "reliable";
+    cameraFrame: "latestOnly";
+    telemetry: "bestEffort";
+    audio: "reliableChunked";
+  };
   audioParams: AudioParams;
 }
 
@@ -230,6 +248,22 @@ export type SetRgbCommand = {
   brightness?: number;
 };
 
+export type TelemetryConfigCommand = {
+  kind: "telemetryConfig";
+  sensorSnapshotHz?: 0 | 0.5 | 1;
+  imuHz?: 0 | 1 | 2 | 4;
+  includeI2cScan?: boolean;
+  reason?: string;
+};
+
+export type MediaFlowControlCommand = {
+  kind: "mediaFlowControl";
+  stream: "camera";
+  creditFrames: number;
+  maxInFlight?: number;
+  reason?: string;
+};
+
 export type RobotCommand =
   | SayCommand
   | ReactCommand
@@ -240,13 +274,24 @@ export type RobotCommand =
   | PlayAudioCommand
   | CaptureImageCommand
   | SetModeCommand
-  | SetRgbCommand;
+  | SetRgbCommand
+  | TelemetryConfigCommand
+  | MediaFlowControlCommand;
 
 export interface RobotCommandMessage {
   type: "robot.command";
+  seq?: number;
   commandId: string;
   command: RobotCommand;
 }
+
+export type ProtocolTrace = {
+  deviceCapturedAt?: string;
+  deviceSentAt?: string;
+  daemonReceivedAt?: string;
+  detectorStartedAt?: string;
+  detectorFinishedAt?: string;
+};
 
 export type RobotEvent =
   | {
@@ -283,6 +328,15 @@ export type RobotEvent =
       message?: string;
     }
   | {
+      kind: "commandStatus";
+      commandId: string;
+      commandKind: RobotCommand["kind"] | "unknown";
+      requestId?: string;
+      status: "started" | "completed" | "failed" | "cancelled";
+      message?: string;
+      progress?: number;
+    }
+  | {
       kind: "playback";
       requestId: string;
       state: "started" | "finished" | "failed";
@@ -295,6 +349,10 @@ export type RobotEvent =
       width: number;
       height: number;
       dataBase64: string;
+      seq?: number;
+      captureTimestamp?: string;
+      sentAt?: string;
+      trace?: ProtocolTrace;
     }
   | {
       kind: "sensorSnapshot";
@@ -386,6 +444,8 @@ export type RobotEvent =
           actualWidth?: number;
           actualHeight?: number;
           quality?: number;
+          transport?: "jsonBase64" | "binary";
+          adaptiveLevel?: number;
           fallbackReason?: string;
           reason?: string;
         };
@@ -483,6 +543,7 @@ export type RobotEvent =
 
 export interface RobotEventMessage {
   type: "robot.event";
+  seq?: number;
   eventId: string;
   deviceId: string;
   timestamp: string;
@@ -491,12 +552,14 @@ export interface RobotEventMessage {
 
 export interface HeartbeatMessage {
   type: "heartbeat";
+  seq?: number;
   deviceId: string;
   timestamp: string;
 }
 
 export interface ErrorMessage {
   type: "error";
+  seq?: number;
   code: string;
   message: string;
   recoverable: boolean;

@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { WebSocket, type RawData } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -73,7 +74,19 @@ class FakeFaceDetector implements FaceDetector {
   close(): void {}
 }
 
-async function connectDevice(port: number): Promise<WebSocket> {
+class SlowFaceDetector implements FaceDetector {
+  async detect(frame: CameraFrameInput): Promise<FaceDetectionResult> {
+    await delay(120);
+    return {
+      frameId: frame.frameId,
+      faces: []
+    };
+  }
+
+  close(): void {}
+}
+
+async function connectDevice(port: number, capabilities = ["audio", "face", "motion", "camera"]): Promise<WebSocket> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/stackchan/local`);
   await once(ws, "open");
   ws.send(
@@ -82,7 +95,7 @@ async function connectDevice(port: number): Promise<WebSocket> {
       deviceId: "stackchan-test",
       firmwareVersion: "local-test",
       pairingToken: "test-token",
-      capabilities: ["audio", "face", "motion", "camera"],
+      capabilities,
       audioParams: {
         format: "opus",
         sampleRate: 16000,
@@ -113,6 +126,33 @@ async function nextRobotCommand(ws: WebSocket): Promise<Record<string, unknown>>
       return message.command;
     }
   }
+}
+
+async function nextRobotCommandMessage(ws: WebSocket): Promise<Record<string, any>> {
+  for (;;) {
+    const [data] = (await once(ws, "message")) as [Buffer];
+    const message = JSON.parse(data.toString("utf8"));
+    if (message.type === "robot.command" && message.command) {
+      return message;
+    }
+  }
+}
+
+function ackCommand(ws: WebSocket, commandMessage: Record<string, any>): void {
+  ws.send(
+    JSON.stringify({
+      type: "robot.event",
+      eventId: `ack-${commandMessage.commandId}`,
+      deviceId: "stackchan-test",
+      timestamp: new Date().toISOString(),
+      event: {
+        kind: "commandAck",
+        commandId: commandMessage.commandId,
+        commandKind: commandMessage.command.kind,
+        status: "accepted"
+      }
+    })
+  );
 }
 
 function collectRobotCommands(ws: WebSocket, count: number, timeoutMs = 1000): Promise<Array<Record<string, unknown>>> {
@@ -354,6 +394,80 @@ describe("VisionTrackingService", () => {
       height: 240,
       quality: 28
     });
+    ws.close();
+  });
+
+  it("downgrades camera stream and telemetry under detector backpressure", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, new SlowFaceDetector(), {
+      adaptivePressureMs: 0,
+      adaptiveStableMs: 60_000
+    });
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    const initialCameraStream = await nextRobotCommandMessage(ws);
+    expect(initialCameraStream.command.kind).toBe("cameraStream");
+    ackCommand(ws, initialCameraStream);
+    await delay(20);
+
+    const commandPromise = collectRobotCommands(ws, 2, 2500);
+    sendFrame(ws, "frame-slow");
+    const commands = await commandPromise;
+    const cameraStream = commands.find((command) => command.kind === "cameraStream");
+    const telemetryConfig = commands.find((command) => command.kind === "telemetryConfig");
+    expect(cameraStream).toMatchObject({
+      enabled: true,
+      fps: 8,
+      quality: 16
+    });
+    expect(telemetryConfig).toMatchObject({
+      sensorSnapshotHz: 0.5,
+      imuHz: 2,
+      includeI2cScan: false
+    });
+    expect(service.status().adaptive.active).toBe(true);
+    ws.close();
+  });
+
+  it("paces camera frames with media credit when the firmware supports it", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([[{ x: 0.2, y: 0.2, width: 0.2, height: 0.2, confidence: 0.8 }]]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector);
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port, ["audio", "face", "motion", "camera", "mediaCredit"]);
+    service.setEnabled(true);
+    const cameraStream = await nextRobotCommandMessage(ws);
+    expect(cameraStream.command.kind).toBe("cameraStream");
+    ackCommand(ws, cameraStream);
+
+    const initialCredit = await nextCommand(ws, "mediaFlowControl");
+    expect(initialCredit).toMatchObject({
+      stream: "camera",
+      creditFrames: 2,
+      maxInFlight: 2
+    });
+
+    const commandPromise = collectRobotCommands(ws, 2);
+    sendFrame(ws, "frame-credit");
+    const commands = await commandPromise;
+    expect(commands.map((command) => command.kind)).toEqual(["trackFace", "mediaFlowControl"]);
+    expect(commands[1]).toMatchObject({
+      stream: "camera",
+      creditFrames: 1,
+      maxInFlight: 2
+    });
+    expect(service.status().mediaCredit.enabled).toBe(true);
     ws.close();
   });
 

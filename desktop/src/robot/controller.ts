@@ -15,6 +15,7 @@ import { MotionArbitrator, type MotionArbitrationSnapshot } from "./motion-arbit
 const AUDIO_CHUNK_BYTES = 6144;
 const MAX_AUDIO_BYTES = 262_144;
 const DEFAULT_ACK_TIMEOUT_MS = 1500;
+const DEFAULT_COMPLETION_TIMEOUT_MS = 3000;
 const AUDIO_ACK_TIMEOUT_MS = 2500;
 const CAMERA_STREAM_ACK_TIMEOUT_MS = 5000;
 const MANUAL_MOTION_HOLD_MS = 2500;
@@ -29,15 +30,26 @@ export interface CommandAckResult {
   requestId?: string;
 }
 
+export interface CommandStatusResult {
+  received: boolean;
+  status: "started" | "completed" | "failed" | "cancelled" | "timeout";
+  message?: string;
+  requestId?: string;
+  progress?: number;
+}
+
 export interface RobotActionResult extends CommandDispatchResult {
   command?: RobotCommand;
   ack?: CommandAckResult;
+  completion?: CommandStatusResult;
   motion?: MotionArbitrationSnapshot;
 }
 
 export interface DispatchOptions {
   waitForAck?: boolean;
   ackTimeoutMs?: number;
+  waitForCompletion?: boolean;
+  completionTimeoutMs?: number;
   bypassMotionGate?: boolean;
 }
 
@@ -46,9 +58,16 @@ interface PendingAck {
   timer: NodeJS.Timeout;
 }
 
+interface PendingCompletion {
+  resolve: (status: CommandStatusResult) => void;
+  timer: NodeJS.Timeout;
+}
+
 export class RobotController {
   private readonly pendingAcks = new Map<string, PendingAck>();
+  private readonly pendingCompletions = new Map<string, PendingCompletion>();
   private readonly motion = new MotionArbitrator();
+  private commandSeq = 0;
 
   constructor(
     private readonly registry: DeviceRegistry,
@@ -212,15 +231,34 @@ export class RobotController {
     return this.dispatch({ kind: "setRgb", ...options }, dispatchOptions);
   }
 
+  telemetryConfig(
+    options: { sensorSnapshotHz?: 0 | 0.5 | 1; imuHz?: 0 | 1 | 2 | 4; includeI2cScan?: boolean; reason?: string },
+    dispatchOptions?: DispatchOptions
+  ): Promise<RobotActionResult> {
+    return this.dispatch({ kind: "telemetryConfig", ...options }, dispatchOptions);
+  }
+
+  mediaFlowControl(
+    options: { stream: "camera"; creditFrames: number; maxInFlight?: number; reason?: string },
+    dispatchOptions: DispatchOptions = { waitForAck: false }
+  ): Promise<RobotActionResult> {
+    return this.dispatch({ kind: "mediaFlowControl", ...options }, dispatchOptions);
+  }
+
   private async dispatch(command: RobotCommand, options: DispatchOptions = {}): Promise<RobotActionResult> {
     const message: RobotCommandMessage = {
       type: "robot.command",
+      seq: this.nextCommandSeq(),
       commandId: crypto.randomUUID(),
       command
     };
     const shouldWaitForAck = options.waitForAck !== false;
+    const shouldWaitForCompletion = options.waitForCompletion === true;
     const ackPromise = shouldWaitForAck
       ? this.waitForAck(message.commandId, options.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS)
+      : undefined;
+    const completionPromise = shouldWaitForCompletion
+      ? this.waitForCompletion(message.commandId, options.completionTimeoutMs ?? DEFAULT_COMPLETION_TIMEOUT_MS)
       : undefined;
     const result = this.registry.sendToActiveDevice(message);
     this.logger.info("robot command dispatched", {
@@ -231,11 +269,14 @@ export class RobotController {
       ...summarizeCommand(command),
       deviceId: result.deviceId,
       dispatchReason: result.reason,
-      waitForAck: shouldWaitForAck
+      waitForAck: shouldWaitForAck,
+      waitForCompletion: shouldWaitForCompletion,
+      seq: message.seq
     });
 
     if (!result.sent) {
       this.cancelPendingAck(message.commandId);
+      this.cancelPendingCompletion(message.commandId);
       return {
         ...result,
         command,
@@ -244,10 +285,12 @@ export class RobotController {
     }
 
     const ack = ackPromise ? await ackPromise : undefined;
+    const completion = completionPromise ? await completionPromise : undefined;
     return {
       ...result,
       command,
       ack,
+      completion,
       motion: this.motion.snapshot()
     };
   }
@@ -289,6 +332,30 @@ export class RobotController {
     this.pendingAcks.delete(commandId);
   }
 
+  private waitForCompletion(commandId: string, timeoutMs: number): Promise<CommandStatusResult> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingCompletions.delete(commandId);
+        resolve({
+          received: false,
+          status: "timeout",
+          message: `command completion timed out after ${timeoutMs}ms`
+        });
+      }, timeoutMs);
+      timer.unref?.();
+      this.pendingCompletions.set(commandId, { resolve, timer });
+    });
+  }
+
+  private cancelPendingCompletion(commandId: string): void {
+    const pending = this.pendingCompletions.get(commandId);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingCompletions.delete(commandId);
+  }
+
   private handleDeviceEvent(message: RobotEventMessage): void {
     if (message.event.kind === "commandAck") {
       const pending = this.pendingAcks.get(message.event.commandId);
@@ -306,6 +373,36 @@ export class RobotController {
       return;
     }
 
+    if (message.event.kind === "commandStatus") {
+      this.logger.debug("robot command status received", {
+        type: "command",
+        commandId: message.event.commandId,
+        kind: message.event.commandKind,
+        status: message.event.status,
+        progress: message.event.progress,
+        message: message.event.message
+      });
+      const terminal =
+        message.event.status === "completed" ||
+        message.event.status === "failed" ||
+        message.event.status === "cancelled";
+      if (terminal) {
+        const pending = this.pendingCompletions.get(message.event.commandId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pendingCompletions.delete(message.event.commandId);
+          pending.resolve({
+            received: true,
+            status: message.event.status,
+            message: message.event.message,
+            requestId: message.event.requestId,
+            progress: message.event.progress
+          });
+        }
+      }
+      return;
+    }
+
     if (message.event.kind === "playback") {
       if (message.event.state === "started") {
         this.motion.reserve("audio", AUDIO_MOTION_HOLD_MS, "device playback active");
@@ -313,6 +410,11 @@ export class RobotController {
       }
       this.motion.release("audio");
     }
+  }
+
+  private nextCommandSeq(): number {
+    this.commandSeq = (this.commandSeq + 1) % Number.MAX_SAFE_INTEGER;
+    return this.commandSeq;
   }
 }
 
@@ -347,6 +449,20 @@ function summarizeCommand(command: RobotCommand): Record<string, unknown> {
         enabled: command.enabled,
         color: command.color,
         brightness: command.brightness
+      };
+    case "telemetryConfig":
+      return {
+        sensorSnapshotHz: command.sensorSnapshotHz,
+        imuHz: command.imuHz,
+        includeI2cScan: command.includeI2cScan,
+        reason: command.reason
+      };
+    case "mediaFlowControl":
+      return {
+        stream: command.stream,
+        creditFrames: command.creditFrames,
+        maxInFlight: command.maxInFlight,
+        reason: command.reason
       };
     case "moveHead":
       return {

@@ -11,7 +11,7 @@ describe("protocol validation", () => {
       deviceId: "stackchan-001",
       firmwareVersion: "local-0.1.0",
       pairingToken: "test-token",
-        capabilities: ["audio", "face", "motion", "camera", "wifi", "servos", "rtc", "mic"],
+      capabilities: ["audio", "face", "motion", "camera", "wifi", "servos", "rtc", "mic"],
       audioParams: {
         format: "opus",
         sampleRate: 16000,
@@ -21,6 +21,40 @@ describe("protocol validation", () => {
     });
 
     expect(message.type).toBe("handshake");
+  });
+
+  it("accepts protocol v1.2 hello negotiation metadata", () => {
+    expect(
+      validator.parseMessage({
+        type: "daemon.hello",
+        protocolVersion: "1.2",
+        sessionId: "session-1",
+        heartbeatIntervalMs: 15000,
+        featureFlags: ["binaryCameraFrame", "mediaCredit", "commandStatus", "qosProfiles"],
+        featureParams: {
+          binaryCameraFrame: {
+            envelope: "SCL1",
+            cameraKind: 1
+          },
+          mediaCredit: {
+            defaultCreditFrames: 2,
+            maxCreditFrames: 12
+          }
+        },
+        qosProfiles: {
+          robotCommand: "reliable",
+          cameraFrame: "latestOnly",
+          telemetry: "bestEffort",
+          audio: "reliableChunked"
+        },
+        audioParams: {
+          format: "opus",
+          sampleRate: 16000,
+          channels: 1,
+          frameDurationMs: 30
+        }
+      }).type
+    ).toBe("daemon.hello");
   });
 
   it("rejects an invalid command kind", () => {
@@ -61,6 +95,35 @@ describe("protocol validation", () => {
           enabled: true,
           color: "#43D5B0",
           brightness: 0.8
+        }
+      }).type
+    ).toBe("robot.command");
+
+    expect(
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-telemetry",
+        command: {
+          kind: "telemetryConfig",
+          sensorSnapshotHz: 0.5,
+          imuHz: 2,
+          includeI2cScan: false,
+          reason: "adaptive backpressure"
+        }
+      }).type
+    ).toBe("robot.command");
+
+    expect(
+      validator.parseMessage({
+        type: "robot.command",
+        seq: 7,
+        commandId: "cmd-media-credit",
+        command: {
+          kind: "mediaFlowControl",
+          stream: "camera",
+          creditFrames: 2,
+          maxInFlight: 2,
+          reason: "detector ready"
         }
       }).type
     ).toBe("robot.command");
@@ -185,6 +248,34 @@ describe("protocol validation", () => {
 
     expect(validator.parseMessage({
       type: "robot.event",
+      eventId: "evt-rgb-command-ack",
+      deviceId: "stackchan-001",
+      timestamp: new Date().toISOString(),
+      event: {
+        kind: "commandAck",
+        commandId: "cmd-rgb",
+        commandKind: "setRgb",
+        status: "accepted"
+      }
+    }).type).toBe("robot.event");
+
+    expect(validator.parseMessage({
+      type: "robot.event",
+      seq: 8,
+      eventId: "evt-command-status",
+      deviceId: "stackchan-001",
+      timestamp: new Date().toISOString(),
+      event: {
+        kind: "commandStatus",
+        commandId: "cmd-rgb",
+        commandKind: "setRgb",
+        status: "completed",
+        progress: 1
+      }
+    }).type).toBe("robot.event");
+
+    expect(validator.parseMessage({
+      type: "robot.event",
       eventId: "evt-playback",
       deviceId: "stackchan-001",
       timestamp: new Date().toISOString(),
@@ -300,18 +391,30 @@ describe("protocol validation", () => {
   });
 
   it("accepts a camera frame event", () => {
+    const timestamp = new Date().toISOString();
     const message = validator.parseMessage({
       type: "robot.event",
+      seq: 42,
       eventId: "evt-frame",
       deviceId: "stackchan-001",
-      timestamp: new Date().toISOString(),
+      timestamp,
       event: {
         kind: "cameraFrame",
         frameId: "frame-1",
         mimeType: "image/jpeg",
         width: 320,
         height: 240,
-        dataBase64: "abcd"
+        dataBase64: "abcd",
+        seq: 42,
+        captureTimestamp: timestamp,
+        sentAt: timestamp,
+        trace: {
+          deviceCapturedAt: timestamp,
+          deviceSentAt: timestamp,
+          daemonReceivedAt: timestamp,
+          detectorStartedAt: timestamp,
+          detectorFinishedAt: timestamp
+        }
       }
     });
 
@@ -461,6 +564,8 @@ describe("protocol validation", () => {
             actualWidth: 320,
             actualHeight: 240,
             quality: 30,
+            transport: "binary",
+            adaptiveLevel: 1,
             fallbackReason: "runtime_resolution_change_not_supported"
           },
           rgb: {
@@ -683,6 +788,18 @@ describe("protocol validation", () => {
           kind: "setRgb",
           enabled: true,
           color: "green"
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-bad-telemetry-rate",
+        command: {
+          kind: "telemetryConfig",
+          sensorSnapshotHz: 3,
+          imuHz: 2
         }
       })
     ).toThrow("Invalid local protocol message");

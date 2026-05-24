@@ -47,6 +47,9 @@ const char* known_command_kind_or_unknown(const char* kind)
         "playAudioEnd",
         "captureImage",
         "setMode",
+        "setRgb",
+        "telemetryConfig",
+        "mediaFlowControl",
     };
     for (const auto* value : known) {
         if (strcmp(kind, value) == 0) {

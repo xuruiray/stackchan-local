@@ -44,7 +44,8 @@ export const handshakeSchema = {
           "magnetometer",
           "mic",
           "display",
-          "bleProvisioning"
+          "bleProvisioning",
+          "mediaCredit"
         ]
       }
     },
@@ -60,9 +61,45 @@ export const daemonHelloSchema = {
   required: ["type", "sessionId", "heartbeatIntervalMs", "featureFlags", "audioParams"],
   properties: {
     type: { const: "daemon.hello" },
+    protocolVersion: { enum: ["1.1", "1.2"] },
     sessionId: { type: "string", minLength: 1 },
     heartbeatIntervalMs: { type: "integer", minimum: 1000 },
     featureFlags: { type: "array", items: { type: "string" } },
+    featureParams: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        binaryCameraFrame: {
+          type: "object",
+          additionalProperties: false,
+          required: ["envelope", "cameraKind"],
+          properties: {
+            envelope: { const: "SCL1" },
+            cameraKind: { const: 1 }
+          }
+        },
+        mediaCredit: {
+          type: "object",
+          additionalProperties: false,
+          required: ["defaultCreditFrames", "maxCreditFrames"],
+          properties: {
+            defaultCreditFrames: { type: "integer", minimum: 1, maximum: 60 },
+            maxCreditFrames: { type: "integer", minimum: 1, maximum: 120 }
+          }
+        }
+      }
+    },
+    qosProfiles: {
+      type: "object",
+      additionalProperties: false,
+      required: ["robotCommand", "cameraFrame", "telemetry", "audio"],
+      properties: {
+        robotCommand: { const: "reliable" },
+        cameraFrame: { const: "latestOnly" },
+        telemetry: { const: "bestEffort" },
+        audio: { const: "reliableChunked" }
+      }
+    },
     audioParams: audioParamsSchema
   }
 } as const;
@@ -191,6 +228,7 @@ export const robotCommandSchema = {
   required: ["type", "commandId", "command"],
   properties: {
     type: { const: "robot.command" },
+    seq: { type: "integer", minimum: 0 },
     commandId: { type: "string", minLength: 1 },
     command: {
       oneOf: [
@@ -335,9 +373,45 @@ export const robotCommandSchema = {
             color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
             brightness: { type: "number", minimum: 0, maximum: 1 }
           }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: { const: "telemetryConfig" },
+            sensorSnapshotHz: { enum: [0, 0.5, 1] },
+            imuHz: { enum: [0, 1, 2, 4] },
+            includeI2cScan: { type: "boolean" },
+            reason: { type: "string" }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "stream", "creditFrames"],
+          properties: {
+            kind: { const: "mediaFlowControl" },
+            stream: { const: "camera" },
+            creditFrames: { type: "integer", minimum: 0, maximum: 120 },
+            maxInFlight: { type: "integer", minimum: 1, maximum: 120 },
+            reason: { type: "string" }
+          }
         }
       ]
     }
+  }
+} as const;
+
+const protocolTraceSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    deviceCapturedAt: { type: "string", format: "date-time" },
+    deviceSentAt: { type: "string", format: "date-time" },
+    daemonReceivedAt: { type: "string", format: "date-time" },
+    detectorStartedAt: { type: "string", format: "date-time" },
+    detectorFinishedAt: { type: "string", format: "date-time" }
   }
 } as const;
 
@@ -506,6 +580,8 @@ const sensorSnapshotSchema = {
             actualWidth: { type: "integer", minimum: 1 },
             actualHeight: { type: "integer", minimum: 1 },
             quality: { type: "integer", minimum: 1, maximum: 100 },
+            transport: { enum: ["jsonBase64", "binary"] },
+            adaptiveLevel: { type: "integer", minimum: 0, maximum: 5 },
             fallbackReason: { type: "string" },
             reason: { type: "string" }
           }
@@ -673,6 +749,7 @@ export const robotEventSchema = {
   required: ["type", "eventId", "deviceId", "timestamp", "event"],
   properties: {
     type: { const: "robot.event" },
+    seq: { type: "integer", minimum: 0 },
     eventId: { type: "string", minLength: 1 },
     deviceId: { type: "string", minLength: 1 },
     timestamp: { type: "string", format: "date-time" },
@@ -779,12 +856,47 @@ export const robotEventSchema = {
                 "playAudioEnd",
                 "captureImage",
                 "setMode",
+                "setRgb",
+                "telemetryConfig",
+                "mediaFlowControl",
                 "unknown"
               ]
             },
             requestId: { type: "string", minLength: 1 },
             status: { enum: ["accepted", "rejected"] },
             message: { type: "string" }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "commandId", "commandKind", "status"],
+          properties: {
+            kind: { const: "commandStatus" },
+            commandId: { type: "string", minLength: 1 },
+            commandKind: {
+              enum: [
+                "say",
+                "react",
+                "moveHead",
+                "cameraStream",
+                "trackFace",
+                "playAnimation",
+                "playAudioStart",
+                "playAudioChunk",
+                "playAudioEnd",
+                "captureImage",
+                "setMode",
+                "setRgb",
+                "telemetryConfig",
+                "mediaFlowControl",
+                "unknown"
+              ]
+            },
+            requestId: { type: "string", minLength: 1 },
+            status: { enum: ["started", "completed", "failed", "cancelled"] },
+            message: { type: "string" },
+            progress: { type: "number", minimum: 0, maximum: 1 }
           }
         },
         {
@@ -808,7 +920,11 @@ export const robotEventSchema = {
             mimeType: { const: "image/jpeg" },
             width: { type: "integer", minimum: 1 },
             height: { type: "integer", minimum: 1 },
-            dataBase64: { type: "string", minLength: 1 }
+            dataBase64: { type: "string", minLength: 1 },
+            seq: { type: "integer", minimum: 0 },
+            captureTimestamp: { type: "string", format: "date-time" },
+            sentAt: { type: "string", format: "date-time" },
+            trace: protocolTraceSchema
           }
         },
         sensorSnapshotSchema
@@ -824,6 +940,7 @@ export const heartbeatSchema = {
   required: ["type", "deviceId", "timestamp"],
   properties: {
     type: { const: "heartbeat" },
+    seq: { type: "integer", minimum: 0 },
     deviceId: { type: "string", minLength: 1 },
     timestamp: { type: "string", format: "date-time" }
   }
@@ -836,6 +953,7 @@ export const errorSchema = {
   required: ["type", "code", "message", "recoverable"],
   properties: {
     type: { const: "error" },
+    seq: { type: "integer", minimum: 0 },
     code: { type: "string", minLength: 1 },
     message: { type: "string", minLength: 1 },
     recoverable: { type: "boolean" },
