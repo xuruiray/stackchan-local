@@ -5,7 +5,7 @@
  */
 #include "audio_playback_service.h"
 
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <memory>

@@ -6,7 +6,7 @@
 #include "head_touch_sensor.h"
 #include <system/device_runtime.h>
 #include <sensors/head_touch/vendor/si12t/Si12T.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <esp_err.h>
 #include <esp_timer.h>
 #include <mooncake_log.h>

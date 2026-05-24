@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <hardware/display/display_device.h>
 #include <esp_log.h>
 #include <esp_err.h>

@@ -5,7 +5,7 @@
  */
 #include <system/device_runtime.h>
 #include <hardware/io_expander/io_expander.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <hardware/io_expander/vendor/py32_io_expander/PY32IOExpander_Class.hpp>
 #include <esp_log.h>
 #include <mooncake_log.h>

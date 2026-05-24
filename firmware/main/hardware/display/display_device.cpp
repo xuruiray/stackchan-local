@@ -14,7 +14,7 @@
 #include <settings.h>
 #include <lvgl.h>
 #include <lvgl_theme.h>
-#include <robot_expression_motion_runtime/stackchan.h>
+#include <services/expression_motion/stackchan.h>
 #include <assets/lang_config.h>
 #include <system/device_runtime.h>
 
@@ -228,7 +228,7 @@ lv_disp_t* StackChanAvatarDisplay::GetLvglDisplay()
     return display_;
 }
 
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 
 void StackChanAvatarDisplay::SetupUI()
 {

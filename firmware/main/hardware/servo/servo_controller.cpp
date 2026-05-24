@@ -6,7 +6,7 @@
 #include "servo_controller.h"
 #include <system/device_runtime.h>
 #include <hardware/servo/vendor/ftservo_arduino/src/SCSCL.h>
-#include <robot_expression_motion_runtime/stackchan.h>
+#include <services/expression_motion/stackchan.h>
 #include <smooth_ui_toolkit.hpp>
 #include <mooncake_log.h>
 #include <settings.h>

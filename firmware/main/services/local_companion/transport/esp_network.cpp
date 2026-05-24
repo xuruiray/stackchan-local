@@ -4,12 +4,16 @@
 #include <esp_websocket_client.h>
 #include <cstring>
 #include <mutex>
+#include <vector>
 
 namespace {
 
 constexpr const char* TAG = "LocalEspNetwork";
 constexpr int kDefaultTimeoutMs = 5000;
 constexpr int kWebSocketBufferSize = 8192;
+constexpr int kMaxIncomingMessageBytes = 512 * 1024;
+constexpr int kWsOpcodeContinuation = 0x0;
+constexpr int kWsOpcodeText = 0x1;
 constexpr int kWsOpcodeBinary = 0x2;
 
 class DisabledHttp final : public Http {
@@ -158,6 +162,9 @@ private:
     StateCallback on_connected_;
     StateCallback on_disconnected_;
     DataCallback on_data_;
+    std::vector<char> incoming_message_;
+    bool incoming_message_binary_ = false;
+    bool incoming_message_active_ = false;
 
     void destroy_client()
     {
@@ -197,6 +204,10 @@ private:
 
     void emit_connected()
     {
+        incoming_message_.clear();
+        incoming_message_binary_ = false;
+        incoming_message_active_ = false;
+
         StateCallback callback;
         {
             std::lock_guard<std::mutex> lock(callback_mutex_);
@@ -209,6 +220,9 @@ private:
 
     void emit_disconnected()
     {
+        incoming_message_.clear();
+        incoming_message_active_ = false;
+
         StateCallback callback;
         {
             std::lock_guard<std::mutex> lock(callback_mutex_);
@@ -225,13 +239,62 @@ private:
             return;
         }
 
+        const int payload_len = data->payload_len > 0 ? data->payload_len : data->data_len;
+        const int payload_offset = data->payload_offset;
+        if (payload_offset == 0 && data->op_code != kWsOpcodeText && data->op_code != kWsOpcodeBinary) {
+            return;
+        }
+        if (payload_offset > 0 && data->op_code != kWsOpcodeContinuation && data->op_code != kWsOpcodeText &&
+            data->op_code != kWsOpcodeBinary) {
+            return;
+        }
+        const bool payload_fragmented = payload_len > data->data_len || payload_offset > 0;
+        const bool message_binary = payload_offset > 0 ? incoming_message_binary_ : data->op_code == kWsOpcodeBinary;
+
+        if (!payload_fragmented) {
+            deliver_data(data->data_ptr, static_cast<size_t>(data->data_len), message_binary);
+            return;
+        }
+
+        if (payload_len <= 0 || payload_len > kMaxIncomingMessageBytes) {
+            ESP_LOGW(TAG, "dropping oversized WebSocket message: %d bytes", payload_len);
+            incoming_message_.clear();
+            incoming_message_active_ = false;
+            return;
+        }
+
+        if (payload_offset == 0) {
+            incoming_message_.assign(static_cast<size_t>(payload_len), 0);
+            incoming_message_binary_ = data->op_code == kWsOpcodeBinary;
+            incoming_message_active_ = true;
+        }
+
+        if (!incoming_message_active_ || payload_offset < 0 || payload_offset + data->data_len > static_cast<int>(incoming_message_.size())) {
+            ESP_LOGW(TAG, "dropping invalid WebSocket fragment offset=%d len=%d total=%d", payload_offset, data->data_len, payload_len);
+            incoming_message_.clear();
+            incoming_message_active_ = false;
+            return;
+        }
+
+        memcpy(incoming_message_.data() + payload_offset, data->data_ptr, static_cast<size_t>(data->data_len));
+        if (payload_offset + data->data_len < payload_len) {
+            return;
+        }
+
+        deliver_data(incoming_message_.data(), incoming_message_.size(), incoming_message_binary_);
+        incoming_message_.clear();
+        incoming_message_active_ = false;
+    }
+
+    void deliver_data(const char* data, size_t len, bool binary)
+    {
         DataCallback callback;
         {
             std::lock_guard<std::mutex> lock(callback_mutex_);
             callback = on_data_;
         }
         if (callback) {
-            callback(data->data_ptr, static_cast<size_t>(data->data_len), data->op_code == kWsOpcodeBinary);
+            callback(data, len, binary);
         }
     }
 };

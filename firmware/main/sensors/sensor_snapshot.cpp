@@ -5,7 +5,7 @@
  */
 #include <system/device_runtime.h>
 
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <hardware/i2c/i2c_bus.h>
 #include <sensors/ina226/ina226_sensor.h>
 #include <sensors/ir/ir_sensor.h>

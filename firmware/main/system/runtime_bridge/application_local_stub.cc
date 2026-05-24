@@ -2,7 +2,7 @@
 
 #include "board.h"
 #include "display.h"
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 
 #include <esp_log.h>
 #include <esp_system.h>

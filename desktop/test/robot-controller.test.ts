@@ -93,4 +93,57 @@ describe("RobotController logging", () => {
     expect(entries[1]?.context?.volume).toBe(94);
     expect(JSON.stringify(entries.map((entry) => entry.context))).not.toContain("ZmFrZSBvZ2cgZGF0YQ==");
   });
+
+  it("keeps audio chunk commands below the firmware WebSocket receive buffer", async () => {
+    const logger = createLogger("info");
+    const sentMessages: unknown[] = [];
+    const listeners: Array<(message: unknown) => void> = [];
+    const registry = {
+      listSnapshots: () => [],
+      sendToActiveDevice: (message: unknown) => {
+        sentMessages.push(message);
+        const commandMessage = message as { commandId: string; command: { kind: string; requestId?: string } };
+        queueMicrotask(() => {
+          for (const listener of listeners) {
+            listener({
+              type: "robot.event",
+              eventId: `ack-${commandMessage.commandId}`,
+              deviceId: "stackchan-001",
+              timestamp: new Date().toISOString(),
+              event: {
+                kind: "commandAck",
+                commandId: commandMessage.commandId,
+                commandKind: commandMessage.command.kind,
+                requestId: commandMessage.command.requestId,
+                status: "accepted"
+              }
+            });
+          }
+        });
+        return { sent: true, deviceId: "stackchan-001", commandId: commandMessage.commandId };
+      },
+      onEvent: (listener: (message: unknown) => void) => {
+        listeners.push(listener);
+        return () => {}
+      }
+    } as unknown as DeviceRegistry;
+    const controller = new RobotController(registry, logger);
+
+    await controller.playAudio({
+      requestId: "audio-large",
+      format: "ogg_opus",
+      mimeType: "audio/ogg",
+      sampleRate: 16000,
+      dataBase64: Buffer.alloc(9000, 0x42).toString("base64")
+    });
+
+    const chunkMessages = sentMessages.filter(
+      (message) => (message as { command: { kind: string } }).command.kind === "playAudioChunk"
+    );
+    const chunks = chunkMessages.map((message) => (message as { command: { dataBase64: string } }).command);
+
+    expect(chunks).toHaveLength(3);
+    expect(chunks.every((chunk) => Buffer.byteLength(chunk.dataBase64, "base64") <= 4096)).toBe(true);
+    expect(chunkMessages.every((message) => JSON.stringify(message).length < 8192)).toBe(true);
+  });
 });

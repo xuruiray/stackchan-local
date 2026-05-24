@@ -11,8 +11,8 @@
 #include <system/device_runtime.h>
 #include <mooncake_log.h>
 #include <smooth_lvgl.hpp>
-#include <robot_expression_motion_runtime/animation/animation.h>
-#include <robot_expression_motion_runtime/stackchan.h>
+#include <services/expression_motion/animation/animation.h>
+#include <services/expression_motion/stackchan.h>
 #include <algorithm>
 #include <cmath>
 #include <string>

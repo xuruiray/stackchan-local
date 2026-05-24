@@ -12,7 +12,7 @@ import type { Logger } from "../config.js";
 import type { CommandDispatchResult, DeviceRegistry, DeviceSnapshot } from "../device/registry.js";
 import { MotionArbitrator, type MotionArbitrationSnapshot } from "./motion-arbitrator.js";
 
-const AUDIO_CHUNK_BYTES = 6144;
+const AUDIO_CHUNK_BYTES = 4096;
 const MAX_AUDIO_BYTES = 262_144;
 const DEFAULT_ACK_TIMEOUT_MS = 1500;
 const DEFAULT_COMPLETION_TIMEOUT_MS = 3000;

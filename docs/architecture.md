@@ -44,7 +44,10 @@ Project-owned firmware code is split into:
 - `firmware/main/hardware/`: basic hardware modules for board composition, I2C, PMIC, display, camera, audio, RGB, servo, screen touch, IO expander, and network.
 - `firmware/main/sensors/`: one file pair per sensor, plus sensor snapshot aggregation.
 - `firmware/main/services/local_companion/`: local WebSocket service, command dispatch, telemetry, camera stream, audio playback, and protocol helpers.
-- `firmware/main/runtime_compat/`: the narrow bridge into retained embedded runtime APIs.
+- `firmware/main/services/local_companion/transport/`: local companion network/WebSocket transport adapters.
+- `firmware/main/services/expression_motion/`: StackChan expression, avatar, animation, and motion engine.
+- `firmware/main/system/runtime_bridge/`: the narrow bridge into retained embedded runtime APIs.
+- `firmware/main/vendor/embedded_runtime/`: retained upstream runtime subset for board, audio, display, settings, and assets.
 
 `firmware/main/system/device_runtime.h` is the firmware facade used by application code. The old `firmware/main/hal` tree has been removed; vendor drivers now live under the hardware or sensor module that owns them.
 

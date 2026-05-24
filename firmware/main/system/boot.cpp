@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <system/device_runtime.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <system/nvs_settings.h>
 #include <memory>
 #include <mooncake_log.h>
@@ -51,7 +51,7 @@ void DeviceRuntime::board_init()
 /* -------------------------------------------------------------------------- */
 /*                                   Display                                  */
 /* -------------------------------------------------------------------------- */
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 
 void DeviceRuntime::lvglLock()
 {
@@ -86,8 +86,8 @@ uint8_t DeviceRuntime::getSpeakerVolume()
 /* -------------------------------------------------------------------------- */
 /*                                    Lvgl                                    */
 /* -------------------------------------------------------------------------- */
-#include <runtime_compat/embedded_runtime_bridge.h>
-#include <robot_expression_motion_runtime/stackchan.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
+#include <services/expression_motion/stackchan.h>
 
 static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {

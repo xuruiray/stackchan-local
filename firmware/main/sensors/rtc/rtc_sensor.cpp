@@ -5,7 +5,7 @@
  */
 #include "rtc_sensor.h"
 #include <system/device_runtime.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <system/time_service.h>
 #include <sensors/rtc/vendor/pcf8563/PCF8563_Class.hpp>
 #include <mooncake_log.h>

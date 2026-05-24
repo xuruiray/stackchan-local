@@ -1,5 +1,5 @@
 # Define the embedded runtime subset used by the local companion firmware.
-set(EMBEDDED_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/embedded_runtime")
+set(EMBEDDED_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/embedded_runtime")
 set(GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated_include")
 
 # StackChan Local owns only the desktop-companion firmware surface. Core app,
@@ -28,8 +28,8 @@ set(STACK_CHAN_SOURCES
     "hardware/rgb/rgb_light.cpp"
     "hardware/screen_touch/screen_touch.cpp"
     "hardware/servo/servo_controller.cpp"
-    "runtime_compat/application_local_stub.cc"
-    "runtime_compat/embedded_runtime_bridge.cpp"
+    "system/runtime_bridge/application_local_stub.cc"
+    "system/runtime_bridge/embedded_runtime_bridge.cpp"
     "sensors/head_touch/head_touch_sensor.cpp"
     "sensors/imu/imu_sensor.cpp"
     "sensors/ina226/ina226_sensor.cpp"
@@ -45,7 +45,7 @@ set(STACK_CHAN_SOURCES
     "services/local_companion/local_companion_service.cpp"
     "services/local_companion/protocol_utils.cpp"
     "services/local_companion/telemetry_service.cpp"
-    "local_runtime_adapters/network/esp_network.cpp"
+    "services/local_companion/transport/esp_network.cpp"
     "hardware/io_expander/vendor/py32_io_expander/PY32IOExpander_Class.cpp"
     "hardware/network/ble/peripheral/bleprph.c"
     "hardware/network/ble/peripheral/gatt_svr.c"
@@ -71,9 +71,9 @@ set(STACK_CHAN_SOURCES
 )
 
 file(GLOB_RECURSE STACKCHAN_EXPRESSION_SOURCES
-    "robot_expression_motion_runtime/*.c"
-    "robot_expression_motion_runtime/*.cc"
-    "robot_expression_motion_runtime/*.cpp"
+    "services/expression_motion/*.c"
+    "services/expression_motion/*.cc"
+    "services/expression_motion/*.cpp"
 )
 
 list(APPEND STACK_CHAN_SOURCES ${STACKCHAN_EXPRESSION_SOURCES})
@@ -141,7 +141,7 @@ list(APPEND SOURCES
 )
 list(APPEND INCLUDE_DIRS
     ${EMBEDDED_RUNTIME_DIR}/boards/common
-    ${CMAKE_CURRENT_SOURCE_DIR}/local_runtime_adapters/network
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/local_companion/transport
     ${STACK_CHAN_INCLUDE_DIRS}
 )
 

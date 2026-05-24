@@ -6,7 +6,7 @@
 #include "local_companion_service.h"
 #include <system/device_runtime.h>
 
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include "audio_playback_service.h"
 #include "camera_stream_service.h"
 #include "command_dispatcher.h"
@@ -23,7 +23,7 @@
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <settings.h>
-#include <robot_expression_motion_runtime/stackchan.h>
+#include <services/expression_motion/stackchan.h>
 #include <web_socket.h>
 #include <wifi_manager.h>
 #include <jpg/image_to_jpeg.h>

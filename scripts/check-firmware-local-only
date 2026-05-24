@@ -9,16 +9,28 @@ if [[ ! -f "$compile_db" ]]; then
   exit 1
 fi
 
-legacy_source_regex='firmware/main/apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/|firmware/main/hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\.cpp|firmware/main/embedded_runtime/(application|mcp_server|ota)\.cc|firmware/main/embedded_runtime/protocols/(mqtt_protocol|websocket_protocol)\.cc|firmware/main/embedded_runtime/boards/common/(dual_network_board|esp32_camera|esp_video|ml307_board|nt26_board|press_to_talk_mcp_tool|rndis_board|sleep_timer)\.cc'
+legacy_source_regex='firmware/main/apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/|firmware/main/hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\.cpp|firmware/main/vendor/embedded_runtime/(application|mcp_server|ota)\.cc|firmware/main/vendor/embedded_runtime/protocols/(mqtt_protocol|websocket_protocol)\.cc|firmware/main/vendor/embedded_runtime/boards/common/(dual_network_board|esp32_camera|esp_video|ml307_board|nt26_board|press_to_talk_mcp_tool|rndis_board|sleep_timer)\.cc'
 legacy_hal_include_regex='#include [<"]hal/|#include "drivers/|#include "utils/'
 
-if [[ -d firmware/main/hal ]]; then
-  echo "Legacy firmware/main/hal directory must not exist. Move code into system, hardware, sensors, services, or runtime_compat." >&2
+for legacy_dir in \
+  firmware/main/hal \
+  firmware/main/embedded_runtime \
+  firmware/main/local_runtime_adapters \
+  firmware/main/robot_expression_motion_runtime \
+  firmware/main/runtime_compat; do
+  if [[ -d "$legacy_dir" ]]; then
+    echo "Legacy $legacy_dir directory must not exist. Move code into system, hardware, sensors, services, vendor, or system/runtime_bridge." >&2
+    exit 1
+  fi
+done
+
+if rg -n 'firmware/main/(embedded_runtime|local_runtime_adapters|robot_expression_motion_runtime|runtime_compat)' firmware/main --glob '*.{h,hpp,c,cc,cpp,txt,md}' CMakeLists.txt 2>/dev/null; then
+  echo "Legacy runtime directory path found in firmware/main." >&2
   exit 1
 fi
 
-if rg -n "$legacy_hal_include_regex" firmware/main --glob '*.{h,hpp,c,cc,cpp}'; then
-  echo "Legacy hal/drivers/utils include path found in firmware/main." >&2
+if rg -n "$legacy_hal_include_regex|#include [<\"](embedded_runtime|local_runtime_adapters|robot_expression_motion_runtime|runtime_compat)/" firmware/main --glob '*.{h,hpp,c,cc,cpp}'; then
+  echo "Legacy include path found in firmware/main." >&2
   exit 1
 fi
 
@@ -32,7 +44,7 @@ if ! rg -q 'STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1|STACKCHAN_LOCAL_DISABLE_LEGAC
   exit 1
 fi
 
-if ! rg -q 'firmware/main/runtime_compat/application_local_stub\.cc' "$compile_db"; then
+if ! rg -q 'firmware/main/system/runtime_bridge/application_local_stub\.cc' "$compile_db"; then
     echo "Local Application stub is missing from the firmware compile database." >&2
     exit 1
 fi

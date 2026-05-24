@@ -5,7 +5,7 @@
  */
 #include "imu_sensor.h"
 #include <system/device_runtime.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <sensors/imu/vendor/bmi270/bmi270.h>
 #include <sensors/imu/motion_detector/motion_detector.h>
 #include <mooncake_log.h>

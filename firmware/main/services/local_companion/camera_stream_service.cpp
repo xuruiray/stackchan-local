@@ -5,7 +5,7 @@
  */
 #include "camera_stream_service.h"
 
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <algorithm>
 
 namespace stackchan::hal::local_companion {

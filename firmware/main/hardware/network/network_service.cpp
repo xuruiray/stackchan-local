@@ -5,7 +5,7 @@
  */
 #include "network_service.h"
 #include <system/device_runtime.h>
-#include <robot_expression_motion_runtime/stackchan.h>
+#include <services/expression_motion/stackchan.h>
 #include <mooncake.h>
 #include <mooncake_log.h>
 #include <wifi_manager.h>

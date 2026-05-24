@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <system/device_runtime.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 #include <mooncake_log.h>
 
 void DeviceRuntime::powerOff()

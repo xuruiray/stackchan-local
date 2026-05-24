@@ -19,7 +19,7 @@
 #include <esp_timer.h>
 #include <algorithm>
 #include <hardware/camera/camera_device.h>
-#include <runtime_compat/embedded_runtime_bridge.h>
+#include <system/runtime_bridge/embedded_runtime_bridge.h>
 
 #define TAG "M5Stack-StackChan-Board"
 
