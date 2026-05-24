@@ -564,7 +564,7 @@ void AppLocalCompanion::sync_offline_idle_shutdown()
 
     if (_offline_idle_shutdown_started == 0) {
         _offline_idle_shutdown_started = now;
-        mclog::tagWarn(getAppInfo().name, "desktop offline while idle, power off in {} ms", kOfflineIdleShutdownMs);
+        mclog::tagInfo(getAppInfo().name, "desktop offline while idle, power off in {} ms", kOfflineIdleShutdownMs);
         return;
     }
 

@@ -3,13 +3,13 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include <system/device_runtime.h>
 #include <hardware/io_expander/io_expander.h>
-#include <system/runtime_bridge/embedded_runtime_bridge.h>
-#include <hardware/io_expander/vendor/py32_io_expander/PY32IOExpander_Class.hpp>
+#include <third_party/py32_io_expander/PY32IOExpander_Class.hpp>
 #include <esp_log.h>
-#include <mooncake_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <memory>
+#include <string_view>
 
 static const std::string_view _tag = "IOExpander";
 
@@ -52,56 +52,65 @@ m5::PY32IOExpander_Class* body_io_expander()
     return _io_expander.get();
 }
 
-}  // namespace stackchan::hal::hardware
-
-void DeviceRuntime::io_expander_init()
+bool body_io_expander_create(i2c_master_bus_handle_t i2c_bus)
 {
-    mclog::tagInfo(_tag, "init");
-
-    auto i2c_bus        = embedded_runtime_bridge::board_get_i2c_bus();
-    _io_expander        = std::make_unique<m5::PY32IOExpander_Class>(i2c_bus);
-    uint32_t start_tick = GetDeviceRuntime().millis();
-
-    // PY32 IO Expander may boot slowly, wait for it
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(200));
-
-        if (GetDeviceRuntime().millis() - start_tick > 1200) {
-            mclog::tagError(_tag, "init timeout");
-            _io_expander.reset();
-            break;
-        }
-
-        if (_io_expander->begin()) {
-            GetDeviceRuntime().recordI2cDiagnosticScan("after_py32_begin");
-            break;
-        }
-        mclog::tagInfo(_tag, "init failed, retrying...");
-    }
-
-    if (_io_expander) {
-        // VM EN
-        _io_expander->setDirection(0, true);  // Output
-        _io_expander->setPullMode(0, true);   // Pull-up
-        GetDeviceRuntime().setServoPowerEnabled(true);
-        vTaskDelay(pdMS_TO_TICKS(200));
-        GetDeviceRuntime().recordI2cDiagnosticScan("after_py32_vm_en");
-
-        // RGB
-        _io_expander->setDirection(13, true);   // Output
-        _io_expander->setPullMode(13, true);    // Pull-up
-        _io_expander->setDriveMode(13, false);  // Push-pull
-        _io_expander->setLedCount(12);
-        vTaskDelay(pdMS_TO_TICKS(200));
-        GetDeviceRuntime().showRgbColor(0, 0, 0);
-        vTaskDelay(pdMS_TO_TICKS(50));
-        GetDeviceRuntime().showRgbColor(0, 0, 0);
-
-        mclog::tagInfo(_tag, "init done");
-    }
+    _io_expander = std::make_unique<m5::PY32IOExpander_Class>(i2c_bus);
+    return _io_expander != nullptr;
 }
 
-void DeviceRuntime::setServoPowerEnabled(bool enabled)
+void body_io_expander_release()
+{
+    _io_expander.reset();
+    _servo_power_enabled = false;
+}
+
+bool body_io_expander_begin()
+{
+    return _io_expander && _io_expander->begin();
+}
+
+bool body_io_expander_available()
+{
+    return _io_expander != nullptr;
+}
+
+void body_io_configure_servo_power_pin()
+{
+    if (!_io_expander) {
+        return;
+    }
+    _io_expander->setDirection(0, true);
+    _io_expander->setPullMode(0, true);
+}
+
+void body_io_configure_rgb_pin(uint8_t led_count)
+{
+    if (!_io_expander) {
+        return;
+    }
+    _io_expander->setDirection(13, true);
+    _io_expander->setPullMode(13, true);
+    _io_expander->setDriveMode(13, false);
+    _io_expander->setLedCount(led_count);
+}
+
+void body_io_set_rgb(uint8_t index, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (!_io_expander) {
+        return;
+    }
+    _io_expander->setLedColor(index, r, g, b);
+}
+
+void body_io_refresh_rgb()
+{
+    if (!_io_expander) {
+        return;
+    }
+    _io_expander->refreshLeds();
+}
+
+void body_io_set_servo_power_enabled(bool enabled)
 {
     if (!_io_expander) {
         return;
@@ -110,12 +119,9 @@ void DeviceRuntime::setServoPowerEnabled(bool enabled)
     _servo_power_enabled = enabled;
 }
 
-bool DeviceRuntime::isServoPowerEnabled()
+bool body_io_servo_power_enabled()
 {
     return _servo_power_enabled;
 }
 
-bool DeviceRuntime::isIoExpanderAvailable()
-{
-    return _io_expander != nullptr;
-}
+}  // namespace stackchan::hal::hardware

@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: MIT
  */
 #pragma once
-#include <hardware/camera/camera_device.h>
 #include <cstdint>
 #include <lvgl.h>
 #include <driver/i2c_master.h>
 #include <string_view>
+
+class StackChanCamera;
 
 namespace embedded_runtime_bridge {
 

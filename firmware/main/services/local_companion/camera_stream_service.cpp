@@ -5,7 +5,8 @@
  */
 #include "camera_stream_service.h"
 
-#include <system/runtime_bridge/embedded_runtime_bridge.h>
+#include <hardware/camera/camera_device.h>
+#include <hardware/registry.h>
 #include <algorithm>
 
 namespace stackchan::hal::local_companion {
@@ -35,7 +36,7 @@ CameraStreamApplyResult apply_camera_stream_command(CameraStreamConfig& config, 
     config.intervalMs = 1000 / fps;
     config.enabled = false;
 
-    auto camera = embedded_runtime_bridge::board_get_camera();
+    auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
     if (camera) {
         const bool width_matches =
             camera->GetFrameWidth() <= 0 || camera->GetFrameWidth() == config.requestedWidth;

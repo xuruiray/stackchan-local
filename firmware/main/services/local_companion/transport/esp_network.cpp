@@ -59,6 +59,8 @@ public:
     explicit EspWebSocket(int timeout_seconds)
         : timeout_ms_(timeout_seconds > 0 ? timeout_seconds * 1000 : kDefaultTimeoutMs)
     {
+        esp_log_level_set("transport_ws", ESP_LOG_NONE);
+        esp_log_level_set("websocket_client", ESP_LOG_NONE);
     }
 
     ~EspWebSocket() override
@@ -99,6 +101,7 @@ public:
         config.uri = url;
         config.buffer_size = kWebSocketBufferSize;
         config.network_timeout_ms = timeout_ms_;
+        config.reconnect_timeout_ms = timeout_ms_;
 
         client_ = esp_websocket_client_init(&config);
         if (client_ == nullptr) {
@@ -195,7 +198,7 @@ private:
                 self->emit_data(static_cast<esp_websocket_event_data_t*>(event_data));
                 break;
             case WEBSOCKET_EVENT_ERROR:
-                ESP_LOGW(TAG, "WebSocket transport error");
+                ESP_LOGI(TAG, "WebSocket transport error");
                 break;
             default:
                 break;

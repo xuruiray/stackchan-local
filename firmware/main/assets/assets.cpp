@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "assets.h"
-#include <assets.h>
+#include <system/core/assets/asset_store.h>
 #include <mooncake_log.h>
 #include <map>
 #include <string>

@@ -4,20 +4,19 @@
  * SPDX-License-Identifier: MIT
  */
 #include <system/runtime_bridge/embedded_runtime_bridge.h>
-#include <hardware/display/display_device.h>
+#include <services/display/avatar_display.h>
 #include <esp_log.h>
 #include <esp_err.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 #include <driver/gpio.h>
 #include <esp_event.h>
-#include <board.h>
-#include <display.h>
-#include <audio/audio_service.h>
+#include <system/legacy_runtime/board/board.h>
+#include <services/display/runtime/display.h>
+#include <services/audio/runtime/audio_service.h>
 #include <mutex>
 #include <memory>
-#include <assets.h>
-#include <settings.h>
+#include <system/core/settings.h>
 
 static const char* _tag = "RUNTIME_BRIDGE";
 

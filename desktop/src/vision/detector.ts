@@ -111,7 +111,12 @@ export class PythonSidecarFaceDetector implements FaceDetector {
 
     this.stdout.on("line", (line) => this.handleLine(line));
     child.stderr.on("data", (chunk: Buffer) => {
-      this.logger.warn("face detector stderr", { message: chunk.toString("utf8").trim() });
+      const message = chunk.toString("utf8").trim();
+      if (!message) {
+        return;
+      }
+      const log = isBenignDetectorStderr(message) ? this.logger.debug : this.logger.warn;
+      log.call(this.logger, "face detector stderr", { message });
     });
     child.once("exit", (code, signal) => {
       this.logger.warn("face detector exited", { code, signal });
@@ -164,6 +169,21 @@ export class PythonSidecarFaceDetector implements FaceDetector {
     }
     this.pending.clear();
   }
+}
+
+function isBenignDetectorStderr(message: string): boolean {
+  return message
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .every(
+      (line) =>
+        line.startsWith("WARNING: All log messages before absl::InitializeLog()") ||
+        line.includes("gl_context.cc:") ||
+        line.includes("Sets FaceBlendshapesGraph acceleration to xnnpack by default") ||
+        line.includes("Created TensorFlow Lite XNNPACK delegate for CPU") ||
+        line.includes("Feedback manager requires a model with a single signature inference")
+    );
 }
 
 export { PythonSidecarFaceDetector as OpenCvSidecarFaceDetector };

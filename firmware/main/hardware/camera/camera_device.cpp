@@ -15,22 +15,8 @@
 #include "esp_video_ioctl.h"
 #include "linux/videodev2.h"
 
-#include "board.h"
-#include "display.h"
 #include <hardware/camera/camera_device.h>
-#include "esp_jpeg_common.h"
 #include "jpg/image_to_jpeg.h"
-#include "jpg/jpeg_to_image.h"
-#include "lvgl_display.h"
-#ifndef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
-#include "mcp_server.h"
-#include "system_info.h"
-#endif
-
-// #include "application.h"
-// #include "audio_service.h"
-#include <system/runtime_bridge/embedded_runtime_bridge.h>
-#include "assets/assets.h"
 
 #ifdef CONFIG_XIAOZHI_ENABLE_CAMERA_DEBUG_MODE
 #undef LOG_LOCAL_LEVEL
@@ -392,14 +378,9 @@ StackChanCamera::~StackChanCamera()
 
 void StackChanCamera::SetExplainUrl(const std::string& url, const std::string& token)
 {
-#ifdef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
     (void)url;
     (void)token;
     ESP_LOGW(TAG, "legacy camera explain URL ignored in StackChan Local build");
-#else
-    explain_url_   = url;
-    explain_token_ = token;
-#endif
 }
 
 bool StackChanCamera::SetFrameSize(int width, int height)
@@ -553,9 +534,6 @@ bool StackChanCamera::Capture()
     if (!streaming_on_ || video_fd_ < 0) {
         return false;
     }
-
-    // Play shutter sfx
-    embedded_runtime_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
 
     for (int i = 0; i < 3; i++) {
         struct v4l2_buffer buf = {};
@@ -897,114 +875,6 @@ bool StackChanCamera::Capture()
         }
     }
 
-    // 显示预览图片
-    auto display = dynamic_cast<LvglDisplay*>(Board::GetInstance().GetDisplay());
-    if (display != nullptr) {
-        if (!frame_.data) {
-            ESP_LOGE(TAG, "frame.data is null");
-            return false;
-        }
-        uint16_t w                     = frame_.width;
-        uint16_t h                     = frame_.height;
-        size_t lvgl_image_size         = frame_.len;
-        size_t stride                  = ((w * 2) + 3) & ~3;  // 4字节对齐
-        lv_color_format_t color_format = LV_COLOR_FORMAT_RGB565;
-        uint8_t* data                  = nullptr;
-
-        switch (frame_.format) {
-            // LVGL 显示 YUV 系的图像似乎都有问题，暂时转换为 RGB565 显示
-            case V4L2_PIX_FMT_YUYV:
-            case V4L2_PIX_FMT_YUV420:
-            case V4L2_PIX_FMT_RGB24: {
-                color_format = LV_COLOR_FORMAT_RGB565;
-                data         = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                if (data == nullptr) {
-                    ESP_LOGE(TAG, "Failed to allocate memory for preview image");
-                    return false;
-                }
-                esp_imgfx_color_convert_cfg_t convert_cfg = {
-                    .in_res          = {.width  = static_cast<int16_t>(frame_.width),
-                                        .height = static_cast<int16_t>(frame_.height)},
-                    .in_pixel_fmt    = static_cast<esp_imgfx_pixel_fmt_t>(frame_.format),
-                    .out_pixel_fmt   = ESP_IMGFX_PIXEL_FMT_RGB565_LE,
-                    .color_space_std = ESP_IMGFX_COLOR_SPACE_STD_BT601,
-                };
-                esp_imgfx_color_convert_handle_t convert_handle = nullptr;
-                esp_imgfx_err_t err = esp_imgfx_color_convert_open(&convert_cfg, &convert_handle);
-                if (err != ESP_IMGFX_ERR_OK || convert_handle == nullptr) {
-                    ESP_LOGE(TAG, "esp_imgfx_color_convert_open failed");
-                    heap_caps_free(data);
-                    data = nullptr;
-                    return false;
-                }
-                esp_imgfx_data_t convert_input_data = {
-                    .data     = frame_.data,
-                    .data_len = frame_.len,
-                };
-                esp_imgfx_data_t convert_output_data = {
-                    .data     = data,
-                    .data_len = static_cast<uint32_t>(w * h * 2),
-                };
-                err = esp_imgfx_color_convert_process(convert_handle, &convert_input_data, &convert_output_data);
-                if (err != ESP_IMGFX_ERR_OK) {
-                    ESP_LOGE(TAG, "esp_imgfx_color_convert_process failed");
-                    heap_caps_free(data);
-                    data = nullptr;
-                    esp_imgfx_color_convert_close(convert_handle);
-                    convert_handle = nullptr;
-                    return false;
-                }
-                esp_imgfx_color_convert_close(convert_handle);
-                convert_handle  = nullptr;
-                lvgl_image_size = w * h * 2;
-                break;
-            }
-
-            case V4L2_PIX_FMT_RGB565:
-                data = (uint8_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                if (data == nullptr) {
-                    ESP_LOGE(TAG, "Failed to allocate memory for preview image");
-                    return false;
-                }
-                memcpy(data, frame_.data, frame_.len);
-                lvgl_image_size = frame_.len;  // fallthrough 时兼顾 YUYV 与 RGB565
-                break;
-
-#ifdef CONFIG_XIAOZHI_CAMERA_ALLOW_JPEG_INPUT
-            case V4L2_PIX_FMT_JPEG: {
-                uint8_t* out_data = nullptr;  // out data is allocated by jpeg_to_image
-                size_t out_len    = 0;
-                size_t out_width  = 0;
-                size_t out_height = 0;
-                size_t out_stride = 0;
-
-                esp_err_t ret =
-                    jpeg_to_image(frame_.data, frame_.len, &out_data, &out_len, &out_width, &out_height, &out_stride);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to decode JPEG image: %d (%s)", (int)ret, esp_err_to_name(ret));
-                    if (out_data) {
-                        heap_caps_free(out_data);
-                        out_data = nullptr;
-                    }
-                    return false;
-                }
-
-                data            = out_data;
-                w               = out_width;
-                h               = out_height;
-                lvgl_image_size = out_len;
-                stride          = out_stride;
-                break;
-            }
-#endif
-            default:
-                ESP_LOGE(TAG, "unsupported frame format: 0x%08lx", frame_.format);
-                return false;
-        }
-
-        auto image = std::make_unique<LvglAllocatedImage>(data, lvgl_image_size, w, h, stride, color_format);
-        display->SetPreviewImage(std::move(image));
-    }
     return true;
 }
 
@@ -1187,149 +1057,6 @@ bool StackChanCamera::SetVFlip(bool enabled)
  */
 std::string StackChanCamera::Explain(const std::string& question)
 {
-#ifdef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
     (void)question;
     throw std::runtime_error("Legacy cloud camera explain is disabled in StackChan Local build");
-#else
-    if (explain_url_.empty()) {
-        throw std::runtime_error("Image explain URL or token is not set");
-    }
-
-    // 创建局部的 JPEG 队列, 40 entries is about to store 512 * 40 = 20480 bytes of JPEG data
-    QueueHandle_t jpeg_queue = xQueueCreate(40, sizeof(JpegChunk));
-    if (jpeg_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create JPEG queue");
-        throw std::runtime_error("Failed to create JPEG queue");
-    }
-
-    // We spawn a thread to encode the image to JPEG using optimized encoder (cost about 500ms and 8KB SRAM)
-    encoder_thread_ = std::thread([this, jpeg_queue]() {
-        uint16_t w             = frame_.width ? frame_.width : 320;
-        uint16_t h             = frame_.height ? frame_.height : 240;
-        v4l2_pix_fmt_t enc_fmt = frame_.format;
-        bool ok                = image_to_jpeg_cb(
-                           frame_.data, frame_.len, w, h, enc_fmt, 80,
-                           [](void* arg, size_t index, const void* data, size_t len) -> size_t {
-                auto jpeg_queue = static_cast<QueueHandle_t>(arg);
-                JpegChunk chunk = {.data = nullptr, .len = len};
-                if (index == 0 && data != nullptr && len > 0) {
-                    chunk.data = (uint8_t*)heap_caps_aligned_alloc(16, len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                    if (chunk.data == nullptr) {
-                        ESP_LOGE(TAG, "Failed to allocate %zu bytes for JPEG chunk", len);
-                        chunk.len = 0;
-                    } else {
-                        memcpy(chunk.data, data, len);
-                    }
-                } else {
-                    chunk.len = 0;  // Sentinel or error
-                }
-                xQueueSend(jpeg_queue, &chunk, portMAX_DELAY);
-                return len;
-                           },
-                           jpeg_queue);
-
-        if (!ok) {
-            JpegChunk chunk = {.data = nullptr, .len = 0};
-            xQueueSend(jpeg_queue, &chunk, portMAX_DELAY);
-        }
-    });
-
-    auto network = Board::GetInstance().GetNetwork();
-    auto http    = network->CreateHttp(3);
-    // 构造multipart/form-data请求体
-    std::string boundary = "----ESP32_CAMERA_BOUNDARY";
-
-    // 配置HTTP客户端，使用分块传输编码
-    http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
-    http->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
-    if (!explain_token_.empty()) {
-        http->SetHeader("Authorization", "Bearer " + explain_token_);
-    }
-    http->SetHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-    http->SetHeader("Transfer-Encoding", "chunked");
-    if (!http->Open("POST", explain_url_)) {
-        ESP_LOGE(TAG, "Failed to connect to explain URL");
-        // Clear the queue
-        encoder_thread_.join();
-        JpegChunk chunk;
-        while (xQueueReceive(jpeg_queue, &chunk, portMAX_DELAY) == pdPASS) {
-            if (chunk.data != nullptr) {
-                heap_caps_free(chunk.data);
-            } else {
-                break;
-            }
-        }
-        vQueueDelete(jpeg_queue);
-        throw std::runtime_error("Failed to connect to explain URL");
-    }
-
-    {
-        // 第一块：question字段
-        std::string question_field;
-        question_field += "--" + boundary + "\r\n";
-        question_field += "Content-Disposition: form-data; name=\"question\"\r\n";
-        question_field += "\r\n";
-        question_field += question + "\r\n";
-        http->Write(question_field.c_str(), question_field.size());
-    }
-    {
-        // 第二块：文件字段头部
-        std::string file_header;
-        file_header += "--" + boundary + "\r\n";
-        file_header += "Content-Disposition: form-data; name=\"file\"; filename=\"camera.jpg\"\r\n";
-        file_header += "Content-Type: image/jpeg\r\n";
-        file_header += "\r\n";
-        http->Write(file_header.c_str(), file_header.size());
-    }
-
-    // 第三块：JPEG数据
-    size_t total_sent   = 0;
-    bool saw_terminator = false;
-    while (true) {
-        JpegChunk chunk;
-        if (xQueueReceive(jpeg_queue, &chunk, portMAX_DELAY) != pdPASS) {
-            ESP_LOGE(TAG, "Failed to receive JPEG chunk");
-            break;
-        }
-        if (chunk.data == nullptr) {
-            saw_terminator = true;
-            break;  // The last chunk
-        }
-        http->Write((const char*)chunk.data, chunk.len);
-        total_sent += chunk.len;
-        heap_caps_free(chunk.data);
-    }
-    // Wait for the encoder thread to finish
-    encoder_thread_.join();
-    // 清理队列
-    vQueueDelete(jpeg_queue);
-
-    if (!saw_terminator || total_sent == 0) {
-        ESP_LOGE(TAG, "JPEG encoder failed or produced empty output");
-        throw std::runtime_error("Failed to encode image to JPEG");
-    }
-
-    {
-        // 第四块：multipart尾部
-        std::string multipart_footer;
-        multipart_footer += "\r\n--" + boundary + "--\r\n";
-        http->Write(multipart_footer.c_str(), multipart_footer.size());
-    }
-    // 结束块
-    http->Write("", 0);
-
-    if (http->GetStatusCode() != 200) {
-        ESP_LOGE(TAG, "Failed to upload photo, status code: %d", http->GetStatusCode());
-        throw std::runtime_error("Failed to upload photo");
-    }
-
-    std::string result = http->ReadAll();
-    http->Close();
-
-    // Get remain task stack size
-    size_t remain_stack_size = uxTaskGetStackHighWaterMark(nullptr);
-    ESP_LOGI(TAG, "Explain image size=%d bytes, compressed size=%d, remain stack size=%d, question=%s\n%s",
-             (int)frame_.len, (int)total_sent, (int)remain_stack_size, question.c_str(), result.c_str());
-    return result;
-#endif
 }

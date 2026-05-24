@@ -3,13 +3,17 @@
 
 This directory contains the ESP-IDF firmware workspace for StackChan Local.
 
-The project-owned firmware lives in `main/`. ESP-IDF Component Manager resolves registry and Git dependencies into `managed_components/`; the retained embedded runtime subset lives in `main/embedded_runtime/`. Generated ESP-IDF outputs stay ignored.
+The project-owned firmware lives in `main/`. ESP-IDF Component Manager resolves registry and Git dependencies into `managed_components/`; generated ESP-IDF outputs stay ignored.
 
-`main/embedded_runtime/` contains the selected audio, display, LED, board-common, settings, assets, and device-state runtime code used by Local Companion. The original cloud application, cloud protocol clients, OTA runtime, 4G/RNDIS board support, ESP-NOW control path, and launcher app stack are not compiled.
+The former `main/vendor/embedded_runtime/` compatibility copy has been dissolved into owned layers. Driver-level pieces now live under `main/hardware/`, hardware application runtime pieces live under `main/services/`, and boot/lifecycle/assets/compatibility primitives live under `main/system/`. The original cloud application, cloud protocol clients, cloud OTA runtime, 4G/RNDIS board support, ESP-NOW control path, unused LED implementations, unused audio codecs, and unused display decoders are not compiled.
 
-`main/local_runtime_adapters/` contains the project-owned compatibility surface for retained upstream runtime APIs. It links a local `Application` stub and a small Wi-Fi network adapter that implements only the WebSocket path needed by StackChan Local; HTTP, MQTT, UDP, 4G modem, ESP-NOW, and upstream cloud OTA paths are intentionally excluded from the runtime build.
+`main/third_party/` contains passive chip/library sources used by drivers: BMI270, FTServo, PCF8563, PY32 IO expander, and SI12T.
 
-`main/robot_expression_motion_runtime/` contains the robot expression and motion runtime: avatar rendering, emotions, idle modifiers, animation playback, servo motion, RGB control, and JSON command adapters.
+The active firmware is split into three layers:
+
+- `main/hardware/`: board profile, pin/config, buses, and hardware drivers only.
+- `main/services/`: hardware application behavior such as display/LVGL binding, sensor polling, power/RGB/servo policy, network provisioning, expression motion, and Local Companion.
+- `main/system/`: boot order, context, lifecycle, settings, diagnostics, and ESP-IDF platform glue.
 
 ## Toolchain
 

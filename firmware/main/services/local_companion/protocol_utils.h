@@ -5,7 +5,7 @@
  */
 #pragma once
 
-#include <sensors/sensor_snapshot.h>
+#include <hardware/sensors/sensor_snapshot.h>
 
 #include <ArduinoJson.hpp>
 #include <cstddef>

@@ -1,7 +1,7 @@
-#include "application.h"
+#include <system/legacy_runtime/application.h>
 
-#include "board.h"
-#include "display.h"
+#include <system/legacy_runtime/board/board.h>
+#include <services/display/runtime/display.h>
 #include <system/runtime_bridge/embedded_runtime_bridge.h>
 
 #include <esp_log.h>

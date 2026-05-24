@@ -1,10 +1,10 @@
 # Firmware
 
-`firmware/` is the StackChan Local firmware workspace. It keeps the retained embedded runtime subset, but the project-owned firmware surface is now layered around Local Companion mode.
+`firmware/` is the StackChan Local firmware workspace. It targets the current M5Stack StackChan / ESP32-S3 hardware profile and keeps only the runtime pieces needed by Local Companion mode.
 
 ## Dependencies
 
-ESP-IDF Component Manager resolves normal dependencies into the ignored `firmware/managed_components/` cache during build. ArduinoJson comes from the ESP Component Registry; Mooncake, Mooncake Log, and Smooth UI Toolkit are Git dependencies. The retained embedded firmware runtime subset lives directly under `firmware/main/vendor/embedded_runtime/`, so builds are reproducible from this repository plus ESP-IDF managed components.
+ESP-IDF Component Manager resolves normal dependencies into the ignored `firmware/managed_components/` cache during build. ArduinoJson comes from the ESP Component Registry; Mooncake, Mooncake Log, and Smooth UI Toolkit are Git dependencies. Runtime pieces formerly copied under `firmware/main/vendor/embedded_runtime/` now live in the owned `hardware/`, `services/`, and `system/` layers, so builds are reproducible from this repository plus ESP-IDF managed components.
 
 ## Build And Flash
 
@@ -26,25 +26,61 @@ The local-only build defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles 
 
 ## Firmware Layout
 
-Project-owned firmware code is organized by responsibility:
+Project-owned firmware code is organized by hardware architecture responsibility:
 
 ```text
 firmware/main/
   app/local_companion/       Local Companion UI app
-  system/                    boot, NVS, runtime state, time, power, diagnostics
-  system/runtime_bridge/     narrow bridge to the retained embedded runtime
-  hardware/                  board, I2C, PMIC, display, camera, audio, RGB, servo, touch, network
-  sensors/                   one driver-facing module per sensor plus sensor snapshot aggregation
-  services/local_companion/  WebSocket companion service, commands, telemetry, camera, audio playback
-  services/expression_motion/ expression and motion engine
-  vendor/embedded_runtime/   retained upstream runtime subset for board/audio/display primitives
+  system/
+    boot/                    app boot sequence and runtime startup
+    core/                    SystemContext, Clock, EventBus, ServiceRegistry, settings, diagnostics
+    lifecycle/               reboot, power-off, factory reset, runtime state
+    power_policy/            idle power policy namespace
+    platform/esp_idf/        ESP-IDF adapters
+    runtime_bridge/          compatibility bridge to retained runtime primitives
+    legacy_runtime/          temporary Board/Application/Protocol compatibility primitives
+    core/assets/             embedded audio/language asset pack builder and store
+  hardware/
+    board/m5stack_stackchan/ BoardProfile, pinmap, electrical config
+    bus/                     I2C helpers
+    power/                   AXP2101/backlight driver
+    display/                 ILI9342/LVGL display driver
+    touch/                   FT6336 touch driver
+    audio/                   CoreS3 codec driver
+    camera/                  GC0308 camera driver
+    motion/                  servo driver declarations
+    io_expander/             AW9523/PY32 IO expander driver surface
+    lighting/                RGB strip hardware constants
+    sensors/                 SI12T/BMI270/PCF8563/INA226/LTR553/NFC/IR driver-facing modules
+    network/                 BLE peripheral and Wi-Fi station adapters
+  services/
+    display/                 LVGL display runtime, input binding, and RGB display behavior
+    motion/                  servo calibration and expression-motion binding
+    sensors/                 polling, snapshots, I2C diagnostics, events
+    power/                   IO expander, servo power, body RGB power-up policy
+    audio/                   codec service, wake word, audio processing, mic level, and playback test behavior
+    network/                 Wi-Fi, SNTP, BLE provisioning
+    expression_motion/       avatar/motion/modifiers
+    local_companion/         WebSocket session, commands, telemetry, media stream
+  third_party/               passive chip libraries copied from old module vendor dirs
 ```
 
-The `hardware/` and `sensors/` directories intentionally keep each basic device or sensor in its own `.h/.cpp` pair. Third-party driver code sits under the owning module's `vendor/` directory, for example servo drivers under `hardware/servo/vendor/` and IMU drivers under `sensors/imu/vendor/`. Aggregation files compose modules and publish device-runtime behavior; they do not hide unrelated driver logic.
+`hardware/` drivers take only bus/config dependencies and expose begin/available/read/write/control-style operations. They should not call Local Companion services, LVGL application objects, or `GetDeviceRuntime()` for application behavior. `services/` composes those drivers into polling loops, snapshots, telemetry, RGB/servo power behavior, and UI bindings. `system/core/SystemContext` owns the boot phase, service registry, event bus, task runner, and the shared `HardwareRegistry`.
 
-The legacy `firmware/main/hal` directory has been removed. New code should include the project facade through `system/device_runtime.h` and call `GetDeviceRuntime()`. The local-only check rejects `firmware/main/hal`, `#include <hal/...>`, and old implicit `drivers/` or `utils/` include roots.
+The legacy `firmware/main/hal` directory has been removed. New compatibility-facing code can include `system/device_runtime.h`, but new hardware modules should prefer direct driver interfaces and `hardware/registry.h` over adding more `Board::GetInstance()` or `embedded_runtime_bridge` calls.
 
-`system/runtime_bridge/embedded_runtime_bridge.{h,cpp}` is the compatibility boundary for retained runtime calls such as `Board::GetInstance()`, settings, display locks, camera access, battery state, speaker volume, and power-off. New local firmware code should prefer that bridge instead of scattering direct runtime calls through services.
+`system/legacy_runtime/` and `system/runtime_bridge/embedded_runtime_bridge.{h,cpp}` remain temporary compatibility boundaries for retained runtime calls such as display locks, battery state, speaker volume, and power-off. New local firmware code should not expand those boundaries unless it is replacing an older direct runtime dependency.
+
+## Hardware Acceptance
+
+After flashing, run the desktop daemon and validate `http://localhost:8788`:
+
+- `/`, `/status`, `/debug/snapshot`, and `/debug/logs` return 200.
+- The Hardware, Debug, and Logs tabs update while the device is online.
+- `/debug/snapshot` covers battery/PMIC, screen touch, head touch, IMU accel/gyro, RTC, mic level, camera, RGB/io expander, servo power, I2C scan, NFC probe, IR, LTR553 proximity/ALS, INA226 power monitor, and magnetometer status.
+- Present hardware reports legal values that change with touch, motion, light, sound, and camera stimuli. Absent or unwired modules report `available:false` with a clear `reason`.
+- Enabling camera stream produces a valid JPEG from `/frame.jpg` or `/stream.mjpg`.
+- Firmware serial logs and desktop logs contain boot phases for board, bus, driver, and service init, with no unexplained `ERROR`, no persistent `WARN` spam, no reconnect loop, and no repeated sensor init timeout.
 
 ## Local Companion Mode
 

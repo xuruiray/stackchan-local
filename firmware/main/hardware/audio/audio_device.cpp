@@ -93,9 +93,13 @@ CoreS3AudioCodec::CoreS3AudioCodec(void* i2c_master_handle, int input_sample_rat
 }
 
 CoreS3AudioCodec::~CoreS3AudioCodec() {
-    ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+    if (output_dev_open_) {
+        ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+    }
     esp_codec_dev_delete(output_dev_);
-    ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+    if (input_dev_open_) {
+        ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+    }
     esp_codec_dev_delete(input_dev_);
 
     audio_codec_delete_codec_if(in_codec_if_);
@@ -218,13 +222,19 @@ void CoreS3AudioCodec::EnableInput(bool enable) {
         if (input_reference_) {
             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
         }
-        ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
+        if (!input_dev_open_) {
+            ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
+            input_dev_open_ = true;
+        }
+        ESP_ERROR_CHECK(esp_codec_dev_set_in_mute(input_dev_, false));
         ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
         if (input_reference_) {
             ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), input_gain_));
         }
     } else {
-        ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        if (input_dev_open_) {
+            ESP_ERROR_CHECK(esp_codec_dev_set_in_mute(input_dev_, true));
+        }
     }
     AudioCodec::EnableInput(enable);
 }
@@ -243,9 +253,11 @@ void CoreS3AudioCodec::EnableOutput(bool enable) {
             .mclk_multiple = 0,
         };
         ESP_ERROR_CHECK(esp_codec_dev_open(output_dev_, &fs));
+        output_dev_open_ = true;
         ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+        output_dev_open_ = false;
     }
     AudioCodec::EnableOutput(enable);
 }

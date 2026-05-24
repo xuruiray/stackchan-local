@@ -1,7 +1,7 @@
 #ifndef _BOX_AUDIO_CODEC_H
 #define _BOX_AUDIO_CODEC_H
 
-#include "audio_codec.h"
+#include <hardware/audio/audio_codec.h>
 
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
@@ -17,6 +17,8 @@ private:
 
     esp_codec_dev_handle_t output_dev_ = nullptr;
     esp_codec_dev_handle_t input_dev_ = nullptr;
+    bool output_dev_open_ = false;
+    bool input_dev_open_ = false;
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
 

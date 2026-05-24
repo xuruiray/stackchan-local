@@ -27,7 +27,7 @@ Responsibilities:
 
 ## Firmware
 
-Firmware lives under `firmware/` as an ESP-IDF project with a retained embedded runtime subset and a local-only project layer.
+Firmware lives under `firmware/` as an ESP-IDF project with a local-only hardware, service, and system layering.
 
 Responsibilities:
 
@@ -40,16 +40,16 @@ Responsibilities:
 
 Project-owned firmware code is split into:
 
-- `firmware/main/system/`: boot, NVS, runtime state, time, power, and diagnostics.
-- `firmware/main/hardware/`: basic hardware modules for board composition, I2C, PMIC, display, camera, audio, RGB, servo, screen touch, IO expander, and network.
-- `firmware/main/sensors/`: one file pair per sensor, plus sensor snapshot aggregation.
+- `firmware/main/system/`: boot, SystemContext, settings, runtime state, power lifecycle, diagnostics, assets, and temporary compatibility primitives.
+- `firmware/main/hardware/`: board profile, bus, PMIC/backlight, camera, audio codec, touch, IO expander, BLE/Wi-Fi adapters, and sensor-facing drivers.
+- `firmware/main/services/`: hardware application behavior for display, audio, motion, sensors, power, network, expression motion, and Local Companion.
 - `firmware/main/services/local_companion/`: local WebSocket service, command dispatch, telemetry, camera stream, audio playback, and protocol helpers.
 - `firmware/main/services/local_companion/transport/`: local companion network/WebSocket transport adapters.
 - `firmware/main/services/expression_motion/`: StackChan expression, avatar, animation, and motion engine.
-- `firmware/main/system/runtime_bridge/`: the narrow bridge into retained embedded runtime APIs.
-- `firmware/main/vendor/embedded_runtime/`: retained upstream runtime subset for board, audio, display, settings, and assets.
+- `firmware/main/system/runtime_bridge/`: the narrow bridge into temporary legacy runtime APIs.
+- `firmware/main/third_party/`: passive chip libraries used by the owned hardware drivers.
 
-`firmware/main/system/device_runtime.h` is the firmware facade used by application code. The old `firmware/main/hal` tree has been removed; vendor drivers now live under the hardware or sensor module that owns them.
+`firmware/main/system/device_runtime.h` is the firmware facade used by application code. The old `firmware/main/hal` and `firmware/main/vendor/embedded_runtime` trees have been removed; passive chip libraries live in `firmware/main/third_party`, and runtime behavior lives in the owned hardware/service/system layer that owns it.
 
 ## Protocol
 

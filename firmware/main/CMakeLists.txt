@@ -1,6 +1,7 @@
-# Define the embedded runtime subset used by the local companion firmware.
-set(EMBEDDED_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/embedded_runtime")
 set(GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated_include")
+set(RUNTIME_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/system/core/assets")
+set(RUNTIME_ASSET_SCRIPTS_DIR "${RUNTIME_ASSETS_DIR}/scripts")
+file(MAKE_DIRECTORY "${GENERATED_INCLUDE_DIR}")
 
 # StackChan Local owns only the desktop-companion firmware surface. Core app,
 # system, hardware, sensors, services, and runtime compatibility files are
@@ -10,35 +11,62 @@ set(STACK_CHAN_SOURCES
     "app/local_companion/local_companion_app.cpp"
     "app/common/status_bar/status_bar.cpp"
     "assets/assets.cpp"
-    "system/boot.cpp"
-    "system/diagnostics.cpp"
-    "system/nvs_settings.cpp"
-    "system/power_manager.cpp"
-    "system/runtime_state.cpp"
-    "system/time_service.cpp"
+    "system/boot/device_runtime_boot.cpp"
+    "system/core/clock.cpp"
+    "system/core/diagnostics.cpp"
+    "system/core/service_registry.cpp"
+    "system/core/settings.cpp"
+    "system/core/assets/asset_store.cpp"
+    "system/core/system_info.cc"
+    "system/core/system_context.cpp"
+    "system/lifecycle/power_manager.cpp"
+    "system/lifecycle/runtime_state.cpp"
+    "system/core/time_service.cpp"
+    "system/legacy_runtime/board/board.cc"
+    "system/legacy_runtime/board/wifi_board.cc"
+    "system/legacy_runtime/device_state_machine.cc"
+    "system/legacy_runtime/protocols/protocol.cc"
+    "system/power_policy/power_save_timer.cc"
+    "hardware/registry.cpp"
+    "hardware/audio/audio_codec.cc"
     "hardware/audio/audio_device.cpp"
-    "hardware/board/stackchan_board.cpp"
+    "hardware/board/m5stack_stackchan/board_profile.cpp"
+    "hardware/bus/i2c_device.cc"
     "hardware/camera/camera_device.cpp"
-    "hardware/display/display_device.cpp"
-    "hardware/i2c/i2c_bus.cpp"
+    "hardware/power/axp2101.cc"
+    "hardware/power/backlight.cc"
+    "services/display/avatar_display.cpp"
+    "services/display/display_service.cpp"
+    "services/display/runtime/display.cc"
+    "services/display/runtime/emoji_collection.cc"
+    "services/display/runtime/lvgl_display.cc"
+    "services/display/runtime/lvgl_font.cc"
+    "services/display/runtime/lvgl_image.cc"
+    "services/display/runtime/lvgl_theme.cc"
+    "services/display/runtime/jpg/image_to_jpeg.cpp"
+    "services/audio/runtime/audio_service.cc"
+    "services/audio/runtime/demuxer/ogg_demuxer.cc"
+    "services/audio/runtime/processors/audio_debugger.cc"
+    "hardware/bus/i2c_bus.cpp"
     "hardware/io_expander/io_expander.cpp"
-    "hardware/network/network_service.cpp"
-    "hardware/network/wifi_ble.cpp"
-    "hardware/pmic/axp2101_power.cpp"
-    "hardware/rgb/rgb_light.cpp"
-    "hardware/screen_touch/screen_touch.cpp"
-    "hardware/servo/servo_controller.cpp"
+    "services/network/network_service.cpp"
+    "services/network/wifi_ble.cpp"
+    "hardware/power/axp2101_power.cpp"
+    "services/display/rgb_service.cpp"
+    "services/power/io_expander_power_service.cpp"
+    "hardware/touch/screen_touch.cpp"
+    "services/motion/servo_motion_service.cpp"
     "system/runtime_bridge/application_local_stub.cc"
     "system/runtime_bridge/embedded_runtime_bridge.cpp"
-    "sensors/head_touch/head_touch_sensor.cpp"
-    "sensors/imu/imu_sensor.cpp"
-    "sensors/ina226/ina226_sensor.cpp"
-    "sensors/ir/ir_sensor.cpp"
-    "sensors/ltr553/ltr553_sensor.cpp"
-    "sensors/mic_level/mic_level_sensor.cpp"
-    "sensors/nfc/nfc_probe.cpp"
-    "sensors/rtc/rtc_sensor.cpp"
-    "sensors/sensor_snapshot.cpp"
+    "services/sensors/head_touch_service.cpp"
+    "services/sensors/imu_service.cpp"
+    "hardware/sensors/ina226/ina226_sensor.cpp"
+    "hardware/sensors/ir/ir_sensor.cpp"
+    "hardware/sensors/ltr553/ltr553_sensor.cpp"
+    "services/audio/mic_level_service.cpp"
+    "hardware/sensors/nfc/nfc_probe.cpp"
+    "services/sensors/rtc_service.cpp"
+    "services/sensors/sensor_service.cpp"
     "services/local_companion/audio_playback_service.cpp"
     "services/local_companion/camera_stream_service.cpp"
     "services/local_companion/command_dispatcher.cpp"
@@ -46,28 +74,28 @@ set(STACK_CHAN_SOURCES
     "services/local_companion/protocol_utils.cpp"
     "services/local_companion/telemetry_service.cpp"
     "services/local_companion/transport/esp_network.cpp"
-    "hardware/io_expander/vendor/py32_io_expander/PY32IOExpander_Class.cpp"
+    "third_party/py32_io_expander/PY32IOExpander_Class.cpp"
     "hardware/network/ble/peripheral/bleprph.c"
     "hardware/network/ble/peripheral/gatt_svr.c"
     "hardware/network/ble/peripheral/nimble_peripheral_utils/misc.c"
     "hardware/network/ble/peripheral/nimble_peripheral_utils/scli.c"
     "hardware/network/provisioning_secret/secret_logic.cpp"
     "hardware/network/wifi/provisioning/wifi_station.cc"
-    "hardware/servo/vendor/ftservo_arduino/src/HLSCL.cpp"
-    "hardware/servo/vendor/ftservo_arduino/src/SCS.cpp"
-    "hardware/servo/vendor/ftservo_arduino/src/SCSCL.cpp"
-    "hardware/servo/vendor/ftservo_arduino/src/SCSerial.cpp"
-    "hardware/servo/vendor/ftservo_arduino/src/SMS_STS.cpp"
-    "sensors/head_touch/vendor/si12t/Si12T.cpp"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi2.c"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi2_ois.c"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270.c"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_context.c"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_dsd.c"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_legacy.c"
-    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_maximum_fifo.c"
-    "sensors/imu/vendor/bmi270/bmi270.cpp"
-    "sensors/rtc/vendor/pcf8563/PCF8563_Class.cpp"
+    "third_party/ftservo/src/HLSCL.cpp"
+    "third_party/ftservo/src/SCS.cpp"
+    "third_party/ftservo/src/SCSCL.cpp"
+    "third_party/ftservo/src/SCSerial.cpp"
+    "third_party/ftservo/src/SMS_STS.cpp"
+    "third_party/si12t/Si12T.cpp"
+    "third_party/bmi270/BMI270_SensorAPI/bmi2.c"
+    "third_party/bmi270/BMI270_SensorAPI/bmi2_ois.c"
+    "third_party/bmi270/BMI270_SensorAPI/bmi270.c"
+    "third_party/bmi270/BMI270_SensorAPI/bmi270_context.c"
+    "third_party/bmi270/BMI270_SensorAPI/bmi270_dsd.c"
+    "third_party/bmi270/BMI270_SensorAPI/bmi270_legacy.c"
+    "third_party/bmi270/BMI270_SensorAPI/bmi270_maximum_fifo.c"
+    "third_party/bmi270/bmi270.cpp"
+    "third_party/pcf8563/PCF8563_Class.cpp"
 )
 
 file(GLOB_RECURSE STACKCHAN_EXPRESSION_SOURCES
@@ -80,69 +108,24 @@ list(APPEND STACK_CHAN_SOURCES ${STACKCHAN_EXPRESSION_SOURCES})
 
 set(STACK_CHAN_INCLUDE_DIRS
     "."
-)
-list(REMOVE_DUPLICATES STACK_CHAN_SOURCES)
-
-# Minimal retained runtime pieces used by StackChan Local. The original cloud
-# Application, MQTT/WebSocket client protocols, cloud OTA, MCP runtime, 4G/RNDIS
-# board paths, and camera explain HTTP path are not compiled.
-set(SOURCES "audio/audio_codec.cc"
-            "audio/audio_service.cc"
-            "audio/demuxer/ogg_demuxer.cc"
-            "audio/codecs/no_audio_codec.cc"
-            "audio/codecs/box_audio_codec.cc"
-            "audio/codecs/es8311_audio_codec.cc"
-            "audio/codecs/es8374_audio_codec.cc"
-            "audio/codecs/es8388_audio_codec.cc"
-            "audio/codecs/es8389_audio_codec.cc"
-            "audio/codecs/dummy_audio_codec.cc"
-            "audio/processors/audio_debugger.cc"
-            "led/single_led.cc"
-            "led/circular_strip.cc"
-            "led/gpio_led.cc"
-            "display/display.cc"
-            "display/lcd_display.cc"
-            "display/oled_display.cc"
-            "display/lvgl_display/lvgl_display.cc"
-            # "display/emote_display.cc"
-            "display/lvgl_display/emoji_collection.cc"
-            "display/lvgl_display/lvgl_theme.cc"
-            "display/lvgl_display/lvgl_font.cc"
-            "display/lvgl_display/lvgl_image.cc"
-            "display/lvgl_display/gif/lvgl_gif.cc"
-            "display/lvgl_display/gif/gifdec.c"
-            "display/lvgl_display/jpg/image_to_jpeg.cpp"
-            "display/lvgl_display/jpg/jpeg_to_image.c"
-            "protocols/protocol.cc"
-            "system_info.cc"
-            "settings.cc"
-            "device_state_machine.cc"
-            "assets.cc"
-            # "main.cc"
-            )
-
-# Transform relative paths to absolute paths from embedded_runtime.
-list(TRANSFORM SOURCES PREPEND "${EMBEDDED_RUNTIME_DIR}/")
-
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
-# Transform include dirs to absolute paths from embedded_runtime.
-list(TRANSFORM INCLUDE_DIRS PREPEND "${EMBEDDED_RUNTIME_DIR}/")
-list(APPEND INCLUDE_DIRS "${GENERATED_INCLUDE_DIR}")
-
-# Add board common files
-list(APPEND SOURCES
-    "${EMBEDDED_RUNTIME_DIR}/boards/common/board.cc"
-    "${EMBEDDED_RUNTIME_DIR}/boards/common/wifi_board.cc"
-    "${EMBEDDED_RUNTIME_DIR}/boards/common/axp2101.cc"
-    "${EMBEDDED_RUNTIME_DIR}/boards/common/backlight.cc"
-    "${EMBEDDED_RUNTIME_DIR}/boards/common/i2c_device.cc"
-    "${EMBEDDED_RUNTIME_DIR}/boards/common/power_save_timer.cc"
-    ${STACK_CHAN_SOURCES}
-)
-list(APPEND INCLUDE_DIRS
-    ${EMBEDDED_RUNTIME_DIR}/boards/common
-    ${CMAKE_CURRENT_SOURCE_DIR}/services/local_companion/transport
-    ${STACK_CHAN_INCLUDE_DIRS}
+    "${GENERATED_INCLUDE_DIR}"
+    "hardware/audio"
+    "hardware/bus"
+    "hardware/camera"
+    "hardware/power"
+    "services/audio/runtime"
+    "services/audio/runtime/demuxer"
+    "services/audio/runtime/processors"
+    "services/audio/runtime/wake_words"
+    "services/display/runtime"
+    "services/display/runtime/jpg"
+    "services/local_companion/transport"
+    "system/core"
+    "system/core/assets"
+    "system/legacy_runtime"
+    "system/legacy_runtime/board"
+    "system/legacy_runtime/protocols"
+    "system/power_policy"
 )
 
 
@@ -165,8 +148,7 @@ set(BUILTIN_ICON_FONT font_awesome_14_1)
 
 set(EMOTE_RESOLUTION "320_240")
 
-# Add board files according to BOARD_TYPE
-# Set default assets if the board uses partition table V2
+# Current firmware target is the M5Stack StackChan ESP32-S3 board.
 if(CONFIG_BOARD_TYPE_M5STACK_STACK_CHAN)
     set(BOARD_TYPE "m5stack-stack-chan")
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
@@ -174,39 +156,24 @@ if(CONFIG_BOARD_TYPE_M5STACK_STACK_CHAN)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 endif()
 
-if(MANUFACTURER)
-    file(GLOB BOARD_SOURCES
-        ${EMBEDDED_RUNTIME_DIR}/boards/${MANUFACTURER}/${BOARD_TYPE}/*.cc
-        ${EMBEDDED_RUNTIME_DIR}/boards/${MANUFACTURER}/${BOARD_TYPE}/*.c
-    )
-else()
-    file(GLOB BOARD_SOURCES
-        ${EMBEDDED_RUNTIME_DIR}/boards/${BOARD_TYPE}/*.cc
-        ${EMBEDDED_RUNTIME_DIR}/boards/${BOARD_TYPE}/*.c
-    )
-endif()
-list(APPEND SOURCES ${BOARD_SOURCES})
-
 # Select audio processor according to Kconfig
 if(CONFIG_USE_AUDIO_PROCESSOR)
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/audio/processors/afe_audio_processor.cc")
+    list(APPEND STACK_CHAN_SOURCES "services/audio/runtime/processors/afe_audio_processor.cc")
 else()
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/audio/processors/no_audio_processor.cc")
+    list(APPEND STACK_CHAN_SOURCES "services/audio/runtime/processors/no_audio_processor.cc")
 endif()
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/audio/wake_words/afe_wake_word.cc")
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/audio/wake_words/custom_wake_word.cc")
+    list(APPEND STACK_CHAN_SOURCES "services/audio/runtime/wake_words/afe_wake_word.cc")
+    list(APPEND STACK_CHAN_SOURCES "services/audio/runtime/wake_words/custom_wake_word.cc")
 else()
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/audio/wake_words/esp_wake_word.cc")
+    list(APPEND STACK_CHAN_SOURCES "services/audio/runtime/wake_words/esp_wake_word.cc")
 endif()
 
-# Auto Select Additional Sources
-if (CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING)
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/boards/common/blufi.cpp")
-endif ()
-if (CONFIG_USE_ACOUSTIC_WIFI_PROVISIONING)
-    list(APPEND SOURCES "${EMBEDDED_RUNTIME_DIR}/boards/common/afsk_demod.cc")
-endif ()
+set(SOURCES ${STACK_CHAN_SOURCES})
+set(INCLUDE_DIRS ${STACK_CHAN_INCLUDE_DIRS})
+list(REMOVE_DUPLICATES SOURCES)
+list(REMOVE_DUPLICATES INCLUDE_DIRS)
+
 # Select language directory according to Kconfig
 if(CONFIG_LANGUAGE_ZH_CN)
     set(LANG_DIR "zh-CN")
@@ -287,15 +254,15 @@ elseif(CONFIG_LANGUAGE_SR_RS)
 endif()
 
 # Define generation path
-set(LANG_JSON "${EMBEDDED_RUNTIME_DIR}/assets/locales/${LANG_DIR}/language.json")
+set(LANG_JSON "${RUNTIME_ASSETS_DIR}/locales/${LANG_DIR}/language.json")
 set(LANG_HEADER "${GENERATED_INCLUDE_DIR}/assets/lang_config.h")
 
 # Collect current language audio files
-file(GLOB LANG_SOUNDS ${EMBEDDED_RUNTIME_DIR}/assets/locales/${LANG_DIR}/*.ogg)
+file(GLOB LANG_SOUNDS ${RUNTIME_ASSETS_DIR}/locales/${LANG_DIR}/*.ogg)
 
 # If not en-US, collect en-US audio files as fallback for missing files
 if(NOT LANG_DIR STREQUAL "en-US")
-    file(GLOB EN_US_SOUNDS ${EMBEDDED_RUNTIME_DIR}/assets/locales/en-US/*.ogg)
+    file(GLOB EN_US_SOUNDS ${RUNTIME_ASSETS_DIR}/locales/en-US/*.ogg)
     
     # Extract filenames (without path) from current language
     set(EXISTING_NAMES "")
@@ -314,25 +281,10 @@ if(NOT LANG_DIR STREQUAL "en-US")
     endforeach()
 endif()
 
-# file(GLOB COMMON_SOUNDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.ogg)
 file(GLOB COMMON_SOUNDS 
-    ${EMBEDDED_RUNTIME_DIR}/assets/common/*.ogg
+    ${RUNTIME_ASSETS_DIR}/common/*.ogg
     assets/sfx/*.ogg
 )
-
-# If target chip is ESP32, exclude specific files to avoid build errors
-if(CONFIG_IDF_TARGET_ESP32)
-    list(REMOVE_ITEM SOURCES "audio/codecs/box_audio_codec.cc"
-                             "audio/codecs/es8388_audio_codec.cc"
-                             "audio/codecs/es8389_audio_codec.cc"
-                             "led/gpio_led.cc"
-                             "display/lvgl_display/jpg/image_to_jpeg.cpp"
-                             "display/lvgl_display/jpg/jpeg_to_image.c"
-                             "boards/common/nt26_board.cc"
-                             "boards/common/ml307_board.cc"
-                             "boards/common/dual_network_board.cc"
-                             )
-endif()
 
 list(REMOVE_DUPLICATES SOURCES)
 message(STATUS "StackChan Local: building local-only firmware runtime")
@@ -377,13 +329,13 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE STACKCHAN_LOCAL_DISABLE_LEGA
 # Add generation rules
 add_custom_command(
     OUTPUT ${LANG_HEADER}
-    COMMAND python ${EMBEDDED_RUNTIME_DIR}/scripts/gen_lang.py
+    COMMAND python ${RUNTIME_ASSET_SCRIPTS_DIR}/gen_lang.py
             --language "${LANG_DIR}"
-            --assets-dir "${EMBEDDED_RUNTIME_DIR}/assets"
+            --assets-dir "${RUNTIME_ASSETS_DIR}"
             --output "${LANG_HEADER}"
     DEPENDS
         ${LANG_JSON}
-        ${EMBEDDED_RUNTIME_DIR}/scripts/gen_lang.py
+        ${RUNTIME_ASSET_SCRIPTS_DIR}/gen_lang.py
     COMMENT "Generating ${LANG_DIR} language config"
 )
 
@@ -403,43 +355,6 @@ endif()
 find_component_by_pattern("xiaozhi-fonts" RUNTIME_FONTS_COMPONENT RUNTIME_FONTS_COMPONENT_PATH)
 if(RUNTIME_FONTS_COMPONENT_PATH)
     set(RUNTIME_FONTS_PATH "${RUNTIME_FONTS_COMPONENT_PATH}")
-endif()
-
-if(CONFIG_BOARD_TYPE_ESP_HI)
-set(URL "https://github.com/espressif2022/image_player/raw/main/test_apps/test_8bit")
-set(EMOJI_DIR "${CMAKE_BINARY_DIR}/emoji")
-file(MAKE_DIRECTORY ${EMOJI_DIR})
-
-# List all files to download
-set(FILES_TO_DOWNLOAD "")
-list(APPEND FILES_TO_DOWNLOAD "Anger_enter.aaf" "Anger_loop.aaf" "Anger_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "happy_enter.aaf" "happy_loop.aaf" "happ_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "sad_enter.aaf" "sad_loop.aaf" "sad_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "scorn_enter.aaf" "scorn_loop.aaf" "scorn_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "left_enter.aaf" "left_loop.aaf" "left_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "right_enter.aaf" "right_loop.aaf" "right_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "asking.aaf" "blink_once.aaf" "blink_quick.aaf")
-list(APPEND FILES_TO_DOWNLOAD "connecting.aaf" "panic_enter.aaf" "panic_loop.aaf")
-list(APPEND FILES_TO_DOWNLOAD "panic_return.aaf" "wake.aaf")
-
-foreach(FILENAME IN LISTS FILES_TO_DOWNLOAD)
-    set(REMOTE_FILE "${URL}/${FILENAME}")
-    set(LOCAL_FILE "${EMOJI_DIR}/${FILENAME}")
-    
-    # Check if local file exists
-    if(EXISTS ${LOCAL_FILE})
-        message(STATUS "File ${FILENAME} already exists, skipping download")
-    else()
-        message(STATUS "Downloading ${FILENAME}")
-        file(DOWNLOAD ${REMOTE_FILE} ${LOCAL_FILE}
-             STATUS DOWNLOAD_STATUS)
-        list(GET DOWNLOAD_STATUS 0 STATUS_CODE)
-        if(NOT STATUS_CODE EQUAL 0)
-            message(FATAL_ERROR "Failed to download ${FILENAME} from ${URL}")
-        endif()
-    endif()
-endforeach()
-
 endif()
 
 set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/assets_bin")
@@ -476,10 +391,10 @@ function(build_default_assets_bin)
     # Create custom command to build assets
     add_custom_command(
         OUTPUT ${GENERATED_ASSETS_BIN}
-        COMMAND python ${EMBEDDED_RUNTIME_DIR}/scripts/build_default_assets.py ${BUILD_ARGS}
+        COMMAND python ${RUNTIME_ASSET_SCRIPTS_DIR}/build_default_assets.py ${BUILD_ARGS}
         DEPENDS
             ${SDKCONFIG}
-            ${EMBEDDED_RUNTIME_DIR}/scripts/build_default_assets.py
+            ${RUNTIME_ASSET_SCRIPTS_DIR}/build_default_assets.py
         COMMENT "Building default assets.bin based on configuration"
         VERBATIM
     )
@@ -537,7 +452,7 @@ function(get_assets_local_file assets_source assets_local_file_var)
         if(IS_ABSOLUTE "${assets_source}")
             set(ASSETS_LOCAL_FILE "${assets_source}")
         else()
-            set(ASSETS_LOCAL_FILE "${EMBEDDED_RUNTIME_DIR}/${assets_source}")
+            set(ASSETS_LOCAL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/${assets_source}")
         endif()
         
         # Check if local file exists

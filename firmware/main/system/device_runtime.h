@@ -16,7 +16,7 @@
 #include <vector>
 #include <lvgl_image.h>
 #include <string_view>
-#include <sensors/sensor_snapshot.h>
+#include <hardware/sensors/sensor_snapshot.h>
 
 /**
  * @brief

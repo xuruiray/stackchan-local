@@ -7,13 +7,16 @@
 #include <system/device_runtime.h>
 
 #include <system/runtime_bridge/embedded_runtime_bridge.h>
+#include <hardware/camera/camera_device.h>
+#include <hardware/registry.h>
 #include "audio_playback_service.h"
 #include "camera_stream_service.h"
 #include "command_dispatcher.h"
 #include "protocol_utils.h"
 #include "telemetry_service.h"
 #include <ArduinoJson.hpp>
-#include <board.h>
+#include <assets/assets.h>
+#include <system/legacy_runtime/board/board.h>
 #include <esp_app_desc.h>
 #include <esp_err.h>
 #include <freertos/FreeRTOS.h>
@@ -22,13 +25,14 @@
 #include <mdns.h>
 #include <mooncake.h>
 #include <mooncake_log.h>
-#include <settings.h>
+#include <system/core/settings.h>
 #include <services/expression_motion/stackchan.h>
 #include <web_socket.h>
 #include <wifi_manager.h>
 #include <jpg/image_to_jpeg.h>
 #include <lwip/ip_addr.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <ctime>
 #include <cstring>
@@ -311,7 +315,7 @@ private:
                 _url = std::move(discovered_url);
                 mclog::tagInfo(_tag, "mDNS discovered daemon at {}", _url);
             } else {
-                mclog::tagWarn(_tag, "mDNS discovery failed, using fallback {}", _fallback_url);
+                mclog::tagInfo(_tag, "mDNS discovery failed, using fallback {}", _fallback_url);
             }
         }
 
@@ -340,7 +344,7 @@ private:
         });
 
         _websocket->OnDisconnected([this]() {
-            mclog::tagWarn(_tag, "local daemon disconnected");
+            mclog::tagInfo(_tag, "local daemon disconnected");
             GetDeviceRuntime().releaseMicLevelInput();
             _sensor_cache_initialized = false;
             if (_local_state != LocalCompanionState::PairingFailed) {
@@ -392,6 +396,13 @@ private:
             ArduinoJson::JsonDocument doc;
             auto error = ArduinoJson::deserializeJson(doc, msg.data.data(), msg.data.size());
             if (error) {
+                auto first = std::find_if(msg.data.begin(), msg.data.end(), [](uint8_t ch) {
+                    return !std::isspace(static_cast<unsigned char>(ch));
+                });
+                if (first == msg.data.end() || (*first != '{' && *first != '[')) {
+                    mclog::tagInfo(_tag, "ignored non-json daemon frame len={}", msg.data.size());
+                    continue;
+                }
                 mclog::tagWarn(_tag, "invalid json from daemon: {}", error.c_str());
                 continue;
             }
@@ -845,7 +856,7 @@ private:
         }
         _last_camera_frame_time = now;
 
-        auto camera = embedded_runtime_bridge::board_get_camera();
+        auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
         if (!camera) {
             return;
         }
@@ -1089,7 +1100,7 @@ private:
 
     void send_sensor_snapshot_event(uint32_t now)
     {
-        auto camera = embedded_runtime_bridge::board_get_camera();
+        auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
         const auto touch = embedded_runtime_bridge::get_touch_point();
         const auto& head_touch = _head_touch_cache;
         const auto& imu = _imu_cache;
@@ -1571,7 +1582,7 @@ private:
 
     bool handle_capture_image(const char* command_id, const char* request_id)
     {
-        auto camera = embedded_runtime_bridge::board_get_camera();
+        auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
         if (!camera) {
             send_error("capture_failed", "camera capture failed", true, command_id);
             return false;
@@ -1580,6 +1591,7 @@ private:
         std::string encoded;
         {
             std::lock_guard<std::mutex> lock(_camera_mutex);
+            embedded_runtime_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
             if (!camera->Capture() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
                 send_error("capture_failed", "camera capture failed", true, command_id);
                 return false;

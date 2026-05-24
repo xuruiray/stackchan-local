@@ -1,0 +1,26 @@
+#pragma once
+
+// M5Stack StackChan / CoreS3 electrical constants.
+
+#include <driver/i2c_master.h>
+#include <driver/spi_master.h>
+
+#define STACKCHAN_I2C_PORT I2C_NUM_1
+#define STACKCHAN_I2C_SPEED_HZ 100000
+
+#define AXP2101_I2C_ADDR 0x34
+#define AW9523_I2C_ADDR  0x58
+#define FT6336_I2C_ADDR  0x38
+
+#define AUDIO_INPUT_REFERENCE    true
+#define AUDIO_INPUT_SAMPLE_RATE  24000
+#define AUDIO_OUTPUT_SAMPLE_RATE 24000
+#define AUDIO_CODEC_AW88298_ADDR AW88298_CODEC_DEFAULT_ADDR
+#define AUDIO_CODEC_ES7210_ADDR  ES7210_CODEC_DEFAULT_ADDR
+
+#define DISPLAY_SPI_HOST SPI3_HOST
+#define DISPLAY_SPI_MODE 2
+#define DISPLAY_PIXEL_CLOCK_HZ (40 * 1000 * 1000)
+
+#define CAMERA_SCCB_FREQ_HZ 100000
+#define XCLK_FREQ_HZ 20000000

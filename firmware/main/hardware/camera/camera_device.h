@@ -2,22 +2,14 @@
 #include "sdkconfig.h"
 
 #ifndef CONFIG_IDF_TARGET_ESP32
-#include <lvgl.h>
 #include <thread>
 #include <memory>
 #include <vector>
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-
-#include "camera.h"
+#include <hardware/camera/camera.h>
 #include "jpg/image_to_jpeg.h"
 #include "esp_video_init.h"
-
-struct JpegChunk {
-    uint8_t* data;
-    size_t len;
-};
 
 class StackChanCamera : public Camera {
 private:
@@ -41,10 +33,6 @@ private:
         size_t length = 0;
     };
     std::vector<MmapBuffer> mmap_buffers_;
-#ifndef STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD
-    std::string explain_url_;
-    std::string explain_token_;
-#endif
     std::thread encoder_thread_;
 
 public:
