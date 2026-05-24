@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "servo.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 using namespace uitk;
 
@@ -38,10 +38,10 @@ void Servo::init()
 void Servo::update()
 {
     // Keep update in at most 50Hz
-    if (GetHAL().millis() - _last_tick < 20) {
+    if (GetDeviceRuntime().millis() - _last_tick < 20) {
         return;
     }
-    _last_tick = GetHAL().millis();
+    _last_tick = GetDeviceRuntime().millis();
 
     // Apply animation
     if (!_angle_anim.done()) {
@@ -57,11 +57,11 @@ void Servo::update()
 
     // Auto release torque on rest
     else if (_auto_torque_release_enabled && !isMoving()) {
-        if (GetHAL().millis() - _last_torque_check_tick > 200) {
+        if (GetDeviceRuntime().millis() - _last_torque_check_tick > 200) {
             if (getTorqueEnabled()) {
                 setTorqueEnabled(false);
             }
-            _last_torque_check_tick = GetHAL().millis();
+            _last_torque_check_tick = GetDeviceRuntime().millis();
         }
     }
 }

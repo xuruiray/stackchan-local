@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 #include <runtime_compat/embedded_runtime_bridge.h>
 #include <hardware/i2c/i2c_bus.h>
@@ -18,7 +18,7 @@
 #include <mooncake_log.h>
 #include <mutex>
 
-static const std::string_view _tag = "HAL-Peripherals";
+static const std::string_view _tag = "SensorSnapshot";
 
 namespace {
 
@@ -47,7 +47,7 @@ void append_address_if_missing(std::vector<uint8_t>& addresses, uint8_t address)
 
 }  // namespace
 
-void Hal::peripheral_probe_init()
+void DeviceRuntime::peripheral_probe_init()
 {
     mclog::tagInfo(_tag, "init");
     auto i2c_bus = embedded_runtime_bridge::board_get_i2c_bus();
@@ -71,7 +71,7 @@ void Hal::peripheral_probe_init()
     recordI2cDiagnosticScan("peripheral_probe_done");
 }
 
-LocalPeripheralProbeSnapshot Hal::getLocalPeripheralProbeSnapshot()
+LocalPeripheralProbeSnapshot DeviceRuntime::getLocalPeripheralProbeSnapshot()
 {
     std::lock_guard<std::mutex> lock(snapshot_mutex);
     LocalPeripheralProbeSnapshot current = snapshot;
@@ -85,7 +85,7 @@ LocalPeripheralProbeSnapshot Hal::getLocalPeripheralProbeSnapshot()
     return current;
 }
 
-void Hal::recordI2cDiagnosticScan(std::string_view stage)
+void DeviceRuntime::recordI2cDiagnosticScan(std::string_view stage)
 {
     LocalI2cScanStageSnapshot scan;
     scan.stage = std::string(stage);

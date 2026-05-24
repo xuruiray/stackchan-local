@@ -11,7 +11,7 @@
 #include <smooth_lvgl.hpp>
 #include <assets/assets.h>
 #include <fmt/chrono.h>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <memory>
 #include <vector>
 #include <lvgl.h>
@@ -43,7 +43,7 @@ public:
 
     void update()
     {
-        lv_indev_t* indev = GetHAL().lvTouchpad;
+        lv_indev_t* indev = GetDeviceRuntime().lvTouchpad;
         if (!indev) {
             return;
         }
@@ -218,10 +218,10 @@ public:
 
     void update() override
     {
-        auto level = GetHAL().getBatteryLevel();
+        auto level = GetDeviceRuntime().getBatteryLevel();
         _label_level->setText(fmt::format("{}%", level));
         _battery_icon->setLevel(level);
-        _battery_icon->setCharging(GetHAL().isBatteryCharging());
+        _battery_icon->setCharging(GetDeviceRuntime().isBatteryCharging());
     }
 
 private:
@@ -248,7 +248,7 @@ public:
 
     void update() override
     {
-        auto status = GetHAL().getWifiStatus();
+        auto status = GetDeviceRuntime().getWifiStatus();
         switch (status) {
             case WifiStatus::None:
                 _wifi_icon->setSrc(NULL);
@@ -313,8 +313,8 @@ public:
             }
         }
 
-        if (GetHAL().millis() - _last_update_tick > 1000) {
-            _last_update_tick = GetHAL().millis();
+        if (GetDeviceRuntime().millis() - _last_update_tick > 1000) {
+            _last_update_tick = GetDeviceRuntime().millis();
             for (auto& widget : _widgets) {
                 widget->update();
             }
@@ -369,7 +369,7 @@ public:
 
         _status_bar_view = std::make_unique<status_bar_view::StatusBarView>(parent, colorSecondary, colorPrimary);
         _status_bar_view->show();
-        _status_bar_show_tick = GetHAL().millis();
+        _status_bar_show_tick = GetDeviceRuntime().millis();
         _is_first_show        = true;
     }
 
@@ -389,13 +389,13 @@ private:
     void handle_gesture()
     {
         _status_bar_view->show();
-        _status_bar_show_tick = GetHAL().millis();
+        _status_bar_show_tick = GetDeviceRuntime().millis();
     }
 
     void update_visibility()
     {
         if (!_status_bar_view->isHidden()) {
-            if (GetHAL().millis() - _status_bar_show_tick > (_is_first_show ? 1800 : 6000)) {
+            if (GetDeviceRuntime().millis() - _status_bar_show_tick > (_is_first_show ? 1800 : 6000)) {
                 _is_first_show = false;
                 _status_bar_view->hide();
             }

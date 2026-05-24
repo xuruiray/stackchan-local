@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "head_touch_sensor.h"
-#include <hal/hal.h>
-#include "drivers/Si12T/Si12T.h"
+#include <system/device_runtime.h>
+#include <sensors/head_touch/vendor/si12t/Si12T.h>
 #include <runtime_compat/embedded_runtime_bridge.h>
 #include <esp_err.h>
 #include <esp_timer.h>
@@ -14,7 +14,7 @@
 #include <freertos/task.h>
 #include <mutex>
 
-static const std::string_view _tag = "HAL-HeadTouch";
+static const std::string_view _tag = "HeadTouch";
 static std::mutex _head_touch_snapshot_mutex;
 static LocalHeadTouchSnapshot _head_touch_snapshot;
 
@@ -149,7 +149,7 @@ static void _head_touch_update_task(void* param)
                 _head_touch_snapshot.pressed = false;
                 _head_touch_snapshot.intensity = {0, 0, 0};
                 _head_touch_snapshot.gesture = HeadPetGesture::None;
-                _head_touch_snapshot.updatedAt = GetHAL().millis();
+                _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
@@ -167,17 +167,17 @@ static void _head_touch_update_task(void* param)
             if (gesture != HeadPetGesture::None) {
                 _head_touch_snapshot.gesture = gesture;
             }
-            _head_touch_snapshot.updatedAt = GetHAL().millis();
+            _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
         }
         if (gesture != HeadPetGesture::None) {
-            GetHAL().onHeadPetGesture.emit(gesture);
+            GetDeviceRuntime().onHeadPetGesture.emit(gesture);
         }
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
-void Hal::head_touch_init()
+void DeviceRuntime::head_touch_init()
 {
     mclog::tagInfo(_tag, "init");
 
@@ -193,7 +193,7 @@ void Hal::head_touch_init()
         mclog::tagError(_tag, "init failed: {}", esp_err_to_name(err));
         std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
         _head_touch_snapshot.available = false;
-        _head_touch_snapshot.updatedAt = GetHAL().millis();
+        _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
         return;
     }
 
@@ -204,7 +204,7 @@ void Hal::head_touch_init()
         si12t = nullptr;
         std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
         _head_touch_snapshot.available = false;
-        _head_touch_snapshot.updatedAt = GetHAL().millis();
+        _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
         return;
     }
 
@@ -217,11 +217,11 @@ void Hal::head_touch_init()
         si12t = nullptr;
         std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
         _head_touch_snapshot.available = false;
-        _head_touch_snapshot.updatedAt = GetHAL().millis();
+        _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
     }
 }
 
-LocalHeadTouchSnapshot Hal::getLocalHeadTouchSnapshot()
+LocalHeadTouchSnapshot DeviceRuntime::getLocalHeadTouchSnapshot()
 {
     std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
     return _head_touch_snapshot;

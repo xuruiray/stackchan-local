@@ -8,7 +8,7 @@
 namespace stackchan::hal::hardware {
 
 // Board composition is registered from stackchan_board.cpp through DECLARE_BOARD.
-// The concrete board class stays private to keep callers behind Board/HAL facades.
+// The concrete board class stays private to keep callers behind Board/DeviceRuntime facades.
 constexpr const char* kStackChanBoardName = "m5stack-stack-chan";
 
 }  // namespace stackchan::hal::hardware

@@ -7,7 +7,7 @@
 #include "../modifiable.h"
 #include "../utils/random.h"
 #include <smooth_ui_toolkit.hpp>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 
 namespace stackchan {
@@ -21,7 +21,7 @@ public:
     IdleExpressionModifier(uint32_t interval_min = 2000, uint32_t interval_max = 6000)
         : _interval_min(interval_min), _interval_max(interval_max)
     {
-        _next_tick = GetHAL().millis() + 500;
+        _next_tick = GetDeviceRuntime().millis() + 500;
     }
 
     void _update(Modifiable& stackchan) override
@@ -30,7 +30,7 @@ public:
             return;
         }
 
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
         if (now < _next_tick) {
             return;
         }

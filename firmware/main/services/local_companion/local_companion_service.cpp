@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "local_companion_service.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 #include <runtime_compat/embedded_runtime_bridge.h>
 #include "audio_playback_service.h"
@@ -127,7 +127,7 @@ bool ensure_mdns_started()
         return false;
     }
 
-    std::string hostname = "stackchan-" + GetHAL().getFactoryMacString("");
+    std::string hostname = "stackchan-" + GetDeviceRuntime().getFactoryMacString("");
     for (char& ch : hostname) {
         if (ch == ':') {
             ch = '-';
@@ -190,7 +190,7 @@ public:
     ~LocalCompanionSocket()
     {
         if (_head_touch_connection >= 0) {
-            GetHAL().onHeadPetGesture.disconnect(_head_touch_connection);
+            GetDeviceRuntime().onHeadPetGesture.disconnect(_head_touch_connection);
             _head_touch_connection = -1;
         }
     }
@@ -204,7 +204,7 @@ public:
         _token        = settings.GetString("token", "dev-local-token");
         _use_mdns     = settings.GetBool("mdns", true);
 
-        _head_touch_connection = GetHAL().onHeadPetGesture.connect([this](HeadPetGesture gesture) {
+        _head_touch_connection = GetDeviceRuntime().onHeadPetGesture.connect([this](HeadPetGesture gesture) {
             std::lock_guard<std::mutex> lock(_sensor_mutex);
             _pending_head_touch     = gesture;
             _has_pending_head_touch = true;
@@ -228,7 +228,7 @@ public:
         process_messages();
         send_pending_playback_events();
 
-        const auto now = GetHAL().millis();
+        const auto now = GetDeviceRuntime().millis();
         if (now - _last_heartbeat_time > _heartbeat_interval_ms) {
             send_heartbeat();
             _last_heartbeat_time = now;
@@ -328,7 +328,7 @@ private:
         _websocket->OnConnected([this]() {
             mclog::tagInfo(_tag, "connected to local daemon");
             _local_state          = LocalCompanionState::Connected;
-            _last_heartbeat_time = GetHAL().millis();
+            _last_heartbeat_time = GetDeviceRuntime().millis();
             _heartbeat_interval_ms = kDefaultHeartbeatIntervalMs;
             _binary_camera_frame_enabled = false;
             _camera_credit_enabled = false;
@@ -341,7 +341,7 @@ private:
 
         _websocket->OnDisconnected([this]() {
             mclog::tagWarn(_tag, "local daemon disconnected");
-            GetHAL().releaseMicLevelInput();
+            GetDeviceRuntime().releaseMicLevelInput();
             _sensor_cache_initialized = false;
             if (_local_state != LocalCompanionState::PairingFailed) {
                 _local_state = LocalCompanionState::Disconnected;
@@ -355,11 +355,11 @@ private:
 
         if (!_websocket->Connect(_url.c_str())) {
             _local_state = LocalCompanionState::Disconnected;
-            GetHAL().releaseMicLevelInput();
+            GetDeviceRuntime().releaseMicLevelInput();
             _sensor_cache_initialized = false;
             mclog::tagWarn(_tag, "failed to connect to {}", _url);
         }
-        _last_reconnect_attempt = GetHAL().millis();
+        _last_reconnect_attempt = GetDeviceRuntime().millis();
     }
 
     void reconnect_if_needed()
@@ -368,7 +368,7 @@ private:
             return;
         }
 
-        const auto now = GetHAL().millis();
+        const auto now = GetDeviceRuntime().millis();
         if (now - _last_reconnect_attempt > 5000) {
             connect();
         }
@@ -495,14 +495,14 @@ private:
         const char* command_id = doc["commandId"] | "";
         const char* kind       = command["kind"] | "";
         if (command_updates_activity(kind)) {
-            GetHAL().onLocalCompanionActivity.emit(kind);
+            GetDeviceRuntime().onLocalCompanionActivity.emit(kind);
         }
 
         if (strcmp(kind, "say") == 0) {
             WsTextMessage_t message;
             message.name    = "Codex";
             message.content = command["text"].as<std::string>();
-            GetHAL().onWsTextMessage.emit(message);
+            GetDeviceRuntime().onWsTextMessage.emit(message);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_state_event("speaking", "say command");
             send_command_status(command_id, kind, nullptr, "completed", "text displayed", 1.0f);
@@ -520,7 +520,7 @@ private:
             if (!command["rgbJson"].isNull()) {
                 ArduinoJson::serializeJson(command["rgbJson"], message.rgbJson);
             }
-            GetHAL().onWsReactMessage.emit(message);
+            GetDeviceRuntime().onWsReactMessage.emit(message);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_command_status(command_id, kind, nullptr, "completed", "reaction applied", 1.0f);
             return;
@@ -578,12 +578,12 @@ private:
             }
             if (camera_result.isEnabled && !camera_result.wasEnabled) {
                 std::lock_guard<std::mutex> lock(_face_tracking_mutex);
-                _face_tracking_target.updatedAt = GetHAL().millis();
+                _face_tracking_target.updatedAt = GetDeviceRuntime().millis();
                 _face_tracking_target.detected = false;
                 _face_tracking_target.reserved = true;
                 _face_tracking_target.recenterOnLost = true;
                 _face_tracking_target.speed = std::max(_face_tracking_target.speed, 420);
-                _face_tracking_hold_until = GetHAL().millis() + 3500;
+                _face_tracking_hold_until = GetDeviceRuntime().millis() + 3500;
             }
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_command_status(command_id, kind, nullptr, "completed", "camera stream configured", 1.0f);
@@ -614,7 +614,7 @@ private:
         if (strcmp(kind, "playAnimation") == 0) {
             std::string sequence_json;
             ArduinoJson::serializeJson(command["sequence"], sequence_json);
-            GetHAL().onWsDanceData.emit(sequence_json);
+            GetDeviceRuntime().onWsDanceData.emit(sequence_json);
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_command_status(command_id, kind, nullptr, "started", "animation started", 0.0f);
             return;
@@ -665,7 +665,7 @@ private:
     {
         const bool detected = command["detected"] | false;
         std::lock_guard<std::mutex> lock(_face_tracking_mutex);
-        _face_tracking_target.updatedAt = GetHAL().millis();
+        _face_tracking_target.updatedAt = GetDeviceRuntime().millis();
         _face_tracking_target.speed     = std::max(0, std::min(1000, command["speed"] | 420));
         update_tracking_control(_face_tracking_target.control, command["control"].as<ArduinoJson::JsonObject>());
 
@@ -675,7 +675,7 @@ private:
             _face_tracking_target.reserved = true;
             _face_tracking_target.recenterOnLost =
                 strcmp(reason, "face_lost") == 0 || strcmp(reason, "tracking_enabled") == 0;
-            _face_tracking_hold_until      = GetHAL().millis() + 3500;
+            _face_tracking_hold_until      = GetDeviceRuntime().millis() + 3500;
             return;
         }
 
@@ -781,7 +781,7 @@ private:
             WsTextMessage_t message;
             message.name    = "Codex";
             message.content = text;
-            GetHAL().onWsTextMessage.emit(message);
+            GetDeviceRuntime().onWsTextMessage.emit(message);
         }
 
         send_command_ack(command_id, "playAudioEnd", request_id, true, "accepted");
@@ -979,20 +979,20 @@ private:
 
     void refresh_imu_cache()
     {
-        _imu_cache = GetHAL().getLocalImuSnapshot();
+        _imu_cache = GetDeviceRuntime().getLocalImuSnapshot();
     }
 
     void refresh_head_touch_cache()
     {
-        _head_touch_cache = GetHAL().getLocalHeadTouchSnapshot();
+        _head_touch_cache = GetDeviceRuntime().getLocalHeadTouchSnapshot();
     }
 
     void refresh_power_cache()
     {
-        _power_cache.batteryLevel = clamp_percent(GetHAL().getBatteryLevel());
-        _power_cache.charging = GetHAL().isBatteryCharging();
-        _power_cache.backlight = clamp_percent(GetHAL().getBackLightBrightness());
-        _power_cache.speakerVolume = clamp_percent(GetHAL().getSpeakerVolume());
+        _power_cache.batteryLevel = clamp_percent(GetDeviceRuntime().getBatteryLevel());
+        _power_cache.charging = GetDeviceRuntime().isBatteryCharging();
+        _power_cache.backlight = clamp_percent(GetDeviceRuntime().getBackLightBrightness());
+        _power_cache.speakerVolume = clamp_percent(GetDeviceRuntime().getSpeakerVolume());
     }
 
     void refresh_network_cache()
@@ -1009,13 +1009,13 @@ private:
         } else {
             _network_cache.wifiStatus = "disconnected";
         }
-        _network_cache.bleConnected = GetHAL().isBleConnected();
+        _network_cache.bleConnected = GetDeviceRuntime().isBleConnected();
     }
 
     void refresh_servo_cache()
     {
-        _servo_cache.ioExpanderAvailable = GetHAL().isIoExpanderAvailable();
-        _servo_cache.servoPower = GetHAL().isServoPowerEnabled();
+        _servo_cache.ioExpanderAvailable = GetDeviceRuntime().isIoExpanderAvailable();
+        _servo_cache.servoPower = GetDeviceRuntime().isServoPowerEnabled();
         auto& motion = GetStackChan().motion();
         _servo_cache.yawAngle = motion.yawServo().getCurrentAngle() / 10.0f;
         _servo_cache.yawMoving = motion.yawServo().isMoving();
@@ -1027,12 +1027,12 @@ private:
 
     void refresh_mic_cache()
     {
-        _mic_cache = GetHAL().getMicLevelSnapshot();
+        _mic_cache = GetDeviceRuntime().getMicLevelSnapshot();
     }
 
     void refresh_peripheral_cache()
     {
-        _peripheral_cache = GetHAL().getLocalPeripheralProbeSnapshot();
+        _peripheral_cache = GetDeviceRuntime().getLocalPeripheralProbeSnapshot();
     }
 
     void prepare_event_doc(ArduinoJson::JsonDocument& doc, const char* kind)
@@ -1214,7 +1214,7 @@ private:
         }
         doc["event"]["peripherals"]["rtc"]["available"] = true;
         doc["event"]["peripherals"]["rtc"]["timestamp"] = iso_now();
-        doc["event"]["peripherals"]["rtc"]["timezone"] = GetHAL().getTimezone();
+        doc["event"]["peripherals"]["rtc"]["timezone"] = GetDeviceRuntime().getTimezone();
 
         doc["event"]["peripherals"]["nfc"]["available"] = peripherals.nfcAvailable;
         doc["event"]["peripherals"]["nfc"]["driver"] = peripherals.nfcDriver.c_str();
@@ -1402,8 +1402,8 @@ private:
         ArduinoJson::JsonDocument doc;
         doc["seq"]                 = seq;
         doc["type"]                = "robot.event";
-        doc["eventId"]             = GetHAL().getFactoryMacString("") + "-frame-" + std::to_string(frame_id);
-        doc["deviceId"]            = GetHAL().getFactoryMacString(":");
+        doc["eventId"]             = GetDeviceRuntime().getFactoryMacString("") + "-frame-" + std::to_string(frame_id);
+        doc["deviceId"]            = GetDeviceRuntime().getFactoryMacString(":");
         doc["timestamp"]           = capture_timestamp;
         doc["event"]["kind"]       = "cameraFrame";
         doc["event"]["frameId"]    = std::to_string(frame_id);
@@ -1428,7 +1428,7 @@ private:
 
         ArduinoJson::JsonDocument header_doc;
         header_doc["frameId"] = std::to_string(frame_id);
-        header_doc["deviceId"] = GetHAL().getFactoryMacString(":");
+        header_doc["deviceId"] = GetDeviceRuntime().getFactoryMacString(":");
         const std::string sent_at = iso_now();
         header_doc["timestamp"] = capture_timestamp;
         header_doc["mimeType"] = "image/jpeg";
@@ -1467,7 +1467,7 @@ private:
         auto app_desc = esp_app_get_description();
 
         doc["type"]            = "handshake";
-        doc["deviceId"]        = GetHAL().getFactoryMacString(":");
+        doc["deviceId"]        = GetDeviceRuntime().getFactoryMacString(":");
         doc["firmwareVersion"] = app_desc ? app_desc->version : "local-unknown";
         doc["pairingToken"]    = _token;
 
@@ -1507,7 +1507,7 @@ private:
         ArduinoJson::JsonDocument doc;
         doc["type"]      = "heartbeat";
         doc["seq"]       = _outgoing_seq++;
-        doc["deviceId"]  = GetHAL().getFactoryMacString(":");
+        doc["deviceId"]  = GetDeviceRuntime().getFactoryMacString(":");
         doc["timestamp"] = iso_now();
         send_json(doc);
     }
@@ -1642,10 +1642,10 @@ public:
 
     void onRunning() override
     {
-        if (GetHAL().millis() - _last_tick < 20) {
+        if (GetDeviceRuntime().millis() - _last_tick < 20) {
             return;
         }
-        _last_tick = GetHAL().millis();
+        _last_tick = GetDeviceRuntime().millis();
         _service->update();
     }
 
@@ -1662,19 +1662,19 @@ private:
 
 }  // namespace
 
-void Hal::startLocalCompanionService(std::function<void(std::string_view)> onStartLog)
+void DeviceRuntime::startLocalCompanionService(std::function<void(std::string_view)> onStartLog)
 {
     mclog::tagInfo(_tag, "start local companion service");
     startNetwork(onStartLog);
     mooncake::GetMooncake().extensionManager()->createAbility(std::make_unique<LocalCompanionWorker>(std::move(onStartLog)));
 }
 
-LocalCompanionState Hal::getLocalCompanionState()
+LocalCompanionState DeviceRuntime::getLocalCompanionState()
 {
     return _local_state;
 }
 
-LocalFaceTrackingTarget Hal::getLocalFaceTrackingTarget()
+LocalFaceTrackingTarget DeviceRuntime::getLocalFaceTrackingTarget()
 {
     std::lock_guard<std::mutex> lock(_face_tracking_mutex);
     const auto now = millis();

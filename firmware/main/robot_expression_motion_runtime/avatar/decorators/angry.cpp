@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "decorators.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <vector>
 
 using namespace uitk;
@@ -34,7 +34,7 @@ AngryDecorator::AngryDecorator(lv_obj_t* parent, uint32_t destroyAfterMs, uint32
     _angry->setImageRecolorOpa(LV_OPA_COVER);
     _angry->setImageRecolor(_angry_default_color);
 
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
 
     // 初始化销毁倒计时
     if (destroyAfterMs > 0) {
@@ -54,7 +54,7 @@ AngryDecorator::~AngryDecorator()
 
 void AngryDecorator::_update()
 {
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
 
     // 检查自动销毁
     if (_has_lifetime && now >= _destroy_at) {

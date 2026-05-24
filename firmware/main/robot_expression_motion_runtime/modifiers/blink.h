@@ -6,7 +6,7 @@
 #pragma once
 #include "../modifiable.h"
 #include "../utils/random.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 
 namespace stackchan {
@@ -25,7 +25,7 @@ public:
     BlinkModifier(uint32_t destroyAfterMs = 0, uint32_t openIntervalMs = 5200, uint32_t closeIntervalMs = 200)
         : _open_interval_ms(openIntervalMs), _close_interval_ms(closeIntervalMs)
     {
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 处理销毁计时
         if (destroyAfterMs > 0) {
@@ -49,7 +49,7 @@ public:
             return;
         }
 
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 1. 处理销毁逻辑
         if (_has_lifetime && now >= _destroy_at) {

@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "servo_controller.h"
-#include <hal/hal.h>
-#include "drivers/FTServo_Arduino/src/SCSCL.h"
+#include <system/device_runtime.h>
+#include <hardware/servo/vendor/ftservo_arduino/src/SCSCL.h>
 #include <robot_expression_motion_runtime/stackchan.h>
 #include <smooth_ui_toolkit.hpp>
 #include <mooncake_log.h>
@@ -163,9 +163,9 @@ private:
     }
 };
 
-void Hal::servo_init()
+void DeviceRuntime::servo_init()
 {
-    mclog::tagInfo("HAL-Servo", "init");
+    mclog::tagInfo("Servo", "init");
 
     _scs_bus.begin(UART_NUM_1, 1000000, 6, 7);
 

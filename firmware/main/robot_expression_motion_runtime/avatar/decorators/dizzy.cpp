@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "decorators.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <vector>
 
 using namespace uitk;
@@ -41,7 +41,7 @@ DizzyDecorator::DizzyDecorator(lv_obj_t* parent, uint32_t destroyAfterMs, uint32
     _right->setImageRecolorOpa(LV_OPA_COVER);
     _right->setImageRecolor(_dizzy_default_color);
 
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
 
     if (destroyAfterMs > 0) {
         _destroy_at   = now + destroyAfterMs;
@@ -61,7 +61,7 @@ DizzyDecorator::~DizzyDecorator()
 
 void DizzyDecorator::_update()
 {
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
 
     if (_has_lifetime && now >= _destroy_at) {
         requestDestroy();

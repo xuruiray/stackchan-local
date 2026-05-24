@@ -8,7 +8,7 @@
 #include <mooncake_log.h>
 #include <mooncake.h>
 #include <app/local_companion/local_companion_app.h>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit;
@@ -19,12 +19,12 @@ extern "C" void app_main(void)
     mclog::set_level(mclog::level_info);
     mclog::set_time_format(mclog::time_format_unix_milliseconds);
 
-    // HAL init
-    GetHAL().init();
+    // Device runtime init
+    GetDeviceRuntime().init();
 
     // Setup ui hal
-    ui_hal::on_delay([](uint32_t ms) { GetHAL().delay(ms); });
-    ui_hal::on_get_tick([]() { return GetHAL().millis(); });
+    ui_hal::on_delay([](uint32_t ms) { GetDeviceRuntime().delay(ms); });
+    ui_hal::on_get_tick([]() { return GetDeviceRuntime().millis(); });
 
     // Local-only runtime: boot directly into the desktop companion instead of
     // the original multi-app launcher/cloud flow.
@@ -32,8 +32,8 @@ extern "C" void app_main(void)
 
     // Main loop
     while (1) {
-        GetHAL().feedTheDog();
-        GetHAL().updateHeapStatusLog();
+        GetDeviceRuntime().feedTheDog();
+        GetDeviceRuntime().updateHeapStatusLog();
 
         GetMooncake().update();
 

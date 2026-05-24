@@ -7,7 +7,7 @@
 #include "../modifiable.h"
 #include <string_view>
 #include <functional>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 #include <memory>
 
@@ -25,7 +25,7 @@ public:
 
     void _update(Modifiable& stackchan) override
     {
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         if (!_is_started) {
             _is_started = true;

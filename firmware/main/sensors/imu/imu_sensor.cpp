@@ -4,16 +4,16 @@
  * SPDX-License-Identifier: MIT
  */
 #include "imu_sensor.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <runtime_compat/embedded_runtime_bridge.h>
-#include "drivers/bmi270/bmi270.h"
-#include "utils/motion_detector/motion_detector.h"
+#include <sensors/imu/vendor/bmi270/bmi270.h>
+#include <sensors/imu/motion_detector/motion_detector.h>
 #include <mooncake_log.h>
 #include <cmath>
 #include <memory>
 #include <mutex>
 
-static const std::string_view _tag = "HAL-IMU";
+static const std::string_view _tag = "IMU";
 static constexpr float kPi = 3.14159265358979323846f;
 
 static std::unique_ptr<BMI270> _bmi270;
@@ -36,7 +36,7 @@ static void _imu_task(void* param)
             if (motion_detector->isShakeDetected()) {
                 mclog::tagInfo(_tag, "Shake Detected!");
                 motion = ImuMotionEvent::Shake;
-                GetHAL().onImuMotionEvent.emit(ImuMotionEvent::Shake);
+                GetDeviceRuntime().onImuMotionEvent.emit(ImuMotionEvent::Shake);
             }
             {
                 std::lock_guard<std::mutex> lock(_imu_snapshot_mutex);
@@ -62,18 +62,18 @@ static void _imu_task(void* param)
                     _imu_snapshot.magnetometerHeadingDeg = heading;
                 }
                 _imu_snapshot.motion    = motion;
-                _imu_snapshot.updatedAt = GetHAL().millis();
+                _imu_snapshot.updatedAt = GetDeviceRuntime().millis();
             }
             // if (motion_detector->isPickUpDetected()) {
             //     mclog::tagInfo(_tag, "Pick Up Detected!");
-            //     GetHAL().onImuMotionEvent.emit(ImuMotionEvent::PickUp);
+            //     GetDeviceRuntime().onImuMotionEvent.emit(ImuMotionEvent::PickUp);
             // }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
-void Hal::imu_init()
+void DeviceRuntime::imu_init()
 {
     mclog::tagInfo(_tag, "init");
 
@@ -91,7 +91,7 @@ void Hal::imu_init()
     xTaskCreatePinnedToCoreWithCaps(_imu_task, "imu", 4096, NULL, 2, NULL, 1, MALLOC_CAP_SPIRAM);
 }
 
-LocalImuSnapshot Hal::getLocalImuSnapshot()
+LocalImuSnapshot DeviceRuntime::getLocalImuSnapshot()
 {
     std::lock_guard<std::mutex> lock(_imu_snapshot_mutex);
     return _imu_snapshot;

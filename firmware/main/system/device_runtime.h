@@ -113,7 +113,7 @@ private:
  * @brief
  *
  */
-class Hal {
+class DeviceRuntime {
 public:
     void init();
 
@@ -218,7 +218,7 @@ private:
     void recordI2cDiagnosticScan(std::string_view stage);
 };
 
-Hal& GetHAL();
+DeviceRuntime& GetDeviceRuntime();
 
 /**
  * @brief
@@ -228,10 +228,10 @@ class LvglLockGuard {
 public:
     LvglLockGuard()
     {
-        GetHAL().lvglLock();
+        GetDeviceRuntime().lvglLock();
     }
     ~LvglLockGuard()
     {
-        GetHAL().lvglUnlock();
+        GetDeviceRuntime().lvglUnlock();
     }
 };

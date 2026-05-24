@@ -4,21 +4,21 @@
  * SPDX-License-Identifier: MIT
  */
 #include "rtc_sensor.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <runtime_compat/embedded_runtime_bridge.h>
 #include <system/time_service.h>
-#include "drivers/PCF8563_Class/PCF8563_Class.hpp"
+#include <sensors/rtc/vendor/pcf8563/PCF8563_Class.hpp>
 #include <mooncake_log.h>
 #include <memory>
 #include <sys/time.h>
 #include <ctime>
 #include <esp_log.h>
 
-static const std::string_view _tag = "HAL-RTC";
+static const std::string_view _tag = "RTC";
 
 static std::unique_ptr<m5::PCF8563_Class> _pcf8563;
 
-void Hal::rtc_init()
+void DeviceRuntime::rtc_init()
 {
     mclog::tagInfo(_tag, "init");
 
@@ -40,7 +40,7 @@ void Hal::rtc_init()
     syncRtcTimeToSystem();
 }
 
-void Hal::syncRtcTimeToSystem()
+void DeviceRuntime::syncRtcTimeToSystem()
 {
     if (!_pcf8563) {
         return;
@@ -82,7 +82,7 @@ void Hal::syncRtcTimeToSystem()
     }
 }
 
-void Hal::syncSystemTimeToRtc()
+void DeviceRuntime::syncSystemTimeToRtc()
 {
     if (!_pcf8563) {
         return;
@@ -111,13 +111,13 @@ void Hal::syncSystemTimeToRtc()
     }
 }
 
-void Hal::setTimezone(std::string_view tz)
+void DeviceRuntime::setTimezone(std::string_view tz)
 {
     stackchan::system::apply_timezone(tz);
     stackchan::system::save_timezone(tz);
 }
 
-std::string Hal::getTimezone()
+std::string DeviceRuntime::getTimezone()
 {
     return stackchan::system::load_timezone();
 }

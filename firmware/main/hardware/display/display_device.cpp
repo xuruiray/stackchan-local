@@ -16,7 +16,7 @@
 #include <lvgl_theme.h>
 #include <robot_expression_motion_runtime/stackchan.h>
 #include <assets/lang_config.h>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 using namespace stackchan;
 using namespace stackchan::avatar;
@@ -180,14 +180,14 @@ StackChanAvatarDisplay::StackChanAvatarDisplay(esp_lcd_panel_io_handle_t panel_i
     esp_timer_create(&preview_timer_args, &preview_timer_);
 
     // Create boot logo label if not warm boot
-    if (GetHAL().getWarmRebootTarget() < 0) {
+    if (GetDeviceRuntime().getWarmRebootTarget() < 0) {
         ESP_LOGI(TAG, "Create boot logo label");
         Lock();
         {
             uitk::lvgl_cpp::ScreenActive screen;
             screen.setBgColor(lv_color_hex(0x000000));
         }
-        GetHAL().bootLogo = std::make_unique<BootLogo>();
+        GetDeviceRuntime().bootLogo = std::make_unique<BootLogo>();
         Unlock();
     }
 
@@ -265,7 +265,7 @@ void StackChanAvatarDisplay::SetupUI()
     lv_obj_align(preview_image_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
 
-    // GetHAL().startStackChanAutoUpdate(24);
+    // GetDeviceRuntime().startStackChanAutoUpdate(24);
 
     auto config        = embedded_runtime_bridge::get_runtime_power_config();
     idle_motion_level_ = config.idleRandomMovementLevel;
@@ -479,8 +479,8 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
             speaking_modifier_id_ = -1;
         }
 
-        GetHAL().setRgbColor(0, 0, 50, 0);
-        GetHAL().refreshRgb();
+        GetDeviceRuntime().setRgbColor(0, 0, 50, 0);
+        GetDeviceRuntime().refreshRgb();
 
     } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
         if (speaking_modifier_id_ >= 0) {
@@ -492,16 +492,16 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
 
         is_idle = true;
 
-        GetHAL().setRgbColor(0, 0, 0, 0);
-        GetHAL().refreshRgb();
+        GetDeviceRuntime().setRgbColor(0, 0, 0, 0);
+        GetDeviceRuntime().refreshRgb();
 
     } else if (strcmp(status, Lang::Strings::SPEAKING) == 0) {
         if (speaking_modifier_id_ < 0) {
             speaking_modifier_id_ = stackchan.addModifier(std::make_unique<SpeakingModifier>(0, 180, false));
         }
 
-        GetHAL().setRgbColor(0, 0, 0, 50);
-        GetHAL().refreshRgb();
+        GetDeviceRuntime().setRgbColor(0, 0, 0, 50);
+        GetDeviceRuntime().refreshRgb();
     } else {
         avatar.setSpeech(status);
     }

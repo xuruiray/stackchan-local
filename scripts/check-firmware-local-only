@@ -10,6 +10,17 @@ if [[ ! -f "$compile_db" ]]; then
 fi
 
 legacy_source_regex='firmware/main/apps/app_(ai_agent|app_center|avatar|dance|espnow_ctrl|ezdata|launcher|setup|template)/|firmware/main/hal/hal_(account|app_center|espnow|ezdata|mcp|ota|ws_avatar)\.cpp|firmware/main/embedded_runtime/(application|mcp_server|ota)\.cc|firmware/main/embedded_runtime/protocols/(mqtt_protocol|websocket_protocol)\.cc|firmware/main/embedded_runtime/boards/common/(dual_network_board|esp32_camera|esp_video|ml307_board|nt26_board|press_to_talk_mcp_tool|rndis_board|sleep_timer)\.cc'
+legacy_hal_include_regex='#include [<"]hal/|#include "drivers/|#include "utils/'
+
+if [[ -d firmware/main/hal ]]; then
+  echo "Legacy firmware/main/hal directory must not exist. Move code into system, hardware, sensors, services, or runtime_compat." >&2
+  exit 1
+fi
+
+if rg -n "$legacy_hal_include_regex" firmware/main --glob '*.{h,hpp,c,cc,cpp}'; then
+  echo "Legacy hal/drivers/utils include path found in firmware/main." >&2
+  exit 1
+fi
 
 if rg -n "$legacy_source_regex" "$compile_db"; then
   echo "Legacy cloud sources are still present in the firmware compile database." >&2

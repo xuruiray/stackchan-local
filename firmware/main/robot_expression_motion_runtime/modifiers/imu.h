@@ -5,7 +5,7 @@
  */
 #pragma once
 #include "../modifiable.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 
 namespace stackchan {
@@ -18,7 +18,7 @@ class ImuEventModifier : public Modifier {
 public:
     ImuEventModifier(uint32_t reactionDurationMs = 4000) : _reaction_duration_ms(reactionDurationMs)
     {
-        _signal_connection = GetHAL().onImuMotionEvent.connect([this](ImuMotionEvent event) {
+        _signal_connection = GetDeviceRuntime().onImuMotionEvent.connect([this](ImuMotionEvent event) {
             if (event == ImuMotionEvent::Shake) {
                 _event_shake = true;
             }
@@ -27,12 +27,12 @@ public:
 
     ~ImuEventModifier()
     {
-        GetHAL().onImuMotionEvent.disconnect(_signal_connection);
+        GetDeviceRuntime().onImuMotionEvent.disconnect(_signal_connection);
     }
 
     void _update(Modifiable& stackchan) override
     {
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 收到晃动事件
         if (_event_shake) {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "neon_light.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 using namespace stackchan::addon;
 
@@ -24,10 +24,10 @@ void NeonLight::update()
     }
 
     // Keep update in at most 50Hz
-    if (GetHAL().millis() - _last_tick < 20) {
+    if (GetDeviceRuntime().millis() - _last_tick < 20) {
         return;
     }
-    _last_tick = GetHAL().millis();
+    _last_tick = GetDeviceRuntime().millis();
 
     // Apply color animation
     if (!_color_anim.done()) {
@@ -80,20 +80,20 @@ void NeonLight::setDuration(float durationSec)
 
 void LeftNeonLight::set_rgb_color_impl(uint8_t index, uint8_t r, uint8_t g, uint8_t b)
 {
-    GetHAL().setRgbColor(index, r, g, b);
+    GetDeviceRuntime().setRgbColor(index, r, g, b);
 }
 
 void LeftNeonLight::refresh_rgb_impl()
 {
-    GetHAL().refreshRgb();
+    GetDeviceRuntime().refreshRgb();
 }
 
 void RightNeonLight::set_rgb_color_impl(uint8_t index, uint8_t r, uint8_t g, uint8_t b)
 {
-    GetHAL().setRgbColor(index + 6, r, g, b);
+    GetDeviceRuntime().setRgbColor(index + 6, r, g, b);
 }
 
 void RightNeonLight::refresh_rgb_impl()
 {
-    GetHAL().refreshRgb();
+    GetDeviceRuntime().refreshRgb();
 }

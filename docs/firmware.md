@@ -39,7 +39,9 @@ firmware/main/
   embedded_runtime/          vendored runtime subset retained for board/audio/display primitives
 ```
 
-The `hardware/` and `sensors/` directories intentionally keep each basic device or sensor in its own `.h/.cpp` pair. Aggregation files compose modules and publish HAL-facing behavior; they do not hide unrelated driver logic.
+The `hardware/` and `sensors/` directories intentionally keep each basic device or sensor in its own `.h/.cpp` pair. Third-party driver code sits under the owning module's `vendor/` directory, for example servo drivers under `hardware/servo/vendor/` and IMU drivers under `sensors/imu/vendor/`. Aggregation files compose modules and publish device-runtime behavior; they do not hide unrelated driver logic.
+
+The legacy `firmware/main/hal` directory has been removed. New code should include the project facade through `system/device_runtime.h` and call `GetDeviceRuntime()`. The local-only check rejects `firmware/main/hal`, `#include <hal/...>`, and old implicit `drivers/` or `utils/` include roots.
 
 `runtime_compat/embedded_runtime_bridge.{h,cpp}` is the compatibility boundary for retained runtime calls such as `Board::GetInstance()`, settings, display locks, camera access, battery state, speaker volume, and power-off. New local firmware code should prefer that bridge instead of scattering direct runtime calls through services.
 

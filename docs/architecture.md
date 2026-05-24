@@ -46,6 +46,8 @@ Project-owned firmware code is split into:
 - `firmware/main/services/local_companion/`: local WebSocket service, command dispatch, telemetry, camera stream, audio playback, and protocol helpers.
 - `firmware/main/runtime_compat/`: the narrow bridge into retained embedded runtime APIs.
 
+`firmware/main/system/device_runtime.h` is the firmware facade used by application code. The old `firmware/main/hal` tree has been removed; vendor drivers now live under the hardware or sensor module that owns them.
+
 ## Protocol
 
 `protocol/` is the shared contract. The daemon validates inbound and outbound JSON messages before routing them.

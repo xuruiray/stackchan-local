@@ -5,7 +5,7 @@
  */
 #include "telemetry_service.h"
 
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include "protocol_utils.h"
 #include <string>
 
@@ -15,8 +15,8 @@ void prepare_robot_event(ArduinoJson::JsonDocument& doc, const char* kind, uint3
 {
     doc["type"]          = "robot.event";
     doc["seq"]           = event_counter;
-    doc["eventId"]       = GetHAL().getFactoryMacString("") + "-" + kind + "-" + std::to_string(event_counter);
-    doc["deviceId"]      = GetHAL().getFactoryMacString(":");
+    doc["eventId"]       = GetDeviceRuntime().getFactoryMacString("") + "-" + kind + "-" + std::to_string(event_counter);
+    doc["deviceId"]      = GetDeviceRuntime().getFactoryMacString(":");
     doc["timestamp"]     = iso_now();
     doc["event"]["kind"] = kind;
 }

@@ -7,7 +7,7 @@
 #include "avatar/avatar.h"
 #include "motion/motion.h"
 #include "addons/neon_light/neon_light.h"
-#include "utils/object_pool.h"
+#include <robot_expression_motion_runtime/utils/object_pool.h>
 
 namespace stackchan {
 

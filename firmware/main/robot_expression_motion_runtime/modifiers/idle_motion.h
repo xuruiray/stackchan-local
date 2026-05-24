@@ -8,7 +8,7 @@
 #include "../utils/random.h"
 #include <smooth_ui_toolkit.hpp>
 // #include <mooncake_log.h>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 
 namespace stackchan {
@@ -22,7 +22,7 @@ public:
     IdleMotionModifier(uint32_t interval_min = 4000, uint32_t interval_max = 8000)
         : _interval_min(interval_min), _interval_max(interval_max)
     {
-        _next_tick = GetHAL().millis() + 1000;  // 启动 1 秒后开始第一次动作
+        _next_tick = GetDeviceRuntime().millis() + 1000;  // 启动 1 秒后开始第一次动作
     }
 
     void pause()
@@ -33,7 +33,7 @@ public:
     {
         if (_paused) {
             _paused    = false;
-            _next_tick = GetHAL().millis() + 500;
+            _next_tick = GetDeviceRuntime().millis() + 500;
         }
     }
 
@@ -41,7 +41,7 @@ public:
     {
         if (_paused || !stackchan.hasAvatar()) return;
 
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 如果时间没到，直接跳过
         if (now < _next_tick) {

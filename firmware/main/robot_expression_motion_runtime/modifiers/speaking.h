@@ -7,7 +7,7 @@
 #include "../modifiable.h"
 #include "../utils/random.h"
 #include <smooth_ui_toolkit.hpp>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 
 namespace stackchan {
@@ -22,7 +22,7 @@ public:
     SpeakingModifier(uint32_t destroyAfterMs = 0, uint32_t mouthIntervalMs = 180, bool enableMotion = true)
         : _mouth_interval_ms(mouthIntervalMs), _enable_motion(enableMotion)
     {
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 销毁计时
         if (destroyAfterMs > 0) {
@@ -47,7 +47,7 @@ public:
             return;
         }
 
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 检查销毁逻辑
         if (_has_lifetime && now >= _destroy_at) {

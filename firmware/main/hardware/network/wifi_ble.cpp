@@ -4,42 +4,42 @@
  * SPDX-License-Identifier: MIT
  */
 #include "wifi_ble.h"
-#include <hal/hal.h>
-#include "utils/bleprph/bleprph.h"
-#include "utils/secret_logic/secret_logic.h"
+#include <system/device_runtime.h>
+#include <hardware/network/ble/peripheral/bleprph.h>
+#include <hardware/network/provisioning_secret/secret_logic.h>
 #include <ArduinoJson.hpp>
 #include <mooncake_log.h>
 #include <mooncake.h>
 #include <settings.h>
 #include <esp_mac.h>
 
-static const std::string_view _tag = "HAL-BLE";
+static const std::string_view _tag = "BLE";
 
 static int _handle_ble_motion_write(const char* json_data, uint16_t len, uint16_t conn_handle)
 {
     // mclog::tagInfo(_tag, "on motion:\n{}", json_data);
-    GetHAL().onBleMotionData.emit(json_data);
+    GetDeviceRuntime().onBleMotionData.emit(json_data);
     return 0;
 }
 
 static int _handle_ble_avatar_write(const char* json_data, uint16_t len, uint16_t conn_handle)
 {
     // mclog::tagInfo(_tag, "on avatar:\n{}", json_data);
-    GetHAL().onBleAvatarData.emit(json_data);
+    GetDeviceRuntime().onBleAvatarData.emit(json_data);
     return 0;
 }
 
 static int _handle_ble_config_write(const char* json_data, uint16_t len, uint16_t conn_handle)
 {
     // mclog::tagInfo(_tag, "on config:\n{}", json_data);
-    GetHAL().onBleConfigData.emit(json_data);
+    GetDeviceRuntime().onBleConfigData.emit(json_data);
     return 0;
 }
 
 static int _handle_ble_rgb_write(const char* json_data, uint16_t len, uint16_t conn_handle)
 {
     // mclog::tagInfo(_tag, "on rgb:\n{}", json_data);
-    GetHAL().onBleRgbData.emit(json_data);
+    GetDeviceRuntime().onBleRgbData.emit(json_data);
     return 0;
 }
 
@@ -49,7 +49,7 @@ static uint8_t _handle_ble_battery_read(void)
     return 96;
 }
 
-void Hal::ble_init(bool useAltUuid)
+void DeviceRuntime::ble_init(bool useAltUuid)
 {
     mclog::tagInfo(_tag, "init");
 
@@ -70,13 +70,13 @@ void Hal::ble_init(bool useAltUuid)
                    mac[3], mac[4], mac[5]);
 }
 
-void Hal::startBleServer()
+void DeviceRuntime::startBleServer()
 {
     mclog::tagInfo(_tag, "start ble server");
     ble_init(false);
 }
 
-bool Hal::isBleConnected()
+bool DeviceRuntime::isBleConnected()
 {
     return stackchan_ble_is_connected();
 }
@@ -84,7 +84,7 @@ bool Hal::isBleConnected()
 /* -------------------------------------------------------------------------- */
 /*                              App config server                             */
 /* -------------------------------------------------------------------------- */
-#include "utils/wifi_connect/wifi_station.h"
+#include <hardware/network/wifi/provisioning/wifi_station.h>
 #include <string_view>
 #include <queue>
 #include <mutex>
@@ -94,7 +94,7 @@ class WifiConfigServer {
 public:
     void init()
     {
-        GetHAL().onBleConfigData.connect([this](const char* data) { on_config_data(data); });
+        GetDeviceRuntime().onBleConfigData.connect([this](const char* data) { on_config_data(data); });
         _was_connected = stackchan_ble_is_connected();
 
         // Setup WifiStation callbacks
@@ -108,7 +108,7 @@ public:
             mclog::tagInfo(_tag, "wifi Connected to {}", ssid);
             _is_wifi_connecting = false;
             notify_state(1, "wifiConnected");
-            GetHAL().onAppConfigEvent.emit(AppConfigEvent::WifiConnected);
+            GetDeviceRuntime().onAppConfigEvent.emit(AppConfigEvent::WifiConnected);
 
             Settings settings("app_config", true);
             settings.SetBool("is_configed", true);
@@ -117,7 +117,7 @@ public:
             mclog::tagInfo(_tag, "wifi Connect Failed to {}", ssid);
             _is_wifi_connecting = false;
             notify_state(2, "wifiConnectFailed");
-            GetHAL().onAppConfigEvent.emit(AppConfigEvent::WifiConnectFailed);
+            GetDeviceRuntime().onAppConfigEvent.emit(AppConfigEvent::WifiConnectFailed);
         });
 
         _wifi_station->Start();
@@ -130,10 +130,10 @@ public:
             _was_connected = is_connected;
             if (is_connected) {
                 mclog::tagInfo("WifiConfigServer", "app Connected");
-                GetHAL().onAppConfigEvent.emit(AppConfigEvent::AppConnected);
+                GetDeviceRuntime().onAppConfigEvent.emit(AppConfigEvent::AppConnected);
             } else {
                 mclog::tagInfo("WifiConfigServer", "app Disconnected");
-                GetHAL().onAppConfigEvent.emit(AppConfigEvent::AppDisconnected);
+                GetDeviceRuntime().onAppConfigEvent.emit(AppConfigEvent::AppDisconnected);
             }
         }
 
@@ -213,7 +213,7 @@ private:
 
         // Notify state: connecting
         notify_state(0, "wifiConnecting");
-        GetHAL().onAppConfigEvent.emit(AppConfigEvent::TryWifiConnect);
+        GetDeviceRuntime().onAppConfigEvent.emit(AppConfigEvent::TryWifiConnect);
 
         connect_wifi(ssid, password);
     }
@@ -253,10 +253,10 @@ public:
 
     void onRunning() override
     {
-        if (GetHAL().millis() - _last_tick < 50) {
+        if (GetDeviceRuntime().millis() - _last_tick < 50) {
             return;
         }
-        _last_tick = GetHAL().millis();
+        _last_tick = GetDeviceRuntime().millis();
         _server->update();
     }
 
@@ -270,7 +270,7 @@ private:
     uint32_t _last_tick = 0;
 };
 
-void Hal::startAppConfigServer()
+void DeviceRuntime::startAppConfigServer()
 {
     mclog::tagInfo(_tag, "start app config server");
 
@@ -279,13 +279,13 @@ void Hal::startAppConfigServer()
     mooncake::GetMooncake().extensionManager()->createAbility(std::make_unique<AppConfigServerWorker>());
 }
 
-bool Hal::isAppConfiged()
+bool DeviceRuntime::isAppConfiged()
 {
     Settings settings("app_config", false);
     return settings.GetBool("is_configed", false);
 }
 
-void Hal::resetAppConfiged()
+void DeviceRuntime::resetAppConfiged()
 {
     Settings settings("app_config", true);
     settings.SetBool("is_configed", false);

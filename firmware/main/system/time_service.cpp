@@ -27,7 +27,7 @@ void save_timezone(std::string_view tz)
 {
     Settings settings("system", true);
     settings.SetString("tz", std::string(tz));
-    mclog::tagInfo("HAL-Time", "timezone updated to: {}", tz);
+    mclog::tagInfo("TimeService", "timezone updated to: {}", tz);
 }
 
 }  // namespace stackchan::system

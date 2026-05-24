@@ -46,15 +46,28 @@ set(STACK_CHAN_SOURCES
     "services/local_companion/protocol_utils.cpp"
     "services/local_companion/telemetry_service.cpp"
     "local_runtime_adapters/network/esp_network.cpp"
-)
-
-file(GLOB_RECURSE HAL_DRIVER_SOURCES
-    "hal/drivers/*.c"
-    "hal/drivers/*.cc"
-    "hal/drivers/*.cpp"
-    "hal/utils/*.c"
-    "hal/utils/*.cc"
-    "hal/utils/*.cpp"
+    "hardware/io_expander/vendor/py32_io_expander/PY32IOExpander_Class.cpp"
+    "hardware/network/ble/peripheral/bleprph.c"
+    "hardware/network/ble/peripheral/gatt_svr.c"
+    "hardware/network/ble/peripheral/nimble_peripheral_utils/misc.c"
+    "hardware/network/ble/peripheral/nimble_peripheral_utils/scli.c"
+    "hardware/network/provisioning_secret/secret_logic.cpp"
+    "hardware/network/wifi/provisioning/wifi_station.cc"
+    "hardware/servo/vendor/ftservo_arduino/src/HLSCL.cpp"
+    "hardware/servo/vendor/ftservo_arduino/src/SCS.cpp"
+    "hardware/servo/vendor/ftservo_arduino/src/SCSCL.cpp"
+    "hardware/servo/vendor/ftservo_arduino/src/SCSerial.cpp"
+    "hardware/servo/vendor/ftservo_arduino/src/SMS_STS.cpp"
+    "sensors/head_touch/vendor/si12t/Si12T.cpp"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi2.c"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi2_ois.c"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270.c"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_context.c"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_dsd.c"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_legacy.c"
+    "sensors/imu/vendor/bmi270/BMI270_SensorAPI/bmi270_maximum_fifo.c"
+    "sensors/imu/vendor/bmi270/bmi270.cpp"
+    "sensors/rtc/vendor/pcf8563/PCF8563_Class.cpp"
 )
 
 file(GLOB_RECURSE STACKCHAN_EXPRESSION_SOURCES
@@ -63,12 +76,10 @@ file(GLOB_RECURSE STACKCHAN_EXPRESSION_SOURCES
     "robot_expression_motion_runtime/*.cpp"
 )
 
-list(APPEND STACK_CHAN_SOURCES ${HAL_DRIVER_SOURCES} ${STACKCHAN_EXPRESSION_SOURCES})
+list(APPEND STACK_CHAN_SOURCES ${STACKCHAN_EXPRESSION_SOURCES})
 
 set(STACK_CHAN_INCLUDE_DIRS
     "."
-    "hal"
-    "hal/utils"
 )
 list(REMOVE_DUPLICATES STACK_CHAN_SOURCES)
 

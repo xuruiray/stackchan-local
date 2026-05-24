@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "decorators.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <vector>
 
 using namespace uitk;
@@ -34,7 +34,7 @@ HeartDecorator::HeartDecorator(lv_obj_t* parent, uint32_t destroyAfterMs, uint32
     _heart->setImageRecolorOpa(LV_OPA_COVER);
     _heart->setImageRecolor(_heart_default_color);
 
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
 
     // 设置销毁计时
     if (destroyAfterMs > 0) {
@@ -54,7 +54,7 @@ HeartDecorator::~HeartDecorator()
 
 void HeartDecorator::_update()
 {
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
 
     // 1. 处理销毁
     if (_has_lifetime && now >= _destroy_at) {

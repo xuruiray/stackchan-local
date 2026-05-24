@@ -3,22 +3,22 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <runtime_compat/embedded_runtime_bridge.h>
 #include <mooncake_log.h>
 
-void Hal::powerOff()
+void DeviceRuntime::powerOff()
 {
-    mclog::tagWarn("HAL-Power", "power off requested");
+    mclog::tagWarn("PowerManager", "power off requested");
     embedded_runtime_bridge::board_power_off();
 }
 
-uint8_t Hal::getBatteryLevel()
+uint8_t DeviceRuntime::getBatteryLevel()
 {
     return embedded_runtime_bridge::board_get_battery_level();
 }
 
-bool Hal::isBatteryCharging()
+bool DeviceRuntime::isBatteryCharging()
 {
     return embedded_runtime_bridge::board_is_battery_charging();
 }

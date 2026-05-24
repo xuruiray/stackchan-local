@@ -5,7 +5,7 @@
  */
 #include <system/nvs_settings.h>
 
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <esp_err.h>
 #include <nvs_flash.h>
 #include <mooncake_log.h>
@@ -24,9 +24,9 @@ void init_nvs_or_reset()
 
 }  // namespace stackchan::system
 
-void Hal::factoryReset()
+void DeviceRuntime::factoryReset()
 {
-    mclog::tagInfo("HAL-NVS", "start factory reset");
+    mclog::tagInfo("DeviceRuntime-NVS", "start factory reset");
     ESP_ERROR_CHECK(nvs_flash_erase());
     reboot();
 }

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "network_service.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <robot_expression_motion_runtime/stackchan.h>
 #include <mooncake.h>
 #include <mooncake_log.h>
@@ -24,10 +24,10 @@ static bool _is_network_connected = false;
 static void time_sync_notification_cb(struct timeval* tv)
 {
     mclog::tagInfo(_tag, "SNTP time synchronized");
-    GetHAL().syncSystemTimeToRtc();
+    GetDeviceRuntime().syncSystemTimeToRtc();
 }
 
-void Hal::startSntp()
+void DeviceRuntime::startSntp()
 {
     mclog::tagInfo(_tag, "SNTP init");
 
@@ -45,7 +45,7 @@ void Hal::startSntp()
     }
 }
 
-void Hal::startNetwork(std::function<void(std::string_view)> onLog)
+void DeviceRuntime::startNetwork(std::function<void(std::string_view)> onLog)
 {
     if (_is_network_connected) {
         mclog::tagInfo(_tag, "network already connected");
@@ -110,7 +110,7 @@ void Hal::startNetwork(std::function<void(std::string_view)> onLog)
     board.StartNetwork();
 
     while (!network_connected) {
-        GetHAL().delay(500);
+        GetDeviceRuntime().delay(500);
     }
     mclog::tagInfo(_tag, "network connected");
     board.SetNetworkEventCallback(nullptr);
@@ -120,7 +120,7 @@ void Hal::startNetwork(std::function<void(std::string_view)> onLog)
     _is_network_connected = true;
 }
 
-WifiStatus Hal::getWifiStatus()
+WifiStatus DeviceRuntime::getWifiStatus()
 {
     auto& wifi = WifiManager::GetInstance();
 

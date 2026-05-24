@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "mic_level_sensor.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -16,7 +16,7 @@
 #include <audio/audio_codec.h>
 #include <hardware/board/config.h>
 
-static const std::string_view _tag = "HAL-Audio";
+static const std::string_view _tag = "MicLevel";
 
 namespace {
 
@@ -86,7 +86,7 @@ float calibrated_mic_level(float dbfs)
 
 }  // namespace
 
-std::string Hal::startMicTest(std::function<void(MicTestStatus)> onStatusUpdate)
+std::string DeviceRuntime::startMicTest(std::function<void(MicTestStatus)> onStatusUpdate)
 {
     mclog::tagInfo(_tag, "start mic test");
     onStatusUpdate(MicTestStatus::Starting);
@@ -169,7 +169,7 @@ std::string Hal::startMicTest(std::function<void(MicTestStatus)> onStatusUpdate)
     return {};
 }
 
-void Hal::getMicWaveformFrame(std::vector<int16_t>& data)
+void DeviceRuntime::getMicWaveformFrame(std::vector<int16_t>& data)
 {
     data.assign(_mic_waveform_point_count, 0);
 
@@ -211,7 +211,7 @@ void Hal::getMicWaveformFrame(std::vector<int16_t>& data)
     }
 }
 
-LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
+LocalMicLevelSnapshot DeviceRuntime::getMicLevelSnapshot()
 {
     LocalMicLevelSnapshot snapshot;
 
@@ -241,7 +241,7 @@ LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
     // every sensor snapshot causes I2S disable warnings and noisy level spikes.
 
     snapshot.channels = static_cast<uint8_t>(std::min<size_t>(input_channels, 2));
-    snapshot.updatedAt = GetHAL().millis();
+    snapshot.updatedAt = GetDeviceRuntime().millis();
 
     if (!read_ok) {
         snapshot.available = false;
@@ -294,7 +294,7 @@ LocalMicLevelSnapshot Hal::getMicLevelSnapshot()
     return snapshot;
 }
 
-void Hal::releaseMicLevelInput()
+void DeviceRuntime::releaseMicLevelInput()
 {
     auto& board      = Board::GetInstance();
     auto audio_codec = board.GetAudioCodec();
@@ -309,7 +309,7 @@ void Hal::releaseMicLevelInput()
     _mic_level_owns_input = false;
 }
 
-void Hal::clearupMicTest()
+void DeviceRuntime::clearupMicTest()
 {
     auto& board      = Board::GetInstance();
     auto audio_codec = board.GetAudioCodec();

@@ -5,7 +5,7 @@
  */
 #pragma once
 
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <lvgl.h>
 #include <mooncake.h>
 #include <mutex>

@@ -5,7 +5,7 @@
  */
 #include "animation.h"
 #include "../stackchan.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 using namespace stackchan::animation;
 
@@ -41,7 +41,7 @@ void Timeline::start()
     }
     _current_index = 0;
     _status        = Status::Playing;
-    _start_time    = GetHAL().millis();
+    _start_time    = GetDeviceRuntime().millis();
     _apply_current_keyframe();
 }
 
@@ -55,7 +55,7 @@ void Timeline::pause()
 {
     if (_status == Status::Playing) {
         _status       = Status::Paused;
-        _elapsed_time = GetHAL().millis() - _start_time;
+        _elapsed_time = GetDeviceRuntime().millis() - _start_time;
     }
 }
 
@@ -63,7 +63,7 @@ void Timeline::resume()
 {
     if (_status == Status::Paused) {
         _status     = Status::Playing;
-        _start_time = GetHAL().millis() - _elapsed_time;
+        _start_time = GetDeviceRuntime().millis() - _elapsed_time;
     }
 }
 
@@ -78,7 +78,7 @@ void Timeline::update()
         return;
     }
 
-    uint32_t now = GetHAL().millis();
+    uint32_t now = GetDeviceRuntime().millis();
     if (now - _start_time >= _keyframe_sequence[_current_index].durationMs) {
         _current_index++;
         if (_current_index >= _keyframe_sequence.size()) {

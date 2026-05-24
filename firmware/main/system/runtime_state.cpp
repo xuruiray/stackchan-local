@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 
 #include <esp_mac.h>
 #include <esp_system.h>
@@ -13,36 +13,36 @@
 #include <mooncake_log.h>
 #include <settings.h>
 
-void Hal::delay(std::uint32_t ms)
+void DeviceRuntime::delay(std::uint32_t ms)
 {
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
-std::uint32_t Hal::millis()
+std::uint32_t DeviceRuntime::millis()
 {
     return esp_timer_get_time() / 1000;
 }
 
-void Hal::feedTheDog()
+void DeviceRuntime::feedTheDog()
 {
     vTaskDelay(1);
 }
 
-std::array<uint8_t, 6> Hal::getFactoryMac()
+std::array<uint8_t, 6> DeviceRuntime::getFactoryMac()
 {
     std::array<uint8_t, 6> mac;
     esp_efuse_mac_get_default(mac.data());
     return mac;
 }
 
-std::string Hal::getFactoryMacString(std::string divider)
+std::string DeviceRuntime::getFactoryMacString(std::string divider)
 {
     auto mac = getFactoryMac();
     return fmt::format("{:02X}{}{:02X}{}{:02X}{}{:02X}{}{:02X}{}{:02X}", mac[0], divider, mac[1], divider, mac[2],
                        divider, mac[3], divider, mac[4], divider, mac[5]);
 }
 
-void Hal::reboot()
+void DeviceRuntime::reboot()
 {
     esp_restart();
 }
@@ -52,9 +52,9 @@ static std::string_view warm_boot_nvs_ns  = "warm_boot";
 static std::string_view warm_boot_nvs_key = "app_index";
 }
 
-void Hal::requestWarmReboot(int appIndex)
+void DeviceRuntime::requestWarmReboot(int appIndex)
 {
-    mclog::tagInfo("HAL-Runtime", "warm reboot request to app index: {}", appIndex);
+    mclog::tagInfo("RuntimeState", "warm reboot request to app index: {}", appIndex);
     {
         Settings settings(warm_boot_nvs_ns.data(), true);
         settings.SetInt(warm_boot_nvs_key.data(), appIndex);
@@ -64,15 +64,15 @@ void Hal::requestWarmReboot(int appIndex)
     esp_restart();
 }
 
-int Hal::getWarmRebootTarget()
+int DeviceRuntime::getWarmRebootTarget()
 {
     Settings settings(warm_boot_nvs_ns.data(), false);
     return settings.GetInt(warm_boot_nvs_key.data(), -1);
 }
 
-void Hal::clearWarmRebootRequest()
+void DeviceRuntime::clearWarmRebootRequest()
 {
-    mclog::tagInfo("HAL-Runtime", "clear warm reboot request");
+    mclog::tagInfo("RuntimeState", "clear warm reboot request");
 
     Settings settings(warm_boot_nvs_ns.data(), true);
     settings.SetInt(warm_boot_nvs_key.data(), -1);

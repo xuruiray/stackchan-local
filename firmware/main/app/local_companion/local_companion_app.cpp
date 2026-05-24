@@ -8,7 +8,7 @@
 #include <ArduinoJson.hpp>
 #include <app/common/status_bar/status_bar.h>
 #include <assets/assets.h>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <mooncake_log.h>
 #include <smooth_lvgl.hpp>
 #include <robot_expression_motion_runtime/animation/animation.h>
@@ -114,8 +114,8 @@ void AppLocalCompanion::onOpen()
         lv_obj_add_event_cb(_touch_layer, AppLocalCompanion::screen_long_press_event_cb, LV_EVENT_LONG_PRESSED, this);
     }
 
-    GetHAL().startBleServer();
-    GetHAL().startLocalCompanionService([&](std::string_view msg) {
+    GetDeviceRuntime().startBleServer();
+    GetDeviceRuntime().startLocalCompanionService([&](std::string_view msg) {
         LvglLockGuard lock;
         if (_status_label) {
             lv_obj_clear_flag(_status_label, LV_OBJ_FLAG_HIDDEN);
@@ -123,7 +123,7 @@ void AppLocalCompanion::onOpen()
         }
     });
 
-    GetHAL().onBleAvatarData.connect([&](const char* data) {
+    GetDeviceRuntime().onBleAvatarData.connect([&](const char* data) {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_ble_avatar_data.update_flag) {
             return;
@@ -133,7 +133,7 @@ void AppLocalCompanion::onOpen()
         refresh_idle_activity(kCommandQuietMs);
     });
 
-    GetHAL().onBleMotionData.connect([&](const char* data) {
+    GetDeviceRuntime().onBleMotionData.connect([&](const char* data) {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_ble_motion_data.update_flag) {
             return;
@@ -143,7 +143,7 @@ void AppLocalCompanion::onOpen()
         refresh_idle_activity(kCommandQuietMs);
     });
 
-    GetHAL().onBleRgbData.connect([&](const char* data) {
+    GetDeviceRuntime().onBleRgbData.connect([&](const char* data) {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_ble_rgb_data.update_flag) {
             return;
@@ -153,7 +153,7 @@ void AppLocalCompanion::onOpen()
         refresh_idle_activity(kCommandQuietMs);
     });
 
-    GetHAL().onWsTextMessage.connect([&](const WsTextMessage_t& message) {
+    GetDeviceRuntime().onWsTextMessage.connect([&](const WsTextMessage_t& message) {
         {
             std::lock_guard<std::mutex> lock(_mutex);
             refresh_idle_activity(kCommandQuietMs);
@@ -164,7 +164,7 @@ void AppLocalCompanion::onOpen()
         stackchan.addModifier(std::make_unique<SpeakingModifier>(2000));
     });
 
-    GetHAL().onWsReactMessage.connect([&](const WsReactMessage_t& message) {
+    GetDeviceRuntime().onWsReactMessage.connect([&](const WsReactMessage_t& message) {
         std::lock_guard<std::mutex> lock(_mutex);
         _ws_react_data.update_flag = true;
         _ws_react_data.emotion     = message.emotion;
@@ -174,7 +174,7 @@ void AppLocalCompanion::onOpen()
         refresh_idle_activity(kCommandQuietMs);
     });
 
-    GetHAL().onWsDanceData.connect([&](std::string_view data) {
+    GetDeviceRuntime().onWsDanceData.connect([&](std::string_view data) {
         {
             std::lock_guard<std::mutex> lock(_mutex);
             refresh_idle_activity(kDanceQuietMs);
@@ -189,19 +189,19 @@ void AppLocalCompanion::onOpen()
         }
     });
 
-    _head_gesture_connection = GetHAL().onHeadPetGesture.connect([&](HeadPetGesture gesture) {
+    _head_gesture_connection = GetDeviceRuntime().onHeadPetGesture.connect([&](HeadPetGesture gesture) {
         std::lock_guard<std::mutex> lock(_mutex);
         if (gesture == HeadPetGesture::Press) {
             _head_pressed        = true;
             _long_press_handled = false;
-            _head_press_started = GetHAL().millis();
+            _head_press_started = GetDeviceRuntime().millis();
         } else if (gesture == HeadPetGesture::Release) {
             _head_pressed        = false;
             _long_press_handled = false;
         }
     });
 
-    _local_activity_connection = GetHAL().onLocalCompanionActivity.connect([&](const char*) {
+    _local_activity_connection = GetDeviceRuntime().onLocalCompanionActivity.connect([&](const char*) {
         std::lock_guard<std::mutex> lock(_mutex);
         refresh_idle_activity(kCommandQuietMs);
     });
@@ -248,8 +248,8 @@ void AppLocalCompanion::onRunning()
     GetStackChan().update();
     view::update_status_bar();
 
-    if (GetHAL().millis() - _last_status_update > 500) {
-        _last_status_update = GetHAL().millis();
+    if (GetDeviceRuntime().millis() - _last_status_update > 500) {
+        _last_status_update = GetDeviceRuntime().millis();
         update_status_label();
     }
 
@@ -263,18 +263,18 @@ void AppLocalCompanion::onClose()
     mclog::tagInfo(getAppInfo().name, "on close");
 
     LvglLockGuard lock;
-    GetHAL().onBleAvatarData.clear();
-    GetHAL().onBleMotionData.clear();
-    GetHAL().onBleRgbData.clear();
-    GetHAL().onWsTextMessage.clear();
-    GetHAL().onWsReactMessage.clear();
-    GetHAL().onWsDanceData.clear();
+    GetDeviceRuntime().onBleAvatarData.clear();
+    GetDeviceRuntime().onBleMotionData.clear();
+    GetDeviceRuntime().onBleRgbData.clear();
+    GetDeviceRuntime().onWsTextMessage.clear();
+    GetDeviceRuntime().onWsReactMessage.clear();
+    GetDeviceRuntime().onWsDanceData.clear();
     if (_head_gesture_connection != 0) {
-        GetHAL().onHeadPetGesture.disconnect(_head_gesture_connection);
+        GetDeviceRuntime().onHeadPetGesture.disconnect(_head_gesture_connection);
         _head_gesture_connection = 0;
     }
     if (_local_activity_connection != 0) {
-        GetHAL().onLocalCompanionActivity.disconnect(_local_activity_connection);
+        GetDeviceRuntime().onLocalCompanionActivity.disconnect(_local_activity_connection);
         _local_activity_connection = 0;
     }
     remove_modifier(_dance_modifier_id);
@@ -299,7 +299,7 @@ void AppLocalCompanion::update_status_label()
         lv_label_set_text(_status_label, "Pairing");
         return;
     }
-    if (should_hide_bottom_status(GetHAL().getLocalCompanionState())) {
+    if (should_hide_bottom_status(GetDeviceRuntime().getLocalCompanionState())) {
         lv_obj_add_flag(_status_label, LV_OBJ_FLAG_HIDDEN);
         return;
     }
@@ -309,7 +309,7 @@ void AppLocalCompanion::update_status_label()
 
 const char* AppLocalCompanion::state_to_text() const
 {
-    switch (GetHAL().getLocalCompanionState()) {
+    switch (GetDeviceRuntime().getLocalCompanionState()) {
         case LocalCompanionState::Idle:
             return "Idle";
         case LocalCompanionState::Connecting:
@@ -340,7 +340,7 @@ void AppLocalCompanion::handle_head_long_press()
         return;
     }
 
-    if (GetHAL().millis() - _head_press_started < 1200) {
+    if (GetDeviceRuntime().millis() - _head_press_started < 1200) {
         return;
     }
 
@@ -351,7 +351,7 @@ void AppLocalCompanion::handle_head_long_press()
 
 void AppLocalCompanion::sync_mode_visuals()
 {
-    auto state = GetHAL().getLocalCompanionState();
+    auto state = GetDeviceRuntime().getLocalCompanionState();
     if (_visual_state_initialized && state == _last_visual_state) {
         return;
     }
@@ -375,31 +375,31 @@ void AppLocalCompanion::apply_mode_visuals(LocalCompanionState state)
     switch (state) {
         case LocalCompanionState::Thinking:
             current_avatar.setEmotion(avatar::Emotion::Doubt);
-            GetHAL().showRgbColor(0, 0, 48);
+            GetDeviceRuntime().showRgbColor(0, 0, 48);
             if (!is_face_tracking_reserved() && !stackchan.motion().isMoving()) {
                 stackchan.motion().moveWithSpeed(0, 260, 180);
             }
             return;
         case LocalCompanionState::Listening:
             current_avatar.setEmotion(avatar::Emotion::Neutral);
-            GetHAL().showRgbColor(0, 36, 48);
+            GetDeviceRuntime().showRgbColor(0, 36, 48);
             return;
         case LocalCompanionState::Speaking:
             current_avatar.setEmotion(avatar::Emotion::Happy);
-            GetHAL().showRgbColor(0, 0, 64);
+            GetDeviceRuntime().showRgbColor(0, 0, 64);
             stackchan.addModifier(std::make_unique<SpeakingModifier>(2400, 180, false));
             return;
         case LocalCompanionState::Sleeping:
             current_avatar.setEmotion(avatar::Emotion::Sleepy);
-            GetHAL().showRgbColor(12, 0, 24);
+            GetDeviceRuntime().showRgbColor(12, 0, 24);
             return;
         case LocalCompanionState::Error:
             current_avatar.setEmotion(avatar::Emotion::Angry);
-            GetHAL().showRgbColor(64, 0, 0);
+            GetDeviceRuntime().showRgbColor(64, 0, 0);
             return;
         case LocalCompanionState::Connecting:
             current_avatar.setEmotion(avatar::Emotion::Doubt);
-            GetHAL().showRgbColor(48, 28, 0);
+            GetDeviceRuntime().showRgbColor(48, 28, 0);
             return;
         case LocalCompanionState::Idle:
         case LocalCompanionState::Connected:
@@ -407,14 +407,14 @@ void AppLocalCompanion::apply_mode_visuals(LocalCompanionState state)
         case LocalCompanionState::PairingFailed:
         default:
             current_avatar.setEmotion(avatar::Emotion::Neutral);
-            GetHAL().showRgbColor(0, 0, 0);
+            GetDeviceRuntime().showRgbColor(0, 0, 0);
             return;
     }
 }
 
 void AppLocalCompanion::sync_face_tracking()
 {
-    auto target = GetHAL().getLocalFaceTrackingTarget();
+    auto target = GetDeviceRuntime().getLocalFaceTrackingTarget();
     if (!target.detected) {
         _face_tracking_pid_ready = false;
         _face_tracking_integral_x = 0.0f;
@@ -425,7 +425,7 @@ void AppLocalCompanion::sync_face_tracking()
             }
             return;
         }
-        const auto now = GetHAL().millis();
+        const auto now = GetDeviceRuntime().millis();
         if (now - _last_face_tracking_apply < kFaceTrackingApplyIntervalMs) {
             return;
         }
@@ -446,7 +446,7 @@ void AppLocalCompanion::sync_face_tracking()
         return;
     }
 
-    const auto now = GetHAL().millis();
+    const auto now = GetDeviceRuntime().millis();
     if (now - _last_face_tracking_apply < kFaceTrackingApplyIntervalMs) {
         return;
     }
@@ -534,7 +534,7 @@ void AppLocalCompanion::remove_modifier(int& modifier_id)
 
 void AppLocalCompanion::refresh_idle_activity(uint32_t quiet_ms)
 {
-    _idle_suppress_until = GetHAL().millis() + quiet_ms;
+    _idle_suppress_until = GetDeviceRuntime().millis() + quiet_ms;
 }
 
 void AppLocalCompanion::sync_idle_modifiers()
@@ -553,7 +553,7 @@ void AppLocalCompanion::sync_offline_idle_shutdown()
         return;
     }
 
-    const auto now = GetHAL().millis();
+    const auto now = GetDeviceRuntime().millis();
     if (!should_count_offline_idle_shutdown()) {
         if (_offline_idle_shutdown_started != 0) {
             mclog::tagInfo(getAppInfo().name, "offline idle shutdown canceled");
@@ -578,9 +578,9 @@ void AppLocalCompanion::sync_offline_idle_shutdown()
         lv_obj_clear_flag(_status_label, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(_status_label, "Powering Off");
     }
-    GetHAL().showRgbColor(16, 0, 0);
+    GetDeviceRuntime().showRgbColor(16, 0, 0);
     mclog::tagWarn(getAppInfo().name, "desktop offline idle timeout reached, powering off");
-    GetHAL().powerOff();
+    GetDeviceRuntime().powerOff();
 }
 
 void AppLocalCompanion::start_idle_modifiers()
@@ -602,11 +602,11 @@ void AppLocalCompanion::stop_idle_modifiers()
 
 bool AppLocalCompanion::should_run_idle_modifiers() const
 {
-    if (_pairing_panel || GetHAL().millis() < _idle_suppress_until || is_face_tracking_reserved()) {
+    if (_pairing_panel || GetDeviceRuntime().millis() < _idle_suppress_until || is_face_tracking_reserved()) {
         return false;
     }
 
-    switch (GetHAL().getLocalCompanionState()) {
+    switch (GetDeviceRuntime().getLocalCompanionState()) {
         case LocalCompanionState::Idle:
         case LocalCompanionState::Connected:
         case LocalCompanionState::Disconnected:
@@ -625,11 +625,11 @@ bool AppLocalCompanion::should_run_idle_modifiers() const
 
 bool AppLocalCompanion::should_count_offline_idle_shutdown() const
 {
-    if (_pairing_panel || GetHAL().millis() < _idle_suppress_until || is_face_tracking_reserved()) {
+    if (_pairing_panel || GetDeviceRuntime().millis() < _idle_suppress_until || is_face_tracking_reserved()) {
         return false;
     }
 
-    switch (GetHAL().getLocalCompanionState()) {
+    switch (GetDeviceRuntime().getLocalCompanionState()) {
         case LocalCompanionState::Connecting:
         case LocalCompanionState::PairingFailed:
         case LocalCompanionState::Disconnected:
@@ -648,7 +648,7 @@ bool AppLocalCompanion::should_count_offline_idle_shutdown() const
 
 bool AppLocalCompanion::is_face_tracking_reserved() const
 {
-    return GetHAL().getLocalFaceTrackingTarget().reserved;
+    return GetDeviceRuntime().getLocalFaceTrackingTarget().reserved;
 }
 
 void AppLocalCompanion::toggle_pairing_panel()

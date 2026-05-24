@@ -5,7 +5,7 @@
  */
 #pragma once
 #include "../modifiable.h"
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 #include <cmath>
 
@@ -27,7 +27,7 @@ public:
                    uint32_t updateIntervalMs = 600)
         : _amplitude(amplitude), _breath_cycle_ms(breathCycleMs), _update_interval_ms(updateIntervalMs)
     {
-        _start_tick = GetHAL().millis();
+        _start_tick = GetDeviceRuntime().millis();
         if (destroyAfterMs > 0) {
             _destroy_at   = _start_tick + destroyAfterMs;
             _has_lifetime = true;
@@ -38,7 +38,7 @@ public:
     {
         if (!stackchan.hasAvatar()) return;
 
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 销毁逻辑
         if (_has_lifetime && now >= _destroy_at) {

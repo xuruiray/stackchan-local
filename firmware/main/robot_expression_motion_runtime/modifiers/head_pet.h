@@ -8,7 +8,7 @@
 #include "../avatar/decorators/decorators.h"
 #include "../utils/random.h"
 #include <smooth_ui_toolkit.hpp>
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <cstdint>
 #include <memory>
 
@@ -23,7 +23,7 @@ public:
     HeadPetModifier(uint32_t restoreDelayMs = 3000) : _restore_delay_ms(restoreDelayMs)
     {
         // 绑定信号
-        _signal_connection = GetHAL().onHeadPetGesture.connect([this](HeadPetGesture gesture) {
+        _signal_connection = GetDeviceRuntime().onHeadPetGesture.connect([this](HeadPetGesture gesture) {
             if (gesture == HeadPetGesture::SwipeForward || gesture == HeadPetGesture::SwipeBackward) {
                 _event_swipe = true;
             } else if (gesture == HeadPetGesture::Release) {
@@ -34,12 +34,12 @@ public:
 
     ~HeadPetModifier()
     {
-        GetHAL().onHeadPetGesture.disconnect(_signal_connection);
+        GetDeviceRuntime().onHeadPetGesture.disconnect(_signal_connection);
     }
 
     void _update(Modifiable& stackchan) override
     {
-        uint32_t now = GetHAL().millis();
+        uint32_t now = GetDeviceRuntime().millis();
 
         // 处理“被抚摸中”事件
         if (_event_swipe) {

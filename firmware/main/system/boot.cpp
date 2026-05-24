@@ -3,25 +3,25 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include <hal/hal.h>
+#include <system/device_runtime.h>
 #include <runtime_compat/embedded_runtime_bridge.h>
 #include <system/nvs_settings.h>
 #include <memory>
 #include <mooncake_log.h>
 
-static std::unique_ptr<Hal> _hal_instance;
-static const std::string_view _tag = "HAL";
+static std::unique_ptr<DeviceRuntime> _device_runtime_instance;
+static const std::string_view _tag = "DeviceRuntime";
 
-Hal& GetHAL()
+DeviceRuntime& GetDeviceRuntime()
 {
-    if (!_hal_instance) {
-        mclog::tagInfo(_tag, "creating hal instance");
-        _hal_instance = std::make_unique<Hal>();
+    if (!_device_runtime_instance) {
+        mclog::tagInfo(_tag, "creating device runtime instance");
+        _device_runtime_instance = std::make_unique<DeviceRuntime>();
     }
-    return *_hal_instance.get();
+    return *_device_runtime_instance.get();
 }
 
-void Hal::init()
+void DeviceRuntime::init()
 {
     mclog::tagInfo(_tag, "init");
 
@@ -42,7 +42,7 @@ void Hal::init()
 /*                                    Board                                   */
 /* -------------------------------------------------------------------------- */
 
-void Hal::board_init()
+void DeviceRuntime::board_init()
 {
     mclog::tagInfo(_tag, "board init");
     embedded_runtime_bridge::board_init();
@@ -53,32 +53,32 @@ void Hal::board_init()
 /* -------------------------------------------------------------------------- */
 #include <runtime_compat/embedded_runtime_bridge.h>
 
-void Hal::lvglLock()
+void DeviceRuntime::lvglLock()
 {
     embedded_runtime_bridge::disply_lvgl_lock();
 }
 
-void Hal::lvglUnlock()
+void DeviceRuntime::lvglUnlock()
 {
     embedded_runtime_bridge::disply_lvgl_unlock();
 }
 
-void Hal::setBackLightBrightness(uint8_t brightness, bool permanent)
+void DeviceRuntime::setBackLightBrightness(uint8_t brightness, bool permanent)
 {
     embedded_runtime_bridge::board_set_backlight_brightness(brightness, permanent);
 }
 
-uint8_t Hal::getBackLightBrightness()
+uint8_t DeviceRuntime::getBackLightBrightness()
 {
     return embedded_runtime_bridge::board_get_backlight_brightness();
 }
 
-void Hal::setSpeakerVolume(uint8_t volume, bool permanent)
+void DeviceRuntime::setSpeakerVolume(uint8_t volume, bool permanent)
 {
     embedded_runtime_bridge::board_set_speaker_volume(volume, permanent);
 }
 
-uint8_t Hal::getSpeakerVolume()
+uint8_t DeviceRuntime::getSpeakerVolume()
 {
     return embedded_runtime_bridge::board_get_speaker_volume();
 }
@@ -108,7 +108,7 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
     embedded_runtime_bridge::unlock();
 }
 
-void Hal::lvgl_init()
+void DeviceRuntime::lvgl_init()
 {
     mclog::tagInfo(_tag, "lvgl init");
 
