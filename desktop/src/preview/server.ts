@@ -529,6 +529,9 @@ export class PreviewServer {
       "x-frame-received-at": frame.receivedAt,
       ...(frame.sentAt ? { "x-frame-sent-at": frame.sentAt } : {}),
       ...(frame.captureTimestamp ? { "x-frame-capture-timestamp": frame.captureTimestamp } : {}),
+      ...(frame.trace?.deviceEncodedAt ? { "x-frame-device-encoded-at": frame.trace.deviceEncodedAt } : {}),
+      ...(frame.trace?.deviceQueuedAt ? { "x-frame-device-queued-at": frame.trace.deviceQueuedAt } : {}),
+      ...(frame.trace?.deviceTxStartAt ? { "x-frame-device-tx-start-at": frame.trace.deviceTxStartAt } : {}),
       "x-frame-stream": kind,
       ...(frame.trace?.detectorFinishedAt ? { "x-detector-finished-at": frame.trace.detectorFinishedAt } : {})
     });
@@ -673,7 +676,11 @@ export class PreviewServer {
       response.write(
       `--stackchanframe\r\ncontent-type: ${frame.mimeType}\r\ncontent-length: ${jpeg.length}\r\nx-frame-id: ${frame.frameId}\r\nx-frame-timestamp: ${frame.timestamp}\r\nx-frame-received-at: ${frame.receivedAt}${
         frame.sentAt ? `\r\nx-frame-sent-at: ${frame.sentAt}` : ""
-      }${frame.captureTimestamp ? `\r\nx-frame-capture-timestamp: ${frame.captureTimestamp}` : ""}\r\nx-frame-stream: ${kind}${
+      }${frame.captureTimestamp ? `\r\nx-frame-capture-timestamp: ${frame.captureTimestamp}` : ""}${
+        frame.trace?.deviceEncodedAt ? `\r\nx-frame-device-encoded-at: ${frame.trace.deviceEncodedAt}` : ""
+      }${frame.trace?.deviceQueuedAt ? `\r\nx-frame-device-queued-at: ${frame.trace.deviceQueuedAt}` : ""}${
+        frame.trace?.deviceTxStartAt ? `\r\nx-frame-device-tx-start-at: ${frame.trace.deviceTxStartAt}` : ""
+      }\r\nx-frame-stream: ${kind}${
         frame.trace?.detectorFinishedAt ? `\r\nx-detector-finished-at: ${frame.trace.detectorFinishedAt}` : ""
       }\r\n\r\n`
       ) &&

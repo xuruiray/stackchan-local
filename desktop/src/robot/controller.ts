@@ -261,7 +261,10 @@ export class RobotController {
       ? this.waitForCompletion(message.commandId, options.completionTimeoutMs ?? DEFAULT_COMPLETION_TIMEOUT_MS)
       : undefined;
     const result = this.registry.sendToActiveDevice(message);
-    const logCommandDispatch = command.kind === "mediaFlowControl" ? this.logger.debug : this.logger.info;
+    const logCommandDispatch =
+      command.kind === "mediaFlowControl" || (command.kind === "trackFace" && command.detected)
+        ? this.logger.debug
+        : this.logger.info;
     logCommandDispatch.call(this.logger, "robot command dispatched", {
       type: "command",
       sent: result.sent,

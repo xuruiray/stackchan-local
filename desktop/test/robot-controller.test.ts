@@ -7,7 +7,7 @@ import { RobotController } from "../src/robot/controller.js";
 describe("RobotController logging", () => {
   it("includes safe command details for tracking debug logs", async () => {
     const entries: LogEntryInput[] = [];
-    const logger = createLogger("info", (entry) => entries.push(entry));
+    const logger = createLogger("debug", (entry) => entries.push(entry));
     const registry = new DeviceRegistry(logger);
     const controller = new RobotController(registry, logger);
 
@@ -20,6 +20,7 @@ describe("RobotController logging", () => {
     }, { waitForAck: false });
 
     const commandEntries = entries.filter((entry) => entry.message === "robot command dispatched");
+    expect(commandEntries[0]?.level).toBe("debug");
     expect(commandEntries[0]?.context).toMatchObject({
       kind: "trackFace",
       detected: true,

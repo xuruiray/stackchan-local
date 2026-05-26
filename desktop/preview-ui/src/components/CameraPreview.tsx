@@ -36,10 +36,14 @@ function frameDelayMs(
   streamKind: CameraStreamKind,
   displayedFrame?: DisplayedFrame
 ): number | undefined {
-  const browserDecodeDelay = deltaMs(displayedFrame?.receivedAt, displayedFrame?.displayedAt);
+  const fullDisplayDelay =
+    deltaMs(displayedFrame?.captureTimestamp, displayedFrame?.displayedAt) ??
+    deltaMs(frame?.captureTimestamp, displayedFrame?.displayedAt);
+  const browserDecodeDelay = deltaMs(displayedFrame?.daemonReceivedAt, displayedFrame?.displayedAt);
   const latency = snapshot?.status.latency;
   if (streamKind === "processed") {
     return firstFinite(
+      fullDisplayDelay,
       deltaMs(displayedFrame?.detectorFinishedAt, displayedFrame?.displayedAt),
       deltaMs(frame?.captureTimestamp, frame?.trace?.detectorFinishedAt) ??
         deltaMs(frame?.timestamp, frame?.trace?.detectorFinishedAt),
@@ -49,6 +53,7 @@ function frameDelayMs(
     );
   }
   return firstFinite(
+    fullDisplayDelay,
     deltaMs(displayedFrame?.daemonReceivedAt, displayedFrame?.displayedAt),
     browserDecodeDelay,
     latency?.frameAgeMs,
@@ -62,6 +67,22 @@ function frameDelayMs(
 function delayText(value: number | undefined, streamKind: CameraStreamKind): string {
   const label = streamKind === "processed" ? "processed display" : "raw display";
   return typeof value === "number" && Number.isFinite(value) ? `${label} ${Math.round(value)} ms` : `${label} -`;
+}
+
+function breakdownText(displayedFrame: DisplayedFrame | undefined): string {
+  const captureToEncode = deltaMs(displayedFrame?.captureTimestamp, displayedFrame?.deviceEncodedAt);
+  const encodeToQueue = deltaMs(displayedFrame?.deviceEncodedAt, displayedFrame?.deviceQueuedAt);
+  const queueToTx = deltaMs(displayedFrame?.deviceQueuedAt, displayedFrame?.deviceTxStartAt);
+  const txToDaemon = deltaMs(displayedFrame?.deviceTxStartAt ?? displayedFrame?.deviceSentAt, displayedFrame?.daemonReceivedAt);
+  const daemonToDisplay = deltaMs(displayedFrame?.daemonReceivedAt, displayedFrame?.displayedAt);
+  const parts = [
+    typeof captureToEncode === "number" ? `cap+enc ${Math.round(captureToEncode)} ms` : undefined,
+    typeof encodeToQueue === "number" ? `queue ${Math.round(encodeToQueue)} ms` : undefined,
+    typeof queueToTx === "number" ? `tx wait ${Math.round(queueToTx)} ms` : undefined,
+    typeof txToDaemon === "number" ? `tx ${Math.round(txToDaemon)} ms` : undefined,
+    typeof daemonToDisplay === "number" ? `web ${Math.round(daemonToDisplay)} ms` : undefined
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : "breakdown -";
 }
 
 export function CameraPreview({
@@ -121,6 +142,9 @@ export function CameraPreview({
         <span>frame {dash(frameId)}</span>
         <span>{dimensions}</span>
         <span>{delayText(delay, streamKind)}</span>
+      </div>
+      <div className="frame-meta frame-latency-breakdown">
+        <span>{breakdownText(displayedFrame)}</span>
       </div>
       {stream.error ? <div className="stream-error">{stream.error}</div> : null}
     </section>

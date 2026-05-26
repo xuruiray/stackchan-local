@@ -214,7 +214,10 @@ export class StackChanWebSocketServer {
           sentAt: parsedBinary.header.sentAt,
           trace: {
             deviceCapturedAt: parsedBinary.header.captureTimestamp,
+            deviceEncodedAt: parsedBinary.header.deviceEncodedAt,
+            deviceQueuedAt: parsedBinary.header.deviceQueuedAt,
             deviceSentAt: parsedBinary.header.sentAt,
+            deviceTxStartAt: parsedBinary.header.deviceTxStartAt,
             daemonReceivedAt
           }
         }

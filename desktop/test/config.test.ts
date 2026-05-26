@@ -18,6 +18,25 @@ afterEach(() => {
 });
 
 describe("loadConfig", () => {
+  it("uses fast face tracking defaults when no local override is configured", () => {
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "stackchan-config-"));
+    tempDirs.push(projectRoot);
+
+    const config = loadConfig({
+      HOME: projectRoot,
+      STACKCHAN_PROJECT_ROOT: projectRoot
+    });
+
+    expect(config.faceTrackingCameraPreset).toBe("fast");
+    expect(config.faceTrackingSpeed).toBe(620);
+    expect(config.faceTrackingDeadband).toBe(0.025);
+    expect(config.faceTrackingYawKp).toBe(48);
+    expect(config.faceTrackingYawKd).toBe(10);
+    expect(config.faceTrackingPitchKp).toBe(36);
+    expect(config.faceTrackingPitchKd).toBe(8);
+    expect(config.faceTrackingOutputLimitDeg).toBe(24);
+  });
+
   it("loads local .env values without overriding explicit environment variables", () => {
     const projectRoot = mkdtempSync(path.join(tmpdir(), "stackchan-config-"));
     tempDirs.push(projectRoot);

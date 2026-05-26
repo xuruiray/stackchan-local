@@ -17,6 +17,9 @@ export interface BinaryCameraFrameHeader {
   seq?: number;
   captureTimestamp?: string;
   sentAt?: string;
+  deviceEncodedAt?: string;
+  deviceQueuedAt?: string;
+  deviceTxStartAt?: string;
 }
 
 export type ParsedStackChanBinaryFrame =
@@ -126,7 +129,10 @@ function parseCameraFrameHeader(source: string): BinaryCameraFrameHeader {
     transport: "binary",
     seq: isNonNegativeInteger(header.seq) ? header.seq : undefined,
     captureTimestamp: isIsoDateString(header.captureTimestamp) ? header.captureTimestamp : undefined,
-    sentAt: isIsoDateString(header.sentAt) ? header.sentAt : undefined
+    sentAt: isIsoDateString(header.sentAt) ? header.sentAt : undefined,
+    deviceEncodedAt: isIsoDateString(header.deviceEncodedAt) ? header.deviceEncodedAt : undefined,
+    deviceQueuedAt: isIsoDateString(header.deviceQueuedAt) ? header.deviceQueuedAt : undefined,
+    deviceTxStartAt: isIsoDateString(header.deviceTxStartAt) ? header.deviceTxStartAt : undefined
   };
 }
 

@@ -117,7 +117,7 @@ function parseCameraPreset(value: string | undefined): FaceTrackingCameraPreset 
   if (normalized === "accurate" || normalized === "debug" || normalized === "fast") {
     return normalized;
   }
-  return "accurate";
+  return "fast";
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig {
@@ -138,16 +138,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
     faceTrackingEnabled: parseBoolean(env.STACKCHAN_FACE_TRACKING, false),
     faceTrackingFps: Math.min(15, Math.max(1, parseInteger(env.STACKCHAN_FACE_TRACKING_FPS, 4))),
     faceTrackingMirrorX: parseBoolean(env.STACKCHAN_FACE_TRACKING_MIRROR_X, false),
-    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 420), 0, 1000),
-    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.045), 0, 0.3),
-    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 42), 0, 150),
+    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 620), 0, 1000),
+    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.025), 0, 0.3),
+    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 48), 0, 150),
     faceTrackingYawKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KI, 0), 0, 50),
-    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 8), 0, 80),
-    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 30), 0, 150),
+    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 10), 0, 80),
+    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 36), 0, 150),
     faceTrackingPitchKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KI, 0), 0, 50),
-    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 6), 0, 80),
+    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 8), 0, 80),
     faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.35), 0, 2),
-    faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 20), 1, 45),
+    faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 24), 1, 45),
     faceTrackingPython: env.STACKCHAN_FACE_TRACKING_PYTHON ?? defaultFaceTrackingPython(),
     faceTrackingDetectorScript:
       env.STACKCHAN_FACE_TRACKING_DETECTOR ?? `${projectRoot}/desktop/scripts/face_detector.py`,

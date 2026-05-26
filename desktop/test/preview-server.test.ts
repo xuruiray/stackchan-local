@@ -99,6 +99,9 @@ class FakeVisionTracking {
       captureTimestamp: new Date("2026-05-18T12:00:00.000Z").toISOString(),
       sentAt: new Date("2026-05-18T12:00:00.010Z").toISOString(),
       trace: {
+        deviceEncodedAt: new Date("2026-05-18T12:00:00.008Z").toISOString(),
+        deviceQueuedAt: new Date("2026-05-18T12:00:00.009Z").toISOString(),
+        deviceTxStartAt: new Date("2026-05-18T12:00:00.010Z").toISOString(),
         detectorFinishedAt: new Date("2026-05-18T12:00:00.038Z").toISOString()
       }
     }
@@ -380,6 +383,9 @@ describe("PreviewServer", () => {
     expect(frame.headers.get("x-frame-received-at")).toBe("2026-05-18T12:00:00.020Z");
     expect(frame.headers.get("x-frame-sent-at")).toBe("2026-05-18T12:00:00.010Z");
     expect(frame.headers.get("x-frame-capture-timestamp")).toBe("2026-05-18T12:00:00.000Z");
+    expect(frame.headers.get("x-frame-device-encoded-at")).toBe("2026-05-18T12:00:00.008Z");
+    expect(frame.headers.get("x-frame-device-queued-at")).toBe("2026-05-18T12:00:00.009Z");
+    expect(frame.headers.get("x-frame-device-tx-start-at")).toBe("2026-05-18T12:00:00.010Z");
 
     const processedFrame = await fetch(`${baseUrl}/processed-frame.jpg`);
     expect(processedFrame.status).toBe(200);

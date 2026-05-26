@@ -25,16 +25,16 @@ const baseConfig: DesktopConfig = {
   faceTrackingEnabled: false,
   faceTrackingFps: 4,
   faceTrackingMirrorX: false,
-  faceTrackingSpeed: 420,
-  faceTrackingDeadband: 0.045,
-  faceTrackingYawKp: 42,
+  faceTrackingSpeed: 620,
+  faceTrackingDeadband: 0.025,
+  faceTrackingYawKp: 48,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 8,
-  faceTrackingPitchKp: 30,
+  faceTrackingYawKd: 10,
+  faceTrackingPitchKp: 36,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 6,
+  faceTrackingPitchKd: 8,
   faceTrackingIntegralLimit: 0.35,
-  faceTrackingOutputLimitDeg: 20,
+  faceTrackingOutputLimitDeg: 24,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
   faceLandmarkerModel: "/tmp/stackchan-local-face-landmarker.task",
@@ -251,7 +251,7 @@ describe("VisionTrackingService", () => {
 
     const cameraStream = await nextCommand(ws, "cameraStream");
     expect(cameraStream.enabled).toBe(true);
-    expect(cameraStream.fps).toBe(10);
+    expect(cameraStream.fps).toBe(15);
     expect(cameraStream.width).toBe(320);
     expect(cameraStream.height).toBe(240);
     expect(cameraStream.quality).toBe(18);
@@ -261,14 +261,14 @@ describe("VisionTrackingService", () => {
     expect(trackFace.detected).toBe(true);
     expect(trackFace.centerX).toBeCloseTo(0.3);
     expect(trackFace.centerY).toBeCloseTo(0.4);
-    expect(trackFace.speed).toBe(420);
+    expect(trackFace.speed).toBe(620);
     expect(trackFace.control).toEqual({
       mode: "pid",
-      deadband: 0.045,
-      yaw: { kp: 42, ki: 0, kd: 8 },
-      pitch: { kp: 30, ki: 0, kd: 6 },
+      deadband: 0.025,
+      yaw: { kp: 48, ki: 0, kd: 10 },
+      pitch: { kp: 36, ki: 0, kd: 8 },
       integralLimit: 0.35,
-      outputLimitDeg: 20,
+      outputLimitDeg: 24,
       servoRange: {
         yawMin: -1280,
         yawMax: 1280,
@@ -309,9 +309,36 @@ describe("VisionTrackingService", () => {
     sendFrame(ws, "frame-2");
     const second = await nextCommand(ws, "trackFace");
     const jump = Math.hypot(Number(second.centerX) - Number(first.centerX), Number(second.centerY) - Number(first.centerY));
-    expect(jump).toBeLessThanOrEqual(0.055);
-    expect(second.centerX).toBeLessThan(0.36);
-    expect(second.centerY).toBeLessThan(0.46);
+    expect(jump).toBeLessThanOrEqual(0.105);
+    expect(second.centerX).toBeGreaterThan(0.36);
+    expect(second.centerX).toBeLessThan(0.39);
+    expect(second.centerY).toBeLessThan(0.47);
+    ws.close();
+  });
+
+  it("continues commanding a stable off-center face at the tracking cadence", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([[faceAtCenter(0.7, 0.5)], [faceAtCenter(0.7, 0.5)]]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector, { commandMaxHz: 20 });
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    await nextCommand(ws, "cameraStream");
+
+    sendFrame(ws, "frame-1");
+    const first = await nextCommand(ws, "trackFace");
+    expect(first.detected).toBe(true);
+
+    await delay(125);
+    sendFrame(ws, "frame-2");
+    const second = await nextCommand(ws, "trackFace");
+    expect(second.detected).toBe(true);
+    expect(second.centerX).toBeGreaterThan(0.5);
     ws.close();
   });
 
@@ -414,6 +441,38 @@ describe("VisionTrackingService", () => {
     ws.close();
   });
 
+  it("lets raw preview fps override face tracking while the camera module is active", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector);
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    const initialCameraStream = await nextRobotCommandMessage(ws, "cameraStream");
+    ackCommand(ws, initialCameraStream);
+
+    service.setRawPreview({ enabled: true, fps: 8, quality: 14 });
+    const rawPreviewCameraStream = await nextRobotCommandMessage(ws, "cameraStream");
+    expect(rawPreviewCameraStream.command).toMatchObject({
+      enabled: true,
+      fps: 8,
+      width: 320,
+      height: 240,
+      quality: 14
+    });
+    expect(service.status().sourceCamera).toMatchObject({
+      owner: "rawPreview",
+      fps: 8,
+      quality: 14
+    });
+    ws.close();
+  });
+
   it("downgrades camera stream and telemetry under detector backpressure", async () => {
     const logger = createLogger("error");
     const registry = new DeviceRegistry(logger);
@@ -439,7 +498,7 @@ describe("VisionTrackingService", () => {
     const telemetryConfig = commands.find((command) => command.kind === "telemetryConfig");
     expect(cameraStream).toMatchObject({
       enabled: true,
-      fps: 8,
+      fps: 12,
       quality: 16
     });
     expect(telemetryConfig).toMatchObject({
@@ -469,8 +528,8 @@ describe("VisionTrackingService", () => {
     const initialCredit = await nextCommand(ws, "mediaFlowControl");
     expect(initialCredit).toMatchObject({
       stream: "camera",
-      creditFrames: 3,
-      maxInFlight: 3
+      creditFrames: 1,
+      maxInFlight: 1
     });
 
     sendFrame(ws, "frame-credit");
@@ -481,11 +540,11 @@ describe("VisionTrackingService", () => {
     const refillCredit = await nextCommand(ws, "mediaFlowControl");
     expect(refillCredit).toMatchObject({
       stream: "camera",
-      creditFrames: 2,
-      maxInFlight: 3
+      creditFrames: 1,
+      maxInFlight: 1
     });
     expect(service.status().mediaCredit.enabled).toBe(true);
-    expect(service.status().mediaCredit.outstandingFrames).toBe(3);
+    expect(service.status().mediaCredit.outstandingFrames).toBe(1);
     ws.close();
   });
 

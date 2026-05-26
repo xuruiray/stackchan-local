@@ -410,7 +410,10 @@ describe("protocol validation", () => {
         sentAt: timestamp,
         trace: {
           deviceCapturedAt: timestamp,
+          deviceEncodedAt: timestamp,
+          deviceQueuedAt: timestamp,
           deviceSentAt: timestamp,
+          deviceTxStartAt: timestamp,
           daemonReceivedAt: timestamp,
           detectorStartedAt: timestamp,
           detectorFinishedAt: timestamp

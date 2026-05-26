@@ -27,7 +27,7 @@ export interface FaceDetectorSettings {
 }
 
 export const CAMERA_STREAM_PRESETS: Record<CameraPresetName, CameraStreamSettings> = {
-  fast: { preset: "fast", width: 320, height: 240, fps: 10, quality: 18 },
+  fast: { preset: "fast", width: 320, height: 240, fps: 15, quality: 18 },
   accurate: { preset: "accurate", width: 320, height: 240, fps: 6, quality: 28 },
   debug: { preset: "debug", width: 320, height: 240, fps: 2, quality: 35 }
 };
@@ -154,14 +154,14 @@ export interface VisionTrackingOptions {
 }
 
 const DEFAULT_OPTIONS: Required<VisionTrackingOptions> = {
-  commandMaxHz: 6,
+  commandMaxHz: 12,
   lostTimeoutMs: 1500,
   streamRetryMs: 1000,
   adaptivePressureMs: 5000,
   adaptiveStableMs: 15000
 };
 
-const CAMERA_STREAM_HEALTHY_REFRESH_MS = 10_000;
+const CAMERA_STREAM_HEALTHY_REFRESH_MS = Number.POSITIVE_INFINITY;
 const CAMERA_STREAM_STALE_MS = 8_000;
 const CAMERA_STREAM_MAX_RETRY_MS = 15_000;
 const CAMERA_STREAM_RECONNECT_AFTER_FAILURES = 3;
@@ -170,29 +170,35 @@ const ADAPTIVE_DROP_RATE_THRESHOLD = 0.08;
 const ADAPTIVE_LATENCY_FRAME_RATIO = 0.8;
 const ADAPTIVE_WINDOW_MS = 5_000;
 const ADAPTIVE_MAX_LEVEL = 2;
-const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 3;
-const CAMERA_MEDIA_STEADY_CREDIT_FRAMES = 3;
-const CAMERA_MEDIA_MAX_IN_FLIGHT = 3;
-const CAMERA_MEDIA_REFILL_THRESHOLD = 1;
-const RAW_PREVIEW_MEDIA_INITIAL_CREDIT_FRAMES = 3;
-const RAW_PREVIEW_MEDIA_STEADY_CREDIT_FRAMES = 3;
-const RAW_PREVIEW_MEDIA_MAX_IN_FLIGHT = 3;
-const RAW_PREVIEW_MEDIA_REFILL_THRESHOLD = 1;
+const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 1;
+const CAMERA_MEDIA_STEADY_CREDIT_FRAMES = 1;
+const CAMERA_MEDIA_MAX_IN_FLIGHT = 1;
+const CAMERA_MEDIA_REFILL_THRESHOLD = 0;
+const RAW_PREVIEW_MEDIA_INITIAL_CREDIT_FRAMES = 1;
+const RAW_PREVIEW_MEDIA_STEADY_CREDIT_FRAMES = 1;
+const RAW_PREVIEW_MEDIA_MAX_IN_FLIGHT = 1;
+const RAW_PREVIEW_MEDIA_REFILL_THRESHOLD = 0;
 const CAMERA_STREAM_WIDTH = 320;
 const CAMERA_STREAM_HEIGHT = 240;
 const RAW_PREVIEW_CAMERA: CameraStreamSettings = {
   preset: "fast",
   width: CAMERA_STREAM_WIDTH,
   height: CAMERA_STREAM_HEIGHT,
-  fps: 10,
+  fps: 15,
   quality: 14
 };
-const TRACK_TARGET_CENTER_EPSILON = 0.025;
-const TRACK_TARGET_SIZE_EPSILON = 0.03;
-const TRACK_TARGET_REFRESH_MS = 1200;
-const TRACK_TARGET_SMOOTH_ALPHA = 0.35;
-const TRACK_TARGET_SIZE_ALPHA = 0.25;
-const TRACK_TARGET_MAX_CENTER_STEP = 0.045;
+const TRACK_TARGET_CENTER_EPSILON = 0.012;
+const TRACK_TARGET_SIZE_EPSILON = 0.025;
+const TRACK_TARGET_REFRESH_MS = 800;
+const TRACK_TARGET_NOISE_FLOOR = 0.006;
+const TRACK_TARGET_SMOOTH_ALPHA_MIN = 0.28;
+const TRACK_TARGET_SMOOTH_ALPHA_MAX = 0.72;
+const TRACK_TARGET_FAST_RESPONSE_DISTANCE = 0.18;
+const TRACK_TARGET_SIZE_ALPHA = 0.35;
+const TRACK_TARGET_MAX_CENTER_STEP_MIN = 0.04;
+const TRACK_TARGET_MAX_CENTER_STEP_MAX = 0.095;
+const TRACK_ACTIVE_ERROR_MIN = 0.012;
+const TRACK_ACTIVE_ERROR_DEADBAND_RATIO = 0.75;
 const TRACK_TARGET_STICKINESS_WEIGHT = 0.18;
 
 const OFFICIAL_SERVO_RANGE: FaceTrackingControl["servoRange"] = {
@@ -869,11 +875,19 @@ export class VisionTrackingService {
 
     const previousCenter = faceCenter(previous);
     const rawCenter = faceCenter(rawTarget);
+    const centerDistance = Math.hypot(rawCenter.x - previousCenter.x, rawCenter.y - previousCenter.y);
+    const response = clampNumber(
+      (centerDistance - TRACK_TARGET_NOISE_FLOOR) / (TRACK_TARGET_FAST_RESPONSE_DISTANCE - TRACK_TARGET_NOISE_FLOOR),
+      0,
+      1
+    );
+    const centerAlpha = lerp(TRACK_TARGET_SMOOTH_ALPHA_MIN, TRACK_TARGET_SMOOTH_ALPHA_MAX, response);
+    const maxCenterStep = lerp(TRACK_TARGET_MAX_CENTER_STEP_MIN, TRACK_TARGET_MAX_CENTER_STEP_MAX, response);
     const lowPassCenter = {
-      x: previousCenter.x + (rawCenter.x - previousCenter.x) * TRACK_TARGET_SMOOTH_ALPHA,
-      y: previousCenter.y + (rawCenter.y - previousCenter.y) * TRACK_TARGET_SMOOTH_ALPHA
+      x: centerDistance <= TRACK_TARGET_NOISE_FLOOR ? previousCenter.x : previousCenter.x + (rawCenter.x - previousCenter.x) * centerAlpha,
+      y: centerDistance <= TRACK_TARGET_NOISE_FLOOR ? previousCenter.y : previousCenter.y + (rawCenter.y - previousCenter.y) * centerAlpha
     };
-    const center = limitCenterStep(previousCenter, lowPassCenter, TRACK_TARGET_MAX_CENTER_STEP);
+    const center = limitCenterStep(previousCenter, lowPassCenter, maxCenterStep);
     const width = clampNumber(previous.width + (rawTarget.width - previous.width) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
     const height = clampNumber(previous.height + (rawTarget.height - previous.height) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
     const stableTarget: NormalizedFaceBox = {
@@ -912,6 +926,10 @@ export class VisionTrackingService {
       return false;
     }
     if (!target || !this.lastSentTrackTarget) {
+      return true;
+    }
+    const activeTrackingThreshold = Math.max(TRACK_ACTIVE_ERROR_MIN, this.settings.control.deadband * TRACK_ACTIVE_ERROR_DEADBAND_RATIO);
+    if (faceCenterError(target) >= activeTrackingThreshold) {
       return true;
     }
     if (now - this.lastCommandAt >= TRACK_TARGET_REFRESH_MS) {
@@ -1005,6 +1023,15 @@ function faceCenter(face: NormalizedFaceBox): { x: number; y: number } {
     x: face.x + face.width / 2,
     y: face.y + face.height / 2
   };
+}
+
+function faceCenterError(face: NormalizedFaceBox): number {
+  const center = faceCenter(face);
+  return Math.hypot(center.x - 0.5, center.y - 0.5);
+}
+
+function lerp(start: number, end: number, amount: number): number {
+  return start + (end - start) * amount;
 }
 
 function limitCenterStep(

@@ -287,7 +287,10 @@ export interface RobotCommandMessage {
 
 export type ProtocolTrace = {
   deviceCapturedAt?: string;
+  deviceEncodedAt?: string;
+  deviceQueuedAt?: string;
   deviceSentAt?: string;
+  deviceTxStartAt?: string;
   daemonReceivedAt?: string;
   detectorStartedAt?: string;
   detectorFinishedAt?: string;

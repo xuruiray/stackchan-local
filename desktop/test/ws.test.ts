@@ -181,7 +181,10 @@ describe("StackChanWebSocketServer", () => {
           transport: "binary",
           seq: 12,
           captureTimestamp: timestamp,
-          sentAt: timestamp
+          sentAt: timestamp,
+          deviceEncodedAt: timestamp,
+          deviceQueuedAt: timestamp,
+          deviceTxStartAt: timestamp
         },
         jpeg
       )
@@ -195,7 +198,14 @@ describe("StackChanWebSocketServer", () => {
       mimeType: "image/jpeg",
       width: 320,
       height: 240,
-      seq: 12
+      seq: 12,
+      trace: {
+        deviceCapturedAt: timestamp,
+        deviceEncodedAt: timestamp,
+        deviceQueuedAt: timestamp,
+        deviceSentAt: timestamp,
+        deviceTxStartAt: timestamp
+      }
     });
     expect(snapshot.lastEvent && "dataLength" in snapshot.lastEvent ? snapshot.lastEvent.dataLength : undefined).toBe(
       jpeg.toString("base64").length

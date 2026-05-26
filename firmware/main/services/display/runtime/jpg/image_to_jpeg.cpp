@@ -3,6 +3,7 @@
 #include <esp_log.h>
 #include <stddef.h>
 #include <string.h>
+#include <mutex>
 #include <utility>
 
 #include "esp_jpeg_common.h"
@@ -15,6 +16,78 @@
 #include "image_to_jpeg.h"
 
 #define TAG "image_to_jpeg"
+
+namespace {
+
+std::mutex s_encode_mutex;
+uint8_t* s_encoder_input = nullptr;
+size_t s_encoder_input_capacity = 0;
+jpeg_enc_handle_t s_jpeg_handle = nullptr;
+uint16_t s_jpeg_width = 0;
+uint16_t s_jpeg_height = 0;
+jpeg_pixel_format_t s_jpeg_src_type = JPEG_PIXEL_FORMAT_RGB888;
+uint8_t s_jpeg_quality = 0;
+
+uint8_t* encoder_input_buffer(size_t size)
+{
+    if (size == 0) {
+        return nullptr;
+    }
+    if (s_encoder_input_capacity < size) {
+        if (s_encoder_input) {
+            jpeg_free_align(s_encoder_input);
+            s_encoder_input = nullptr;
+            s_encoder_input_capacity = 0;
+        }
+        s_encoder_input = static_cast<uint8_t*>(jpeg_calloc_align(size, 16));
+        if (!s_encoder_input) {
+            return nullptr;
+        }
+        s_encoder_input_capacity = size;
+    }
+    return s_encoder_input;
+}
+
+void close_cached_jpeg_encoder()
+{
+    if (s_jpeg_handle) {
+        jpeg_enc_close(s_jpeg_handle);
+        s_jpeg_handle = nullptr;
+    }
+}
+
+bool ensure_cached_jpeg_encoder(uint16_t width, uint16_t height, jpeg_pixel_format_t src_type, uint8_t quality)
+{
+    if (s_jpeg_handle && s_jpeg_width == width && s_jpeg_height == height && s_jpeg_src_type == src_type &&
+        s_jpeg_quality == quality) {
+        return true;
+    }
+
+    close_cached_jpeg_encoder();
+
+    jpeg_enc_config_t cfg = DEFAULT_JPEG_ENC_CONFIG();
+    cfg.width = width;
+    cfg.height = height;
+    cfg.src_type = src_type;
+    cfg.subsampling = (src_type == JPEG_PIXEL_FORMAT_GRAY) ? JPEG_SUBSAMPLE_GRAY : JPEG_SUBSAMPLE_420;
+    cfg.quality = quality;
+    cfg.rotate = JPEG_ROTATE_0D;
+    cfg.task_enable = false;
+
+    jpeg_error_t ret = jpeg_enc_open(&cfg, &s_jpeg_handle);
+    if (ret != JPEG_ERR_OK) {
+        s_jpeg_handle = nullptr;
+        ESP_LOGE(TAG, "jpeg_enc_open failed: %d", (int)ret);
+        return false;
+    }
+    s_jpeg_width = width;
+    s_jpeg_height = height;
+    s_jpeg_src_type = src_type;
+    s_jpeg_quality = quality;
+    return true;
+}
+
+}  // namespace
 
 static void* malloc_psram(size_t size) {
     void* p = malloc(size);
@@ -40,7 +113,7 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
     // GRAY 直接作为 JPEG_PIXEL_FORMAT_GRAY 输入
     if (format == V4L2_PIX_FMT_GREY) {
         int sz = (int)width * (int)height;
-        uint8_t* buf = (uint8_t*)jpeg_calloc_align(sz, 16);
+        uint8_t* buf = encoder_input_buffer(sz);
         if (!buf)
             return NULL;
         memcpy(buf, src, sz);
@@ -54,7 +127,7 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
     // V4L2 YUYV (Y Cb Y Cr) 可直接作为 JPEG_PIXEL_FORMAT_YCbYCr 输入
     if (format == V4L2_PIX_FMT_YUYV) {
         int sz = (int)width * (int)height * 2;
-        uint8_t* buf = (uint8_t*)jpeg_calloc_align(sz, 16);
+        uint8_t* buf = encoder_input_buffer(sz);
         if (!buf)
             return NULL;
         memcpy(buf, src, sz);
@@ -70,7 +143,7 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
     if (format == V4L2_PIX_FMT_UYVY) [[unlikely]] {
         int sz = (int)width * (int)height * 2;
         const uint8_t* s = src;
-        uint8_t* buf = (uint8_t*)jpeg_calloc_align(sz, 16);
+        uint8_t* buf = encoder_input_buffer(sz);
         if (!buf)
             return NULL;
         uint8_t* d = buf;
@@ -97,7 +170,7 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
         const uint8_t* y_plane = src;
         const uint8_t* u_plane = y_plane + (int)width * (int)height;
         const uint8_t* v_plane = u_plane + ((int)width / 2) * (int)height;
-        uint8_t* buf = (uint8_t*)jpeg_calloc_align(sz, 16);
+        uint8_t* buf = encoder_input_buffer(sz);
         if (!buf)
             return NULL;
         uint8_t* dst = buf;
@@ -147,7 +220,7 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
                 std::unreachable();
         }
         int sz = (int)width * (int)height * 2;
-        uint8_t* buf = (uint8_t*)jpeg_calloc_align(sz, 16);
+        uint8_t* buf = encoder_input_buffer(sz);
         if (!buf)
             return nullptr;
         esp_imgfx_color_convert_cfg_t convert_cfg = {
@@ -161,7 +234,6 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
         esp_imgfx_err_t err = esp_imgfx_color_convert_open(&convert_cfg, &convert_handle);
         if (err != ESP_IMGFX_ERR_OK || convert_handle == nullptr) {
             ESP_LOGE(TAG, "esp_imgfx_color_convert_open failed");
-            jpeg_free_align(buf);
             return nullptr;
         }
         esp_imgfx_data_t convert_input_data = {
@@ -175,7 +247,6 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
         err = esp_imgfx_color_convert_process(convert_handle, &convert_input_data, &convert_output_data);
         if (err != ESP_IMGFX_ERR_OK) {
             ESP_LOGE(TAG, "esp_imgfx_color_convert_process failed");
-            jpeg_free_align(buf);
             return nullptr;
         }
         esp_imgfx_color_convert_close(convert_handle);
@@ -350,6 +421,7 @@ static bool encode_with_hw_jpeg(const uint8_t* src, size_t src_len, uint16_t wid
 static bool encode_with_esp_new_jpeg(const uint8_t* src, size_t src_len, uint16_t width, uint16_t height,
                                      v4l2_pix_fmt_t format, uint8_t quality, uint8_t** jpg_out, size_t* jpg_out_len,
                                      jpg_out_cb cb, void* cb_arg) {
+    std::lock_guard<std::mutex> lock(s_encode_mutex);
     if (quality < 1)
         quality = 1;
     if (quality > 100)
@@ -363,20 +435,7 @@ static bool encode_with_esp_new_jpeg(const uint8_t* src, size_t src_len, uint16_
         return false;
     }
 
-    jpeg_enc_config_t cfg = DEFAULT_JPEG_ENC_CONFIG();
-    cfg.width = width;
-    cfg.height = height;
-    cfg.src_type = enc_src_type;
-    cfg.subsampling = (enc_src_type == JPEG_PIXEL_FORMAT_GRAY) ? JPEG_SUBSAMPLE_GRAY : JPEG_SUBSAMPLE_420;
-    cfg.quality = quality;
-    cfg.rotate = JPEG_ROTATE_0D;
-    cfg.task_enable = false;
-
-    jpeg_enc_handle_t h = NULL;
-    jpeg_error_t ret = jpeg_enc_open(&cfg, &h);
-    if (ret != JPEG_ERR_OK) {
-        jpeg_free_align(enc_in);
-        ESP_LOGE(TAG, "jpeg_enc_open failed: %d", (int)ret);
+    if (!ensure_cached_jpeg_encoder(width, height, enc_src_type, quality)) {
         return false;
     }
 
@@ -386,19 +445,16 @@ static bool encode_with_esp_new_jpeg(const uint8_t* src, size_t src_len, uint16_
         out_cap = 128 * 1024;
     uint8_t* outbuf = (uint8_t*)malloc_psram(out_cap);
     if (!outbuf) {
-        jpeg_enc_close(h);
-        jpeg_free_align(enc_in);
         ESP_LOGE(TAG, "alloc out buffer failed");
         return false;
     }
 
     int out_len = 0;
-    ret = jpeg_enc_process(h, enc_in, enc_in_size, outbuf, (int)out_cap, &out_len);
-    jpeg_enc_close(h);
-    jpeg_free_align(enc_in);
+    jpeg_error_t ret = jpeg_enc_process(s_jpeg_handle, enc_in, enc_in_size, outbuf, (int)out_cap, &out_len);
 
     if (ret != JPEG_ERR_OK) {
         free(outbuf);
+        close_cached_jpeg_encoder();
         ESP_LOGE(TAG, "jpeg_enc_process failed: %d", (int)ret);
         return false;
     }

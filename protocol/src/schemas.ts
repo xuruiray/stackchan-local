@@ -408,7 +408,10 @@ const protocolTraceSchema = {
   additionalProperties: false,
   properties: {
     deviceCapturedAt: { type: "string", format: "date-time" },
+    deviceEncodedAt: { type: "string", format: "date-time" },
+    deviceQueuedAt: { type: "string", format: "date-time" },
     deviceSentAt: { type: "string", format: "date-time" },
+    deviceTxStartAt: { type: "string", format: "date-time" },
     daemonReceivedAt: { type: "string", format: "date-time" },
     detectorStartedAt: { type: "string", format: "date-time" },
     detectorFinishedAt: { type: "string", format: "date-time" }

@@ -88,6 +88,15 @@ struct OutboundMessage {
     bool cameraFrame = false;
     std::string text;
     std::vector<uint8_t> bytes;
+    std::vector<uint8_t> cameraJpeg;
+    uint32_t cameraFrameId = 0;
+    uint32_t cameraSeq = 0;
+    int cameraWidth = 0;
+    int cameraHeight = 0;
+    std::string cameraCaptureTimestamp;
+    std::string cameraEncodedAt;
+    std::string cameraQueuedAt;
+    std::string cameraTxStartAt;
     uint32_t cameraTotalStartMs = 0;
     uint32_t cameraJpegBytes = 0;
 };
@@ -170,7 +179,7 @@ static constexpr uint32_t kSensorTaskTickIntervalMs = 20;
 static constexpr uint32_t kTxTaskIdleIntervalMs = 20;
 static constexpr size_t kCriticalTxQueueMax = 48;
 static constexpr size_t kNormalTxQueueMax = 48;
-static constexpr size_t kCameraTxQueueMax = 2;
+static constexpr size_t kCameraTxQueueMax = 1;
 static constexpr int kWebSocketTimeoutSeconds = 3;
 
 using namespace stackchan::hal::local_companion;
@@ -535,14 +544,14 @@ private:
             _tx_critical.pop_front();
             return true;
         }
-        if (!_tx_normal.empty()) {
-            message = std::move(_tx_normal.front());
-            _tx_normal.pop_front();
-            return true;
-        }
         if (!_tx_camera.empty()) {
             message = std::move(_tx_camera.front());
             _tx_camera.pop_front();
+            return true;
+        }
+        if (!_tx_normal.empty()) {
+            message = std::move(_tx_normal.front());
+            _tx_normal.pop_front();
             return true;
         }
         return false;
@@ -558,6 +567,10 @@ private:
             }
 
             const uint32_t send_start_ms = GetDeviceRuntime().millis();
+            if (message.binary && message.cameraFrame && !prepare_camera_binary_payload(message)) {
+                record_camera_tx_result(message, false, 0, send_start_ms);
+                continue;
+            }
             const bool sent = message.binary ? websocket_send_binary(message.bytes) : websocket_send_text(message.text);
             const uint32_t send_end_ms = GetDeviceRuntime().millis();
             if (message.cameraFrame) {
@@ -610,6 +623,52 @@ private:
                 _camera_credit_frames--;
             }
         }
+    }
+
+    bool prepare_camera_binary_payload(OutboundMessage& message)
+    {
+        if (!message.cameraFrame || !message.binary || message.cameraJpeg.empty()) {
+            return !message.bytes.empty();
+        }
+
+        message.cameraTxStartAt = iso_now();
+
+        ArduinoJson::JsonDocument header_doc;
+        header_doc["frameId"] = std::to_string(message.cameraFrameId);
+        header_doc["deviceId"] = GetDeviceRuntime().getFactoryMacString(":");
+        header_doc["timestamp"] = message.cameraCaptureTimestamp;
+        header_doc["mimeType"] = "image/jpeg";
+        header_doc["width"] = message.cameraWidth;
+        header_doc["height"] = message.cameraHeight;
+        header_doc["byteLength"] = message.cameraJpeg.size();
+        header_doc["transport"] = "binary";
+        header_doc["seq"] = message.cameraSeq;
+        header_doc["captureTimestamp"] = message.cameraCaptureTimestamp;
+        header_doc["sentAt"] = message.cameraTxStartAt;
+        header_doc["deviceEncodedAt"] = message.cameraEncodedAt;
+        header_doc["deviceQueuedAt"] = message.cameraQueuedAt;
+        header_doc["deviceTxStartAt"] = message.cameraTxStartAt;
+
+        std::string header;
+        ArduinoJson::serializeJson(header_doc, header);
+        if (header.empty() || header.size() > 0xffff) {
+            return false;
+        }
+
+        message.bytes.resize(8 + header.size() + message.cameraJpeg.size());
+        message.bytes[0] = 'S';
+        message.bytes[1] = 'C';
+        message.bytes[2] = 'L';
+        message.bytes[3] = '1';
+        message.bytes[4] = kBinaryCameraFrameKind;
+        message.bytes[5] = 0;
+        message.bytes[6] = static_cast<uint8_t>((header.size() >> 8) & 0xff);
+        message.bytes[7] = static_cast<uint8_t>(header.size() & 0xff);
+        memcpy(message.bytes.data() + 8, header.data(), header.size());
+        memcpy(message.bytes.data() + 8 + header.size(), message.cameraJpeg.data(), message.cameraJpeg.size());
+        message.cameraJpeg.clear();
+        message.cameraJpeg.shrink_to_fit();
+        return true;
     }
 
     void connect()
@@ -1235,7 +1294,8 @@ private:
         const uint32_t capture_start_ms = GetDeviceRuntime().millis();
         {
             std::lock_guard<std::mutex> hardware_lock(_camera_hardware_mutex);
-            if (!camera->StreamCaptures(false) || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
+            const bool wait_for_fresh_frame = stream_config.intervalMs >= 120;
+            if (!camera->StreamCaptures(wait_for_fresh_frame) || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
                 std::lock_guard<std::mutex> lock(_camera_mutex);
                 _last_camera_capture_ms = GetDeviceRuntime().millis() - capture_start_ms;
                 return true;
@@ -1264,7 +1324,8 @@ private:
             }
         }
 
-        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height, capture_timestamp, total_start_ms);
+        const std::string encoded_at = iso_now();
+        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height, capture_timestamp, encoded_at, total_start_ms);
         free(jpeg_data);
         return true;
     }
@@ -1835,7 +1896,7 @@ private:
     }
 
     bool send_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height,
-                           const std::string& capture_timestamp, uint32_t total_start_ms)
+                           const std::string& capture_timestamp, const std::string& encoded_at, uint32_t total_start_ms)
     {
         const uint32_t frame_id = next_camera_frame_id();
         const uint32_t seq = next_outgoing_seq();
@@ -1846,7 +1907,7 @@ private:
         }
         if (binary_camera_frame_enabled &&
             send_binary_camera_frame(jpeg_data, jpeg_len, width, height, frame_id, seq, capture_timestamp,
-                                     total_start_ms)) {
+                                     encoded_at, total_start_ms)) {
             return true;
         }
 
@@ -1876,57 +1937,35 @@ private:
         doc["event"]["captureTimestamp"] = capture_timestamp;
         doc["event"]["sentAt"]     = sent_at;
         doc["event"]["trace"]["deviceCapturedAt"] = capture_timestamp;
+        doc["event"]["trace"]["deviceEncodedAt"] = encoded_at;
+        doc["event"]["trace"]["deviceQueuedAt"] = sent_at;
         doc["event"]["trace"]["deviceSentAt"] = sent_at;
         return send_json(doc, OutboundPriority::Camera, true, total_start_ms,
                          static_cast<uint32_t>(std::min<size_t>(jpeg_len, UINT32_MAX)));
     }
 
     bool send_binary_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height, uint32_t frame_id,
-                                  uint32_t seq, const std::string& capture_timestamp, uint32_t total_start_ms)
+                                  uint32_t seq, const std::string& capture_timestamp, const std::string& encoded_at,
+                                  uint32_t total_start_ms)
     {
         if (jpeg_data == nullptr || jpeg_len == 0) {
             return false;
         }
 
-        ArduinoJson::JsonDocument header_doc;
-        header_doc["frameId"] = std::to_string(frame_id);
-        header_doc["deviceId"] = GetDeviceRuntime().getFactoryMacString(":");
-        const std::string sent_at = iso_now();
-        header_doc["timestamp"] = capture_timestamp;
-        header_doc["mimeType"] = "image/jpeg";
-        header_doc["width"] = width;
-        header_doc["height"] = height;
-        header_doc["byteLength"] = jpeg_len;
-        header_doc["transport"] = "binary";
-        header_doc["seq"] = seq;
-        header_doc["captureTimestamp"] = capture_timestamp;
-        header_doc["sentAt"] = sent_at;
-
-        std::string header;
-        ArduinoJson::serializeJson(header_doc, header);
-        if (header.empty() || header.size() > 0xffff) {
-            return false;
-        }
-
-        std::vector<uint8_t> envelope;
-        envelope.resize(8 + header.size() + jpeg_len);
-        envelope[0] = 'S';
-        envelope[1] = 'C';
-        envelope[2] = 'L';
-        envelope[3] = '1';
-        envelope[4] = kBinaryCameraFrameKind;
-        envelope[5] = 0;
-        envelope[6] = static_cast<uint8_t>((header.size() >> 8) & 0xff);
-        envelope[7] = static_cast<uint8_t>(header.size() & 0xff);
-        memcpy(envelope.data() + 8, header.data(), header.size());
-        memcpy(envelope.data() + 8 + header.size(), jpeg_data, jpeg_len);
         OutboundMessage message;
         message.priority = OutboundPriority::Camera;
         message.binary = true;
         message.cameraFrame = true;
+        message.cameraFrameId = frame_id;
+        message.cameraSeq = seq;
+        message.cameraWidth = width;
+        message.cameraHeight = height;
+        message.cameraCaptureTimestamp = capture_timestamp;
+        message.cameraEncodedAt = encoded_at;
+        message.cameraQueuedAt = iso_now();
         message.cameraTotalStartMs = total_start_ms;
         message.cameraJpegBytes = static_cast<uint32_t>(std::min<size_t>(jpeg_len, UINT32_MAX));
-        message.bytes = std::move(envelope);
+        message.cameraJpeg.assign(jpeg_data, jpeg_data + jpeg_len);
         return enqueue_outbound(std::move(message));
     }
 

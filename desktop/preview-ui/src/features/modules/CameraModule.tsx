@@ -20,14 +20,15 @@ export function CameraModule({
   const camera = p(snapshot).camera;
   const control = snapshot?.status.control.camera;
   const sourceCamera = snapshot?.status.sourceCamera;
+  const rawPreviewCamera = snapshot?.status.rawPreview.camera;
   const command = useCommand();
   const activeSelection = useMemo(
     () =>
       cameraSelectionFromValue({
-        width: camera?.requestedWidth ?? sourceCamera?.width ?? control?.width,
-        height: camera?.requestedHeight ?? sourceCamera?.height ?? control?.height,
-        fps: camera?.fps ?? sourceCamera?.fps ?? control?.fps,
-        quality: camera?.quality ?? sourceCamera?.quality ?? control?.quality
+        width: rawPreviewCamera?.width ?? sourceCamera?.width ?? camera?.requestedWidth ?? control?.width,
+        height: rawPreviewCamera?.height ?? sourceCamera?.height ?? camera?.requestedHeight ?? control?.height,
+        fps: rawPreviewCamera?.fps ?? sourceCamera?.fps ?? camera?.fps ?? control?.fps,
+        quality: rawPreviewCamera?.quality ?? sourceCamera?.quality ?? camera?.quality ?? control?.quality
       }),
     [
       camera?.fps,
@@ -38,6 +39,10 @@ export function CameraModule({
       control?.height,
       control?.quality,
       control?.width,
+      rawPreviewCamera?.fps,
+      rawPreviewCamera?.height,
+      rawPreviewCamera?.quality,
+      rawPreviewCamera?.width,
       sourceCamera?.fps,
       sourceCamera?.height,
       sourceCamera?.quality,
