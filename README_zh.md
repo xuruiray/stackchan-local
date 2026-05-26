@@ -2,6 +2,15 @@
 
 [English](README.md) | [中文](README_zh.md)
 
+<p align="center">
+  <img alt="运行方式" src="https://img.shields.io/badge/runtime-local--first-22c55e">
+  <img alt="目标硬件" src="https://img.shields.io/badge/target-M5Stack%20StackChan%20%2F%20ESP32--S3-2563eb">
+  <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.4-e7352c">
+  <img alt="桌面端" src="https://img.shields.io/badge/desktop-TypeScript%20%2B%20React-3178c6">
+  <img alt="WebUI" src="https://img.shields.io/badge/WebUI-localhost%3A8788-8b5cf6">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-black">
+</p>
+
 StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 daemon 和 ESP-IDF 固件。硬件通过局域网 WebSocket 连接 Mac，Codex、浏览器控制台和可选的人脸检测服务运行在桌面端。
 
 当前固件架构明确分为三层：
@@ -11,6 +20,38 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 - `system`：启动、生命周期、设置、诊断、运行时桥接和 ESP-IDF 平台适配。
 
 旧的 `firmware/main/vendor/embedded_runtime` 已经不再属于项目结构。必要的纯第三方芯片库放在 `firmware/main/third_party`，运行时行为由 `hardware`、`services`、`system` 三层接管。
+
+## 视觉总览
+
+| 目标硬件 | 本地硬件控制台 |
+| --- | --- |
+| <img src="assets/stackchan-product.png" alt="StackChan 硬件" width="420"> | <img src="assets/webui-console.jpg" alt="StackChan Local 硬件控制台" width="520"> |
+| M5Stack StackChan on ESP32-S3，包含 GC0308 摄像头、触摸、IMU、舵机、RGB、音频和电源模块。 | React + Vite 控制台，覆盖模块、应用、raw snapshot、日志和摄像头流。 |
+
+## 项目概览
+
+| 维度 | 当前设计 |
+| --- | --- |
+| 目标硬件 | 仅面向 M5Stack StackChan / ESP32-S3 |
+| 固件技术栈 | ESP-IDF 5.5.4，分为 `system`、`hardware`、`services` 三层 |
+| 桌面端技术栈 | TypeScript daemon、React + Vite WebUI、本地 Python vision sidecar |
+| 通信方式 | 局域网 WebSocket `ws://<mac-ip>:8787/stackchan/local`，`8788` 提供 HTTP/SSE/MJPEG |
+| 控制模型 | 结构化安全命令；不提供 raw JSON 控制台 |
+| 视觉模型 | 只做本地人脸位置检测；不做身份识别和表情识别 |
+| 硬件可观测性 | 每个模块独立页面、public snapshot、日志、I2C scan、stream metrics 和 unavailable reason |
+
+## 目录
+
+- [功能](#功能)
+- [目录结构](#目录结构)
+- [架构](#架构)
+- [运行端点](#运行端点)
+- [固件分层](#固件分层)
+- [WebUI](#webui)
+- [能力矩阵](#能力矩阵)
+- [快速开始](#快速开始)
+- [开发命令](#开发命令)
+- [测试](#测试)
 
 ## 功能
 
@@ -23,14 +64,6 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 - 提供 MCP 工具，让 Codex 查询状态、说话、移动头部、拍照、设置模式和控制人脸追踪。
 
 人脸追踪只做位置跟踪，不做身份识别。表情识别相关运行时和 UI 已移除。
-
-## 硬件示例
-
-![StackChan 硬件](assets/stackchan-product.png)
-
-## UI 示例
-
-![StackChan Local 硬件控制台](assets/webui-console.jpg)
 
 ## 目录结构
 
@@ -61,6 +94,8 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 
 ## 架构
 
+### 运行拓扑
+
 ```mermaid
 flowchart LR
   Codex["Codex / MCP"] --> Desktop["desktop daemon"]
@@ -71,6 +106,47 @@ flowchart LR
   Firmware --> Services["services"]
   Firmware --> Hardware["hardware"]
   Hardware --> Devices["PMIC, display, touch, camera, audio, servos, sensors, network"]
+```
+
+### 固件职责边界
+
+```mermaid
+flowchart TB
+  AppMain["app_main"] --> Boot["system/boot"]
+  Boot --> Context["system/core/SystemContext"]
+  Context --> BoardProfile["hardware/board/m5stack_stackchan/BoardProfile"]
+  BoardProfile --> Registry["HardwareRegistry"]
+  Registry --> Bus["hardware/bus"]
+  Registry --> Drivers["hardware drivers"]
+  Context --> ServiceRegistry["ServiceRegistry"]
+  ServiceRegistry --> SensorService["services/sensors"]
+  ServiceRegistry --> MotionService["services/motion"]
+  ServiceRegistry --> DisplayService["services/display"]
+  ServiceRegistry --> CompanionService["services/local_companion"]
+  CompanionService --> Telemetry["snapshots, camera frames, logs"]
+  SensorService --> Telemetry
+  MotionService --> Drivers
+  DisplayService --> Drivers
+```
+
+### 命令和遥测链路
+
+```mermaid
+sequenceDiagram
+  participant UI as React WebUI
+  participant Desktop as Desktop daemon
+  participant Firmware as ESP32-S3 firmware
+  participant Service as Firmware service
+  participant Driver as Hardware driver
+
+  UI->>Desktop: POST /api/* 或订阅 SSE
+  Desktop->>Firmware: WebSocket 结构化 robot command
+  Firmware->>Service: 分发命令
+  Service->>Driver: read, write, control
+  Driver-->>Service: 硬件结果
+  Service-->>Firmware: snapshot 或 ACK
+  Firmware-->>Desktop: telemetry、camera frame、command ACK
+  Desktop-->>UI: /status、/events、/debug/*、MJPEG/JPEG
 ```
 
 ### Desktop 职责
@@ -92,6 +168,18 @@ flowchart LR
 - 发送 heartbeat、state、sensor snapshot、touch、IMU、battery、Wi-Fi、camera、audio telemetry。
 - 执行 mode、audio playback、camera stream、RGB、servo motion、face tracking、telemetry configuration 等命令。
 - 在设备端保持 avatar 渲染、眨眼、idle 行为和电源策略。
+
+## 运行端点
+
+| 表面 | 默认地址 | 所属模块 | 用途 |
+| --- | --- | --- | --- |
+| 固件 WebSocket | `ws://<mac-ip>:8787/stackchan/local` | `desktop/src/ws` | 固件 session、heartbeat、telemetry、commands |
+| Preview WebUI | `http://localhost:8788/` | `desktop/src/preview` + `desktop/preview-ui` | 模块、应用、debug 页面 |
+| 状态接口 | `GET /status` | Preview server | UI 消费的设备/session 摘要 |
+| 公开快照 | `GET /debug/snapshot` | Preview server | 诊断用 raw public JSON snapshot |
+| 日志 | `GET /debug/logs`、`GET /debug/log-events` | Preview server | daemon logs 和实时日志流 |
+| 摄像头流 | `GET /frame.jpg`、`GET /stream.mjpg` | Preview server | 最新 raw/processed camera frames |
+| 服务发现 | `_stackchan-local._tcp` | Desktop daemon | 固件配对用 mDNS discovery |
 
 ## 固件分层
 
@@ -155,6 +243,19 @@ WebUI 由 desktop daemon 提供，地址是 `http://localhost:8788`。前端位�
 
 - Raw preview：人脸识别前的原始摄像头流。
 - Face tracking：人脸位置识别后的 processed stream。
+
+## 能力矩阵
+
+| 分组 | 页面或服务 | 展示数据 | 安全命令 |
+| --- | --- | --- | --- |
+| 电源 | AXP2101、INA226、backlight policy | 电池、充电状态、rail current/power、availability reason | Telemetry refresh、I2C scan |
+| 触摸和运动传感器 | FT6336、SI12T、BMI270、BMM150、LTR553 | 触摸状态、accel/gyro、磁力计、ALS/proximity | Telemetry refresh、I2C scan |
+| 摄像头和视觉 | GC0308 raw stream、人脸位置 processed stream | FPS、frame interval、latency、JPEG size、face target | Stream on/off、capture、FPS selection |
+| 执行器 | SCS servos、RGB LED、IO expander | 舵机姿态、限位、RGB 状态、expander pins | Move head、set RGB color/brightness、telemetry refresh |
+| 音频和时间 | ES7210、AW88298、RTC | Mic level、codec status、RTC time | 通过 MCP 播报/TTS、telemetry refresh |
+| 网络 | Wi-Fi、BLE provisioning、mDNS | Link state、SSID/IP、RSSI、reconnect counters | 通过 service 执行 provisioning 和 runtime network commands |
+| 应用 | Codex 播报/灯光提醒、人脸位置追踪 | app state、enabled flags、tracking target、latency | Toggle tracking、adjust FPS、companion mode commands |
+| Debug | System、raw snapshot、logs | Heap、counters、command ACK、public JSON、daemon logs | 只读诊断 |
 
 ## 快速开始
 
@@ -251,6 +352,22 @@ npm run mcp
 - `stackchan_capture_image`
 - `stackchan_set_mode`
 - `stackchan_face_tracking`
+
+## 开发命令
+
+| 目标 | 命令 |
+| --- | --- |
+| 安装 workspace 依赖 | `npm install` |
+| 启动 desktop daemon 和 WebUI | `npm run dev` |
+| 启动 MCP server mode | `npm run mcp` |
+| 检查全部 TypeScript package | `npm run typecheck` |
+| 运行 protocol 和 desktop 测试 | `npm test` |
+| 构建 preview UI 和 desktop TypeScript | `npm run build` |
+| 安装本地 vision 依赖 | `npm run vision:install` |
+| 下载人脸检测模型 | `npm run vision:model` |
+| 编译固件 | `source ~/esp/esp-idf-v5.5.4/export.sh && npm run firmware:build` |
+| 烧录固件 | `source ~/esp/esp-idf-v5.5.4/export.sh && npm run firmware:flash` |
+| 检查固件 local-only 边界 | `npm run firmware:check-local-only` |
 
 ## 测试
 
