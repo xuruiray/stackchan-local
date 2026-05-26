@@ -3,6 +3,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readFile } from "node:fs/promises";
 import { extname, normalize } from "node:path";
 
+import type { RobotEmotion } from "@stackchan-local/protocol";
+
 import type { Logger, LogLevel } from "../config.js";
 import type { DebugLogBuffer, DebugLogType } from "../debug/log-buffer.js";
 import type { DeviceRegistry } from "../device/registry.js";
@@ -12,7 +14,7 @@ import type {
   RawPreviewSettingsPatch,
   VisionTrackingSettingsPatch
 } from "../vision/tracking.js";
-import type { CompletionTtsSnapshot, DebugSnapshot, PreviewSnapshot } from "./public-types.js";
+import type { AvatarExpressionPayload, CompletionTtsSnapshot, DebugSnapshot, PreviewSnapshot } from "./public-types.js";
 
 const VISION_SNAPSHOT_BROADCAST_MIN_MS = 200;
 const DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 500;
@@ -29,7 +31,7 @@ export interface PreviewServerExtras {
   registry?: DeviceRegistry;
   debugLog?: DebugLogBuffer;
   robotController?: Pick<RobotController, "setRgb"> &
-    Partial<Pick<RobotController, "moveHead" | "cameraStream" | "captureImage" | "telemetryConfig">>;
+    Partial<Pick<RobotController, "react" | "moveHead" | "cameraStream" | "captureImage" | "telemetryConfig">>;
   completionAnnouncer?: {
     announce(completion: { id: string; reason: string; taskSummary?: string }): void;
     isEnabled(): boolean;
@@ -231,6 +233,65 @@ export class PreviewServer {
           color: color ?? "#000000",
           enabled,
           brightness
+        });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/expression") {
+        if (!this.extras.robotController?.react) {
+          this.sendJson(response, { ok: false, error: "expression control unavailable" });
+          return;
+        }
+        const body = await readBody(request);
+        const parsed = body
+          ? (JSON.parse(body) as {
+              emotion?: unknown;
+              durationMs?: unknown;
+              flash?: unknown;
+              rgbColor?: unknown;
+              avatarJson?: unknown;
+            })
+          : {};
+        const emotion = sanitizeRobotEmotion(parsed.emotion);
+        if (!emotion) {
+          this.sendJson(response, { ok: false, error: "invalid emotion" });
+          return;
+        }
+        const avatarJson = parsed.avatarJson === undefined ? undefined : sanitizeAvatarExpression(parsed.avatarJson);
+        if (parsed.avatarJson !== undefined && !avatarJson) {
+          this.sendJson(response, { ok: false, error: "invalid avatarJson" });
+          return;
+        }
+        const durationMs = sanitizeInteger(parsed.durationMs, 100, 10_000) ?? 2000;
+        const rgbColor = sanitizeRgbColor(parsed.rgbColor);
+        const flash = parsed.flash === true;
+        if (flash && !rgbColor) {
+          this.sendJson(response, { ok: false, error: "invalid rgbColor" });
+          return;
+        }
+        const result = await this.extras.robotController.react(
+          {
+            emotion,
+            durationMs,
+            avatarJson,
+            rgbJson: flash
+              ? {
+                  leftRgbDuration: 0.14,
+                  leftRgbColor: rgbColor,
+                  rightRgbDuration: 0.14,
+                  rightRgbColor: rgbColor
+                }
+              : undefined
+          },
+          { waitForAck: true, waitForCompletion: false }
+        );
+        this.sendJson(response, {
+          ...commandResponse(result),
+          emotion,
+          durationMs,
+          flash,
+          rgbColor: flash ? rgbColor : undefined,
+          avatarJson
         });
         return;
       }
@@ -811,6 +872,60 @@ function sanitizeRgbBrightness(value: unknown): number | undefined {
   return Math.min(1, Math.max(0, value));
 }
 
+const ROBOT_EMOTIONS = [
+  "neutral",
+  "happy",
+  "laughing",
+  "love",
+  "sad",
+  "crying",
+  "angry",
+  "thinking",
+  "surprised",
+  "sleepy",
+  "doubtful"
+] as const;
+
+function sanitizeRobotEmotion(value: unknown): RobotEmotion | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return (ROBOT_EMOTIONS as readonly string[]).includes(value) ? (value as RobotEmotion) : undefined;
+}
+
+function sanitizeAvatarExpression(value: unknown): AvatarExpressionPayload | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const source = value as Record<string, unknown>;
+  const leftEye = sanitizeAvatarExpressionItem(source.leftEye);
+  const rightEye = sanitizeAvatarExpressionItem(source.rightEye);
+  const mouth = sanitizeAvatarExpressionItem(source.mouth);
+  if (!leftEye || !rightEye || !mouth) {
+    return undefined;
+  }
+  return {
+    type: "bleAvatar",
+    leftEye,
+    rightEye,
+    mouth
+  };
+}
+
+function sanitizeAvatarExpressionItem(value: unknown): AvatarExpressionPayload["leftEye"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const source = value as Record<string, unknown>;
+  return {
+    x: sanitizeInteger(source.x, -100, 100) ?? 0,
+    y: sanitizeInteger(source.y, -100, 100) ?? 0,
+    rotation: sanitizeInteger(source.rotation, -1800, 1800) ?? 0,
+    weight: sanitizeInteger(source.weight, 0, 100) ?? 0,
+    size: sanitizeInteger(source.size, -100, 100) ?? 0
+  };
+}
+
 function sanitizeNumber(value: unknown, min: number, max: number): number | undefined {
   if (value === undefined || value === null || value === "") {
     return undefined;
@@ -819,6 +934,11 @@ function sanitizeNumber(value: unknown, min: number, max: number): number | unde
     return undefined;
   }
   return Math.min(max, Math.max(min, value));
+}
+
+function sanitizeInteger(value: unknown, min: number, max: number): number | undefined {
+  const number = sanitizeNumber(value, min, max);
+  return number === undefined ? undefined : Math.round(number);
 }
 
 function sanitizeEnumNumber<const T extends readonly number[]>(value: unknown, allowed: T): T[number] | undefined {

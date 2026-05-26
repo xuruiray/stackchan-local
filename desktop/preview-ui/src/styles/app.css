@@ -423,6 +423,110 @@ input[type="color"] {
   cursor: pointer;
 }
 
+.expression-control-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px 96px;
+  gap: 10px;
+  width: 100%;
+  align-items: end;
+}
+
+.expression-control-grid strong {
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.expression-toggle input {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  accent-color: var(--green);
+}
+
+.expression-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.expression-grid .button {
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  min-height: 52px;
+  text-align: left;
+}
+
+.expression-grid .button[aria-pressed="true"],
+.expression-grid .expression-button-active {
+  border-color: rgba(66, 209, 157, .8);
+  background: #12342a;
+  box-shadow: inset 0 0 0 1px rgba(66, 209, 157, .35);
+}
+
+.expression-grid .button span,
+.expression-grid .button small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expression-grid .button span {
+  font-weight: 700;
+}
+
+.expression-grid .button small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.avatar-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  width: 100%;
+}
+
+.avatar-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.avatar-editor-group {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101214;
+}
+
+.avatar-editor-group h4 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.avatar-slider {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.avatar-slider strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .command-status {
   padding: 7px 9px;
   border: 1px solid var(--line);
@@ -702,7 +806,10 @@ input[type="color"] {
   .metric-grid,
   .frame-meta,
   .log-toolbar,
-  .imu-3d-layout {
+  .imu-3d-layout,
+  .expression-control-grid,
+  .expression-grid,
+  .avatar-editor {
     grid-template-columns: 1fr;
   }
 

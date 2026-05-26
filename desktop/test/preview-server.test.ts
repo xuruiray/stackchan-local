@@ -254,6 +254,12 @@ describe("PreviewServer", () => {
     });
     const announcements: Array<{ id: string; reason: string; taskSummary?: string }> = [];
     const rgbCommands: Array<{ enabled: boolean; color?: string; brightness?: number }> = [];
+    const reactCommands: Array<{
+      emotion: string;
+      durationMs?: number;
+      avatarJson?: Record<string, unknown>;
+      rgbJson?: Record<string, unknown>;
+    }> = [];
     const moveCommands: Array<{ yaw: number; pitch: number; speed?: number }> = [];
     const cameraStreamCommands: Array<{ enabled: boolean; fps?: number; width?: number; height?: number; quality?: number; format?: "jpeg" }> = [];
     const telemetryCommands: Array<{
@@ -312,6 +318,15 @@ describe("PreviewServer", () => {
             sent: true,
             deviceId: "stackchan-test",
             command: { kind: "telemetryConfig", ...options },
+            ack: { received: true, status: "accepted" }
+          };
+        },
+        react: async (options) => {
+          reactCommands.push(options);
+          return {
+            sent: true,
+            deviceId: "stackchan-test",
+            command: { kind: "react", ...options },
             ack: { received: true, status: "accepted" }
           };
         }
@@ -443,6 +458,85 @@ describe("PreviewServer", () => {
     expect(rgb.enabled).toBe(true);
     expect(rgb.color).toBe("#6CB6FF");
     expect(rgbCommands).toEqual([{ enabled: true, color: "#6CB6FF", brightness: undefined }]);
+
+    const expression = (await fetch(`${baseUrl}/api/expression`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        emotion: "doubtful",
+        durationMs: 1250,
+        flash: true,
+        rgbColor: "#43d5b0",
+        avatarJson: {
+          type: "ignored",
+          leftEye: { x: 6, y: -4, rotation: 1810, weight: 101, size: -120 },
+          rightEye: { x: -6, y: -4, rotation: -1810, weight: 98, size: 8 },
+          mouth: { x: 0, y: 12, rotation: 0, weight: 72, size: 4 }
+        }
+      })
+    }).then((response) => response.json())) as {
+      ok: boolean;
+      emotion: string;
+      durationMs: number;
+      flash: boolean;
+      rgbColor: string;
+      avatarJson: Record<string, unknown>;
+    };
+    expect(expression.ok).toBe(true);
+    expect(expression.emotion).toBe("doubtful");
+    expect(expression.durationMs).toBe(1250);
+    expect(expression.flash).toBe(true);
+    expect(expression.rgbColor).toBe("#43D5B0");
+    expect(expression.avatarJson).toEqual({
+      type: "bleAvatar",
+      leftEye: { x: 6, y: -4, rotation: 1800, weight: 100, size: -100 },
+      rightEye: { x: -6, y: -4, rotation: -1800, weight: 98, size: 8 },
+      mouth: { x: 0, y: 12, rotation: 0, weight: 72, size: 4 }
+    });
+    expect(reactCommands).toEqual([
+      {
+        emotion: "doubtful",
+        durationMs: 1250,
+        avatarJson: {
+          type: "bleAvatar",
+          leftEye: { x: 6, y: -4, rotation: 1800, weight: 100, size: -100 },
+          rightEye: { x: -6, y: -4, rotation: -1800, weight: 98, size: 8 },
+          mouth: { x: 0, y: 12, rotation: 0, weight: 72, size: 4 }
+        },
+        rgbJson: {
+          leftRgbDuration: 0.14,
+          leftRgbColor: "#43D5B0",
+          rightRgbDuration: 0.14,
+          rightRgbColor: "#43D5B0"
+        }
+      }
+    ]);
+
+    const invalidAvatarExpression = (await fetch(`${baseUrl}/api/expression`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ emotion: "happy", avatarJson: { leftEye: {}, rightEye: {}, mouth: null } })
+    }).then((response) => response.json())) as { ok: boolean; error: string };
+    expect(invalidAvatarExpression).toEqual({ ok: false, error: "invalid avatarJson" });
+    expect(reactCommands).toHaveLength(1);
+
+    const aliasExpression = (await fetch(`${baseUrl}/api/expression`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ emotion: "surprised" })
+    }).then((response) => response.json())) as { ok: boolean; emotion: string; durationMs: number };
+    expect(aliasExpression.ok).toBe(true);
+    expect(aliasExpression.emotion).toBe("surprised");
+    expect(aliasExpression.durationMs).toBe(2000);
+    expect(reactCommands[1]).toMatchObject({ emotion: "surprised", durationMs: 2000 });
+
+    const invalidExpression = (await fetch(`${baseUrl}/api/expression`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ emotion: "panic" })
+    }).then((response) => response.json())) as { ok: boolean; error: string };
+    expect(invalidExpression).toEqual({ ok: false, error: "invalid emotion" });
+    expect(reactCommands).toHaveLength(2);
 
     const moved = (await fetch(`${baseUrl}/api/hardware/move-head`, {
       method: "POST",

@@ -249,7 +249,7 @@ export const robotCommandSchema = {
           required: ["kind", "emotion"],
           properties: {
             kind: { const: "react" },
-            emotion: { enum: ["neutral", "happy", "sad", "angry", "surprised", "sleepy", "thinking", "love"] },
+            emotion: { enum: ["neutral", "happy", "laughing", "love", "sad", "crying", "angry", "thinking", "surprised", "sleepy", "doubtful"] },
             durationMs: { type: "integer", minimum: 1 },
             avatarJson: { type: "object" },
             rgbJson: { type: "object" }

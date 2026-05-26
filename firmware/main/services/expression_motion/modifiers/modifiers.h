@@ -13,3 +13,4 @@
 #include "idle_expression.h"
 #include "dance.h"
 #include "imu.h"
+#include "expression_preset.h"

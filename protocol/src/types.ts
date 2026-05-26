@@ -37,12 +37,15 @@ export type RobotMode =
 export type RobotEmotion =
   | "neutral"
   | "happy"
+  | "laughing"
+  | "love"
   | "sad"
+  | "crying"
   | "angry"
+  | "thinking"
   | "surprised"
   | "sleepy"
-  | "thinking"
-  | "love";
+  | "doubtful";
 
 export interface AudioParams {
   format: "opus";

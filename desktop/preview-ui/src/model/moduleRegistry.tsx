@@ -18,6 +18,7 @@ import {
   Rotate3D,
   ScanLine,
   Settings2,
+  Smile,
   TerminalSquare,
   Volume2,
   Wifi,
@@ -26,6 +27,7 @@ import {
 import type { ComponentType } from "react";
 
 import { CodexAnnouncerApp } from "../features/apps/CodexAnnouncerApp";
+import { ExpressionControlApp } from "../features/apps/ExpressionControlApp";
 import { FaceTrackingApp } from "../features/apps/FaceTrackingApp";
 import { AudioModule } from "../features/modules/AudioModule";
 import { CameraModule } from "../features/modules/CameraModule";
@@ -93,6 +95,11 @@ export const pages: PageDefinition[] = [
   ),
   appPage("codex-announcer", "Codex 播报", "TTS + light alert", Volume2, CodexAnnouncerApp, (s) =>
     s?.completionTts?.enabled ? "available" : "warning"
+  ),
+  appPage("expression-control", "硬件表情", "avatar emotion", Smile, ExpressionControlApp, (s) =>
+    s?.devices?.some((device) => device.status === "online" && (device.capabilities.includes("display") || device.capabilities.includes("face")))
+      ? "available"
+      : "warning"
   ),
   appPage("face-tracking", "人脸追踪", "face position", Camera, FaceTrackingApp, (s) =>
     s?.status.enabled ? "available" : "warning"

@@ -48,25 +48,6 @@ bool should_hide_bottom_status(LocalCompanionState state)
     }
 }
 
-avatar::Emotion emotion_from_string(std::string_view emotion)
-{
-    if (emotion == "happy" || emotion == "love") {
-        return avatar::Emotion::Happy;
-    }
-    if (emotion == "sad") {
-        return avatar::Emotion::Sad;
-    }
-    if (emotion == "angry") {
-        return avatar::Emotion::Angry;
-    }
-    if (emotion == "sleepy") {
-        return avatar::Emotion::Sleepy;
-    }
-    if (emotion == "thinking" || emotion == "surprised") {
-        return avatar::Emotion::Doubt;
-    }
-    return avatar::Emotion::Neutral;
-}
 }  // namespace
 
 AppLocalCompanion::AppLocalCompanion()
@@ -231,14 +212,32 @@ void AppLocalCompanion::onRunning()
     }
 
     if (_ws_react_data.update_flag) {
+        auto& stackchan = GetStackChan();
+        clear_finished_expression_preset();
         if (!_ws_react_data.avatar_json.empty()) {
-            GetStackChan().updateAvatarFromJson(_ws_react_data.avatar_json.c_str());
+            finish_expression_preset(true, true);
+            _expression_preset_active_until = 0;
+            stackchan.updateAvatarFromJson(_ws_react_data.avatar_json.c_str());
         } else {
-            GetStackChan().addModifier(std::make_unique<TimedEmotionModifier>(
-                emotion_from_string(_ws_react_data.emotion), _ws_react_data.duration_ms));
+            const auto now = GetDeviceRuntime().millis();
+            if (_expression_preset_modifier_id >= 0) {
+                finish_expression_preset(false, false);
+            } else {
+                const auto angles          = stackchan.motion().getCurrentAngles();
+                _expression_restore_yaw   = angles.x;
+                _expression_restore_pitch = angles.y;
+            }
+            if (stackchan.hasAvatar() && now >= _expression_preset_active_until) {
+                _expression_restore_emotion = stackchan.avatar().getEmotion();
+            }
+            _expression_preset_active_until = now + _ws_react_data.duration_ms + 250;
+            _expression_preset_modifier_id = stackchan.addModifier(std::make_unique<ExpressionPresetModifier>(
+                expression_preset_from_string(_ws_react_data.emotion), _ws_react_data.duration_ms,
+                !is_face_tracking_reserved(), _expression_restore_yaw, _expression_restore_pitch,
+                _expression_restore_emotion));
         }
         if (!_ws_react_data.rgb_json.empty()) {
-            GetStackChan().updateNeonLightFromJson(_ws_react_data.rgb_json.c_str());
+            stackchan.updateNeonLightFromJson(_ws_react_data.rgb_json.c_str());
         }
         _ws_react_data = PendingReactData();
     }
@@ -246,6 +245,7 @@ void AppLocalCompanion::onRunning()
     sync_mode_visuals();
     sync_face_tracking();
     GetStackChan().update();
+    clear_finished_expression_preset();
     view::update_status_bar();
 
     if (GetDeviceRuntime().millis() - _last_status_update > 500) {
@@ -269,6 +269,7 @@ void AppLocalCompanion::onClose()
     GetDeviceRuntime().onWsTextMessage.clear();
     GetDeviceRuntime().onWsReactMessage.clear();
     GetDeviceRuntime().onWsDanceData.clear();
+    finish_expression_preset(true, true);
     if (_head_gesture_connection != 0) {
         GetDeviceRuntime().onHeadPetGesture.disconnect(_head_gesture_connection);
         _head_gesture_connection = 0;
@@ -530,6 +531,36 @@ void AppLocalCompanion::remove_modifier(int& modifier_id)
 
     GetStackChan().removeModifier(modifier_id);
     modifier_id = -1;
+}
+
+void AppLocalCompanion::clear_finished_expression_preset()
+{
+    if (_expression_preset_modifier_id < 0) {
+        return;
+    }
+
+    if (GetStackChan().getModifier(_expression_preset_modifier_id) == nullptr) {
+        _expression_preset_modifier_id = -1;
+        _expression_preset_active_until = 0;
+    }
+}
+
+void AppLocalCompanion::finish_expression_preset(bool restore_motion, bool restore_rgb)
+{
+    if (_expression_preset_modifier_id < 0) {
+        return;
+    }
+
+    auto& stackchan = GetStackChan();
+    auto* modifier = stackchan.getModifier(_expression_preset_modifier_id);
+    if (modifier) {
+        static_cast<ExpressionPresetModifier*>(modifier)->finish(stackchan, restore_motion, restore_rgb);
+        stackchan.removeModifier(_expression_preset_modifier_id);
+    }
+    _expression_preset_modifier_id = -1;
+    if (restore_motion) {
+        _expression_preset_active_until = 0;
+    }
 }
 
 void AppLocalCompanion::refresh_idle_activity(uint32_t quiet_ms)

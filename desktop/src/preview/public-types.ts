@@ -1,5 +1,23 @@
 import type { DeviceSnapshot } from "../device/registry.js";
 import type { VisionPreviewSnapshot } from "../vision/tracking.js";
+import type { RobotEmotion } from "@stackchan-local/protocol";
+
+export type { RobotEmotion };
+
+export type AvatarExpressionItem = {
+  x: number;
+  y: number;
+  rotation: number;
+  weight: number;
+  size: number;
+};
+
+export type AvatarExpressionPayload = {
+  type: "bleAvatar";
+  leftEye: AvatarExpressionItem;
+  rightEye: AvatarExpressionItem;
+  mouth: AvatarExpressionItem;
+};
 
 export type PublicVisionFrame = Omit<NonNullable<VisionPreviewSnapshot["frame"]>, "dataBase64">;
 

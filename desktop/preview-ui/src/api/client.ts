@@ -1,4 +1,10 @@
-import type { CommandApiResult, DebugSnapshot, PreviewSnapshot } from "../../../src/preview/public-types";
+import type {
+  AvatarExpressionPayload,
+  CommandApiResult,
+  DebugSnapshot,
+  PreviewSnapshot,
+  RobotEmotion
+} from "../../../src/preview/public-types";
 
 export type DebugLogEntry = {
   id: number;
@@ -48,6 +54,32 @@ export async function postTracking(payload: unknown): Promise<PreviewSnapshot> {
 
 export async function setRgb(payload: { enabled: boolean; color?: string; brightness?: number }): Promise<CommandApiResult> {
   return postJson<CommandApiResult>("/api/rgb", payload);
+}
+
+export async function setExpression(payload: {
+  emotion: RobotEmotion;
+  durationMs?: number;
+  flash?: boolean;
+  rgbColor?: string;
+  avatarJson?: AvatarExpressionPayload;
+}): Promise<
+  CommandApiResult & {
+    emotion: RobotEmotion;
+    durationMs: number;
+    flash: boolean;
+    rgbColor?: string;
+    avatarJson?: AvatarExpressionPayload;
+  }
+> {
+  return postJson<
+    CommandApiResult & {
+      emotion: RobotEmotion;
+      durationMs: number;
+      flash: boolean;
+      rgbColor?: string;
+      avatarJson?: AvatarExpressionPayload;
+    }
+  >("/api/expression", payload);
 }
 
 export async function setCompletionTts(payload: {

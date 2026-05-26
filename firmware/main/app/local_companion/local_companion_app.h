@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include <services/expression_motion/avatar/avatar/elements/emotion.h>
 #include <system/device_runtime.h>
 #include <lvgl.h>
 #include <mooncake.h>
@@ -61,6 +62,11 @@ private:
     int _idle_motion_modifier_id = -1;
     int _idle_expression_modifier_id = -1;
     int _dance_modifier_id = -1;
+    int _expression_preset_modifier_id = -1;
+    uint32_t _expression_preset_active_until = 0;
+    int _expression_restore_yaw = 0;
+    int _expression_restore_pitch = 0;
+    stackchan::avatar::Emotion _expression_restore_emotion = stackchan::avatar::Emotion::Neutral;
     size_t _head_gesture_connection = 0;
     size_t _local_activity_connection = 0;
     bool _head_pressed = false;
@@ -77,6 +83,8 @@ private:
     void sync_face_tracking();
     void install_base_modifiers();
     void remove_modifier(int& modifier_id);
+    void clear_finished_expression_preset();
+    void finish_expression_preset(bool restore_motion, bool restore_rgb);
     void refresh_idle_activity(uint32_t quiet_ms);
     void sync_idle_modifiers();
     void sync_offline_idle_shutdown();

@@ -323,7 +323,7 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
     // Map emotion string to stackchan::Emotion
     if (strcmp(emotion, "neutral") == 0) {
         avatar.setEmotion(Emotion::Neutral);
-    } else if (strcmp(emotion, "happy") == 0) {
+    } else if (strcmp(emotion, "happy") == 0 || strcmp(emotion, "love") == 0) {
         avatar.setEmotion(Emotion::Happy);
     } else if (strcmp(emotion, "laughing") == 0) {
         avatar.setEmotion(Emotion::Happy);
@@ -352,7 +352,8 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
         auto& motion = GetStackChan().motion();
         motion.pitchServo().moveWithSpeed(0, 80);
 
-    } else if (strcmp(emotion, "doubtful") == 0) {
+    } else if (strcmp(emotion, "doubtful") == 0 || strcmp(emotion, "thinking") == 0 ||
+               strcmp(emotion, "surprised") == 0) {
         avatar.setEmotion(Emotion::Doubt);
     } else {
         ESP_LOGW(TAG, "Unknown emotion: %s, using NEUTRAL", emotion);

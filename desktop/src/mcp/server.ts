@@ -57,7 +57,7 @@ export async function startMcpServer(
       title: "Set StackChan expression",
       description: "Send an emotion and optional avatar/RGB JSON to StackChan.",
       inputSchema: {
-        emotion: z.enum(["neutral", "happy", "sad", "angry", "surprised", "sleepy", "thinking", "love"]),
+        emotion: z.enum(["neutral", "happy", "laughing", "love", "sad", "crying", "angry", "thinking", "surprised", "sleepy", "doubtful"]),
         durationMs: z.number().int().positive().optional(),
         avatarJson: z.record(z.unknown()).optional(),
         rgbJson: z.record(z.unknown()).optional()

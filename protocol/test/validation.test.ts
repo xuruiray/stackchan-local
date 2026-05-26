@@ -131,6 +131,37 @@ describe("protocol validation", () => {
     expect(
       validator.parseMessage({
         type: "robot.command",
+        commandId: "cmd-react",
+        command: {
+          kind: "react",
+          emotion: "doubtful",
+          durationMs: 1200,
+          avatarJson: {
+            type: "bleAvatar",
+            leftEye: { x: 0, y: 0, rotation: 0, weight: 100, size: 0 },
+            rightEye: { x: 0, y: 0, rotation: 0, weight: 100, size: 0 },
+            mouth: { x: 0, y: 0, rotation: 0, weight: 0, size: 0 }
+          }
+        }
+      }).type
+    ).toBe("robot.command");
+
+    for (const emotion of ["love", "thinking", "surprised"] as const) {
+      expect(
+        validator.parseMessage({
+          type: "robot.command",
+          commandId: `cmd-react-${emotion}`,
+          command: {
+            kind: "react",
+            emotion
+          }
+        }).type
+      ).toBe("robot.command");
+    }
+
+    expect(
+      validator.parseMessage({
+        type: "robot.command",
         commandId: "cmd-face",
         command: {
           kind: "trackFace",
