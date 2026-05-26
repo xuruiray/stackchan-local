@@ -24,6 +24,10 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 
 人脸追踪只做位置跟踪，不做身份识别。表情识别相关运行时和 UI 已移除。
 
+## 硬件示例
+
+![StackChan 硬件](assets/stackchan-product.png)
+
 ## UI 示例
 
 ![StackChan Local 硬件控制台](assets/webui-console.jpg)

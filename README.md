@@ -24,6 +24,10 @@ The old `firmware/main/vendor/embedded_runtime` path is no longer part of the pr
 
 Face tracking is position tracking only. It does not perform identity recognition, and expression recognition UI/runtime has been removed.
 
+## Hardware Example
+
+![StackChan hardware](assets/stackchan-product.png)
+
 ## UI Example
 
 ![StackChan Local hardware console](assets/webui-console.jpg)
