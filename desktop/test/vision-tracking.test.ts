@@ -9,7 +9,7 @@ import { createLogger, type DesktopConfig } from "../src/config.js";
 import { DeviceRegistry } from "../src/device/registry.js";
 import { RobotController } from "../src/robot/controller.js";
 import type { CameraFrameInput, FaceDetectionResult, FaceDetector } from "../src/vision/detector.js";
-import { VisionTrackingService, selectTrackingFace } from "../src/vision/tracking.js";
+import { OneEuroFilter, VisionTrackingService, selectTrackingFace } from "../src/vision/tracking.js";
 import { StackChanWebSocketServer } from "../src/ws/server.js";
 
 const baseConfig: DesktopConfig = {
@@ -25,16 +25,16 @@ const baseConfig: DesktopConfig = {
   faceTrackingEnabled: false,
   faceTrackingFps: 4,
   faceTrackingMirrorX: false,
-  faceTrackingSpeed: 620,
-  faceTrackingDeadband: 0.025,
-  faceTrackingYawKp: 48,
+  faceTrackingSpeed: 700,
+  faceTrackingDeadband: 0.018,
+  faceTrackingYawKp: 44,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 10,
-  faceTrackingPitchKp: 36,
+  faceTrackingYawKd: 6,
+  faceTrackingPitchKp: 32,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 8,
-  faceTrackingIntegralLimit: 0.35,
-  faceTrackingOutputLimitDeg: 24,
+  faceTrackingPitchKd: 5,
+  faceTrackingIntegralLimit: 0.25,
+  faceTrackingOutputLimitDeg: 20,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
   faceLandmarkerModel: "/tmp/stackchan-local-face-landmarker.task",
@@ -186,7 +186,8 @@ function sendFrame(
   frameId: string,
   timestamp = new Date().toISOString(),
   width = 320,
-  height = 240
+  height = 240,
+  eventPatch: Record<string, unknown> = {}
 ): void {
   ws.send(
     JSON.stringify({
@@ -200,7 +201,8 @@ function sendFrame(
         mimeType: "image/jpeg",
         width,
         height,
-        dataBase64: "abcd"
+        dataBase64: "abcd",
+        ...eventPatch
       }
     })
   );
@@ -215,6 +217,28 @@ function faceAtCenter(centerX: number, centerY: number, width = 0.24, height = 0
     confidence: 0.9
   };
 }
+
+describe("OneEuroFilter", () => {
+  it("suppresses small stationary jitter", () => {
+    const filter = new OneEuroFilter({ minCutoff: 1.2, beta: 0.045, dCutoff: 1.0 });
+    const inputs = [0.5, 0.506, 0.494, 0.505, 0.495, 0.503, 0.497];
+    const outputs = inputs.map((value, index) => filter.filter(value, index * 66));
+    const inputSpan = Math.max(...inputs.slice(1)) - Math.min(...inputs.slice(1));
+    const outputSpan = Math.max(...outputs.slice(1)) - Math.min(...outputs.slice(1));
+
+    expect(outputSpan).toBeLessThan(inputSpan * 0.7);
+  });
+
+  it("responds quickly to large motion and exposes filtered velocity", () => {
+    const filter = new OneEuroFilter({ minCutoff: 1.2, beta: 0.045, dCutoff: 1.0 });
+    filter.filter(0.5, 0);
+    filter.filter(0.5, 66);
+    const moved = filter.filter(0.8, 132);
+
+    expect(moved).toBeGreaterThan(0.58);
+    expect(filter.velocity()).toBeGreaterThan(0.5);
+  });
+});
 
 describe("VisionTrackingService", () => {
   let server: StackChanWebSocketServer | undefined;
@@ -261,14 +285,14 @@ describe("VisionTrackingService", () => {
     expect(trackFace.detected).toBe(true);
     expect(trackFace.centerX).toBeCloseTo(0.3);
     expect(trackFace.centerY).toBeCloseTo(0.4);
-    expect(trackFace.speed).toBe(620);
+    expect(trackFace.speed).toBe(700);
     expect(trackFace.control).toEqual({
       mode: "pid",
-      deadband: 0.025,
-      yaw: { kp: 48, ki: 0, kd: 10 },
-      pitch: { kp: 36, ki: 0, kd: 8 },
-      integralLimit: 0.35,
-      outputLimitDeg: 24,
+      deadband: 0.018,
+      yaw: { kp: 44, ki: 0, kd: 6 },
+      pitch: { kp: 32, ki: 0, kd: 5 },
+      integralLimit: 0.25,
+      outputLimitDeg: 20,
       servoRange: {
         yawMin: -1280,
         yawMax: 1280,
@@ -309,10 +333,10 @@ describe("VisionTrackingService", () => {
     sendFrame(ws, "frame-2");
     const second = await nextCommand(ws, "trackFace");
     const jump = Math.hypot(Number(second.centerX) - Number(first.centerX), Number(second.centerY) - Number(first.centerY));
-    expect(jump).toBeLessThanOrEqual(0.105);
-    expect(second.centerX).toBeGreaterThan(0.36);
-    expect(second.centerX).toBeLessThan(0.39);
-    expect(second.centerY).toBeLessThan(0.47);
+    expect(jump).toBeLessThanOrEqual(0.32);
+    expect(second.centerX).toBeGreaterThan(0.48);
+    expect(second.centerX).toBeLessThan(0.58);
+    expect(second.centerY).toBeLessThan(0.6);
     ws.close();
   });
 
@@ -339,6 +363,75 @@ describe("VisionTrackingService", () => {
     const second = await nextCommand(ws, "trackFace");
     expect(second.detected).toBe(true);
     expect(second.centerX).toBeGreaterThan(0.5);
+    ws.close();
+  });
+
+  it("predicts the target forward using measured camera latency", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([[faceAtCenter(0.35, 0.5)], [faceAtCenter(0.55, 0.5)]]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector, { commandMaxHz: 20 });
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    await nextCommand(ws, "cameraStream");
+
+    const now = Date.now();
+    sendFrame(ws, "frame-1", new Date(now - 220).toISOString(), 320, 240, {
+      captureTimestamp: new Date(now - 220).toISOString()
+    });
+    const first = await nextCommand(ws, "trackFace");
+    expect(first.detected).toBe(true);
+
+    await delay(130);
+    const secondCapture = Date.now() - 500;
+    sendFrame(ws, "frame-2", new Date(secondCapture).toISOString(), 320, 240, {
+      captureTimestamp: new Date(secondCapture).toISOString()
+    });
+    const second = await nextCommand(ws, "trackFace");
+    const filteredCenter = service.previewSnapshot().target
+      ? service.previewSnapshot().target!.x + service.previewSnapshot().target!.width / 2
+      : Number(second.centerX);
+
+    expect(second.detected).toBe(true);
+    expect(Number(second.centerX)).toBeGreaterThan(filteredCenter);
+    expect(service.status().latency.trackingCompensationMs).toBeCloseTo(160, 0);
+    ws.close();
+  });
+
+  it("resets target filter state when tracking is re-enabled", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([[faceAtCenter(0.35, 0.5)], [faceAtCenter(0.75, 0.5)], [faceAtCenter(0.25, 0.5)]]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector, { commandMaxHz: 20 });
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    await nextCommand(ws, "cameraStream");
+
+    sendFrame(ws, "frame-1");
+    await nextCommand(ws, "trackFace");
+    await delay(130);
+    sendFrame(ws, "frame-2");
+    await nextCommand(ws, "trackFace");
+
+    service.setEnabled(false);
+    await nextCommand(ws, "trackFace");
+    service.setEnabled(true);
+    await delay(130);
+    sendFrame(ws, "frame-3");
+    const afterReset = await nextCommand(ws, "trackFace");
+
+    expect(afterReset.detected).toBe(true);
+    expect(afterReset.centerX).toBeCloseTo(0.25, 2);
     ws.close();
   });
 

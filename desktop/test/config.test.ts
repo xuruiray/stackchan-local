@@ -28,13 +28,14 @@ describe("loadConfig", () => {
     });
 
     expect(config.faceTrackingCameraPreset).toBe("fast");
-    expect(config.faceTrackingSpeed).toBe(620);
-    expect(config.faceTrackingDeadband).toBe(0.025);
-    expect(config.faceTrackingYawKp).toBe(48);
-    expect(config.faceTrackingYawKd).toBe(10);
-    expect(config.faceTrackingPitchKp).toBe(36);
-    expect(config.faceTrackingPitchKd).toBe(8);
-    expect(config.faceTrackingOutputLimitDeg).toBe(24);
+    expect(config.faceTrackingSpeed).toBe(700);
+    expect(config.faceTrackingDeadband).toBe(0.018);
+    expect(config.faceTrackingYawKp).toBe(44);
+    expect(config.faceTrackingYawKd).toBe(6);
+    expect(config.faceTrackingPitchKp).toBe(32);
+    expect(config.faceTrackingPitchKd).toBe(5);
+    expect(config.faceTrackingIntegralLimit).toBe(0.25);
+    expect(config.faceTrackingOutputLimitDeg).toBe(20);
   });
 
   it("loads local .env values without overriding explicit environment variables", () => {

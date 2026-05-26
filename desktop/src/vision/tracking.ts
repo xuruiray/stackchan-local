@@ -98,6 +98,7 @@ export interface VisionLatencyStatus {
   deviceToDaemonMs?: number;
   captureToDaemonMs?: number;
   detectorEndToEndMs?: number;
+  trackingCompensationMs?: number;
 }
 
 export interface VisionMediaCreditStatus {
@@ -190,16 +191,17 @@ const RAW_PREVIEW_CAMERA: CameraStreamSettings = {
 const TRACK_TARGET_CENTER_EPSILON = 0.012;
 const TRACK_TARGET_SIZE_EPSILON = 0.025;
 const TRACK_TARGET_REFRESH_MS = 800;
-const TRACK_TARGET_NOISE_FLOOR = 0.006;
-const TRACK_TARGET_SMOOTH_ALPHA_MIN = 0.28;
-const TRACK_TARGET_SMOOTH_ALPHA_MAX = 0.72;
-const TRACK_TARGET_FAST_RESPONSE_DISTANCE = 0.18;
 const TRACK_TARGET_SIZE_ALPHA = 0.35;
-const TRACK_TARGET_MAX_CENTER_STEP_MIN = 0.04;
-const TRACK_TARGET_MAX_CENTER_STEP_MAX = 0.095;
 const TRACK_ACTIVE_ERROR_MIN = 0.012;
 const TRACK_ACTIVE_ERROR_DEADBAND_RATIO = 0.75;
 const TRACK_TARGET_STICKINESS_WEIGHT = 0.18;
+const TRACK_TARGET_FILTER_CONFIG: OneEuroFilterOptions = {
+  minCutoff: 1.2,
+  beta: 0.045,
+  dCutoff: 1.0
+};
+const TRACK_LATENCY_COMPENSATION_RATIO = 0.7;
+const TRACK_LATENCY_COMPENSATION_MAX_MS = 160;
 
 const OFFICIAL_SERVO_RANGE: FaceTrackingControl["servoRange"] = {
   yawMin: -1280,
@@ -207,6 +209,63 @@ const OFFICIAL_SERVO_RANGE: FaceTrackingControl["servoRange"] = {
   pitchMin: 0,
   pitchMax: 900
 };
+
+export interface OneEuroFilterOptions {
+  minCutoff: number;
+  beta: number;
+  dCutoff: number;
+}
+
+export class OneEuroFilter {
+  private lastTimestampMs?: number;
+  private lastRaw?: number;
+  private lastValue?: number;
+  private lastDerivative?: number;
+
+  constructor(private readonly options: OneEuroFilterOptions) {}
+
+  filter(value: number, timestampMs: number): number {
+    if (
+      this.lastTimestampMs === undefined ||
+      this.lastRaw === undefined ||
+      this.lastValue === undefined ||
+      this.lastDerivative === undefined
+    ) {
+      this.lastTimestampMs = timestampMs;
+      this.lastRaw = value;
+      this.lastValue = value;
+      this.lastDerivative = 0;
+      return value;
+    }
+
+    const dt = Math.max(0.001, (timestampMs - this.lastTimestampMs) / 1000);
+    const derivative = (value - this.lastRaw) / dt;
+    const filteredDerivative = exponentialSmooth(
+      derivative,
+      this.lastDerivative,
+      smoothingAlpha(this.options.dCutoff, dt)
+    );
+    const cutoff = this.options.minCutoff + this.options.beta * Math.abs(filteredDerivative);
+    const filteredValue = exponentialSmooth(value, this.lastValue, smoothingAlpha(cutoff, dt));
+
+    this.lastTimestampMs = timestampMs;
+    this.lastRaw = value;
+    this.lastValue = filteredValue;
+    this.lastDerivative = filteredDerivative;
+    return filteredValue;
+  }
+
+  velocity(): number {
+    return this.lastDerivative ?? 0;
+  }
+
+  reset(): void {
+    this.lastTimestampMs = undefined;
+    this.lastRaw = undefined;
+    this.lastValue = undefined;
+    this.lastDerivative = undefined;
+  }
+}
 
 export class VisionTrackingService {
   private readonly detector: FaceDetector;
@@ -225,6 +284,9 @@ export class VisionTrackingService {
   private lastTarget?: NormalizedFaceBox;
   private smoothedTarget?: NormalizedFaceBox;
   private lastSentTrackTarget?: NormalizedFaceBox;
+  private readonly targetFilterX = new OneEuroFilter(TRACK_TARGET_FILTER_CONFIG);
+  private readonly targetFilterY = new OneEuroFilter(TRACK_TARGET_FILTER_CONFIG);
+  private lastTrackingCompensationMs?: number;
   private lastFrame?: VisionFrameSnapshot;
   private lastFaces: NormalizedFaceBox[] = [];
   private lastError?: string;
@@ -310,9 +372,7 @@ export class VisionTrackingService {
     this.enabled = enabled;
     this.lostCommandSent = false;
     this.lastError = undefined;
-    this.lastTarget = undefined;
-    this.smoothedTarget = undefined;
-    this.lastSentTrackTarget = undefined;
+    this.resetTrackingTargetState();
     if (enabled) {
       this.lastDetectionInputAt = 0;
       this.logger.info("face tracking enabled", {
@@ -349,9 +409,7 @@ export class VisionTrackingService {
       this.lastDetectionAt = undefined;
       this.lastDetectionInputAt = 0;
       this.lastFaces = [];
-      this.lastTarget = undefined;
-      this.smoothedTarget = undefined;
-      this.lastSentTrackTarget = undefined;
+      this.resetTrackingTargetState();
     }
     if (
       this.enabled &&
@@ -827,8 +885,11 @@ export class VisionTrackingService {
     this.lastFaces = result.faces.map(positionOnlyFace);
     const selected = selectTrackingFace(this.lastFaces, this.smoothedTarget ?? this.lastTarget);
     if (selected) {
-      const stableTarget = this.stabilizeTrackingTarget(selected);
-      const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(stableTarget) : stableTarget;
+      const frame = this.lastFrame?.frameId === result.frameId ? this.lastFrame : undefined;
+      const measurementTimestampMs = trackingMeasurementTimestampMs(frame);
+      const stableTarget = this.stabilizeTrackingTarget(selected, measurementTimestampMs);
+      const compensatedTarget = this.compensateTrackingLatency(stableTarget, frame);
+      const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(compensatedTarget) : compensatedTarget;
       const centerX = trackingTarget.x + trackingTarget.width / 2;
       const centerY = trackingTarget.y + trackingTarget.height / 2;
       this.lastFaceAt = new Date();
@@ -856,7 +917,7 @@ export class VisionTrackingService {
 
     if (Date.now() - this.lastFaceAt.getTime() >= this.options.lostTimeoutMs) {
       this.lostCommandSent = true;
-      this.smoothedTarget = undefined;
+      this.resetTrackingTargetState();
       this.sendTrackCommand({
         detected: false,
         reason: "face_lost",
@@ -866,28 +927,22 @@ export class VisionTrackingService {
     }
   }
 
-  private stabilizeTrackingTarget(rawTarget: NormalizedFaceBox): NormalizedFaceBox {
+  private stabilizeTrackingTarget(rawTarget: NormalizedFaceBox, timestampMs: number): NormalizedFaceBox {
     const previous = this.smoothedTarget;
     if (!previous) {
-      this.smoothedTarget = clampFace(rawTarget);
+      const clamped = clampFace(rawTarget);
+      const center = faceCenter(clamped);
+      this.targetFilterX.filter(center.x, timestampMs);
+      this.targetFilterY.filter(center.y, timestampMs);
+      this.smoothedTarget = clamped;
       return this.smoothedTarget;
     }
 
-    const previousCenter = faceCenter(previous);
     const rawCenter = faceCenter(rawTarget);
-    const centerDistance = Math.hypot(rawCenter.x - previousCenter.x, rawCenter.y - previousCenter.y);
-    const response = clampNumber(
-      (centerDistance - TRACK_TARGET_NOISE_FLOOR) / (TRACK_TARGET_FAST_RESPONSE_DISTANCE - TRACK_TARGET_NOISE_FLOOR),
-      0,
-      1
-    );
-    const centerAlpha = lerp(TRACK_TARGET_SMOOTH_ALPHA_MIN, TRACK_TARGET_SMOOTH_ALPHA_MAX, response);
-    const maxCenterStep = lerp(TRACK_TARGET_MAX_CENTER_STEP_MIN, TRACK_TARGET_MAX_CENTER_STEP_MAX, response);
-    const lowPassCenter = {
-      x: centerDistance <= TRACK_TARGET_NOISE_FLOOR ? previousCenter.x : previousCenter.x + (rawCenter.x - previousCenter.x) * centerAlpha,
-      y: centerDistance <= TRACK_TARGET_NOISE_FLOOR ? previousCenter.y : previousCenter.y + (rawCenter.y - previousCenter.y) * centerAlpha
+    const center = {
+      x: this.targetFilterX.filter(rawCenter.x, timestampMs),
+      y: this.targetFilterY.filter(rawCenter.y, timestampMs)
     };
-    const center = limitCenterStep(previousCenter, lowPassCenter, maxCenterStep);
     const width = clampNumber(previous.width + (rawTarget.width - previous.width) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
     const height = clampNumber(previous.height + (rawTarget.height - previous.height) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
     const stableTarget: NormalizedFaceBox = {
@@ -899,6 +954,21 @@ export class VisionTrackingService {
     };
     this.smoothedTarget = stableTarget;
     return stableTarget;
+  }
+
+  private compensateTrackingLatency(target: NormalizedFaceBox, frame: VisionFrameSnapshot | undefined): NormalizedFaceBox {
+    const center = faceCenter(target);
+    const latencyMs = trackingLatencyMs(frame);
+    const compensationMs = clampNumber(latencyMs * TRACK_LATENCY_COMPENSATION_RATIO, 0, TRACK_LATENCY_COMPENSATION_MAX_MS);
+    this.lastTrackingCompensationMs = compensationMs;
+    if (compensationMs <= 0) {
+      return target;
+    }
+
+    return faceWithCenter(target, {
+      x: clampNumber(center.x + this.targetFilterX.velocity() * (compensationMs / 1000), 0, 1),
+      y: clampNumber(center.y + this.targetFilterY.velocity() * (compensationMs / 1000), 0, 1)
+    });
   }
 
   private sendTrackCommand(command: Parameters<RobotController["trackFace"]>[0]): void {
@@ -958,6 +1028,15 @@ export class VisionTrackingService {
     return timestampMs;
   }
 
+  private resetTrackingTargetState(): void {
+    this.lastTarget = undefined;
+    this.smoothedTarget = undefined;
+    this.lastSentTrackTarget = undefined;
+    this.lastTrackingCompensationMs = undefined;
+    this.targetFilterX.reset();
+    this.targetFilterY.reset();
+  }
+
   private emitPreviewUpdate(): void {
     const snapshot = this.previewSnapshot();
     for (const listener of this.previewListeners) {
@@ -968,13 +1047,16 @@ export class VisionTrackingService {
   private latencyStatus(): VisionLatencyStatus {
     const frame = this.lastFrame;
     if (!frame) {
-      return {};
+      return {
+        trackingCompensationMs: this.lastTrackingCompensationMs
+      };
     }
     return {
       frameAgeMs: this.lastFrameAt ? Date.now() - this.lastFrameAt.getTime() : undefined,
       deviceToDaemonMs: deltaMs(frame.sentAt, frame.receivedAt),
       captureToDaemonMs: deltaMs(frame.captureTimestamp, frame.receivedAt),
-      detectorEndToEndMs: deltaMs(frame.captureTimestamp, frame.trace?.detectorFinishedAt)
+      detectorEndToEndMs: deltaMs(frame.captureTimestamp, frame.trace?.detectorFinishedAt),
+      trackingCompensationMs: this.lastTrackingCompensationMs
     };
   }
 }
@@ -1030,29 +1112,45 @@ function faceCenterError(face: NormalizedFaceBox): number {
   return Math.hypot(center.x - 0.5, center.y - 0.5);
 }
 
-function lerp(start: number, end: number, amount: number): number {
-  return start + (end - start) * amount;
+function faceWithCenter(face: NormalizedFaceBox, center: { x: number; y: number }): NormalizedFaceBox {
+  const width = clampNumber(face.width, 0.01, 1);
+  const height = clampNumber(face.height, 0.01, 1);
+  return {
+    ...face,
+    width,
+    height,
+    x: clampNumber(center.x - width / 2, 0, 1 - width),
+    y: clampNumber(center.y - height / 2, 0, 1 - height)
+  };
 }
 
-function limitCenterStep(
-  previous: { x: number; y: number },
-  next: { x: number; y: number },
-  maxStep: number
-): { x: number; y: number } {
-  const deltaX = next.x - previous.x;
-  const deltaY = next.y - previous.y;
-  const distance = Math.hypot(deltaX, deltaY);
-  if (distance <= maxStep || distance === 0) {
-    return {
-      x: clampNumber(next.x, 0, 1),
-      y: clampNumber(next.y, 0, 1)
-    };
+function trackingMeasurementTimestampMs(frame: VisionFrameSnapshot | undefined): number {
+  return parseTimestampMs(frame?.captureTimestamp ?? frame?.timestamp ?? frame?.receivedAt) ?? Date.now();
+}
+
+function trackingLatencyMs(frame: VisionFrameSnapshot | undefined): number {
+  const timestampMs = parseTimestampMs(frame?.captureTimestamp ?? frame?.receivedAt);
+  if (timestampMs === undefined) {
+    return 0;
   }
-  const scale = maxStep / distance;
-  return {
-    x: clampNumber(previous.x + deltaX * scale, 0, 1),
-    y: clampNumber(previous.y + deltaY * scale, 0, 1)
-  };
+  return Math.max(0, Date.now() - timestampMs);
+}
+
+function parseTimestampMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function exponentialSmooth(value: number, previous: number, alpha: number): number {
+  return alpha * value + (1 - alpha) * previous;
+}
+
+function smoothingAlpha(cutoff: number, dtSeconds: number): number {
+  const tau = 1 / (2 * Math.PI * Math.max(0.0001, cutoff));
+  return 1 / (1 + tau / Math.max(0.001, dtSeconds));
 }
 
 function clampFace(face: NormalizedFaceBox): NormalizedFaceBox {
