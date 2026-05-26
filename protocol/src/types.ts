@@ -250,8 +250,8 @@ export type SetRgbCommand = {
 
 export type TelemetryConfigCommand = {
   kind: "telemetryConfig";
-  sensorSnapshotHz?: 0 | 0.5 | 1;
-  imuHz?: 0 | 1 | 2 | 4;
+  sensorSnapshotHz?: 0 | 0.5 | 1 | 2;
+  imuHz?: 0 | 1 | 2 | 4 | 10;
   includeI2cScan?: boolean;
   reason?: string;
 };
@@ -446,6 +446,12 @@ export type RobotEvent =
           quality?: number;
           transport?: "jsonBase64" | "binary";
           adaptiveLevel?: number;
+          lastCaptureMs?: number;
+          lastEncodeMs?: number;
+          lastSendMs?: number;
+          lastTotalMs?: number;
+          lastFrameIntervalMs?: number;
+          lastJpegBytes?: number;
           fallbackReason?: string;
           reason?: string;
         };

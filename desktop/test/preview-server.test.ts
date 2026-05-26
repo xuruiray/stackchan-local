@@ -17,7 +17,7 @@ class FakeVisionTracking {
       mirrorX: false,
       detectorAvailable: true,
       control: {
-        speed: 760,
+        speed: 420,
         camera: {
           preset: "fast",
           width: 320,
@@ -32,11 +32,11 @@ class FakeVisionTracking {
         },
         control: {
           mode: "pid",
-          deadband: 0.018,
-          yaw: { kp: 78, ki: 0, kd: 10 },
-          pitch: { kp: 54, ki: 0, kd: 8 },
-          integralLimit: 0.22,
-          outputLimitDeg: 32,
+          deadband: 0.045,
+          yaw: { kp: 42, ki: 0, kd: 8 },
+          pitch: { kp: 30, ki: 0, kd: 6 },
+          integralLimit: 0.35,
+          outputLimitDeg: 20,
           servoRange: {
             yawMin: -1280,
             yawMax: 1280,
@@ -45,20 +45,45 @@ class FakeVisionTracking {
           }
         }
       },
+      sourceCamera: {
+        enabled: true,
+        owner: "faceTracking",
+        fps: 10,
+        quality: 18,
+        width: 320,
+        height: 240
+      },
+      rawPreview: {
+        enabled: false,
+        camera: {
+          preset: "fast",
+          width: 320,
+          height: 240,
+          fps: 10,
+          quality: 14
+        }
+      },
+      adaptive: {
+        level: 0,
+        active: false,
+        fps: 10,
+        quality: 18,
+        dropRate: 0
+      },
       framesReceived: 1,
       framesDropped: 0,
       detectorLatencyMs: 18,
-      lastExpression: {
-        emotion: "happy",
-        smile: 0.61,
-        leftEyeOpen: 0.72,
-        rightEyeOpen: 0.7,
-        jawOpen: 0.08,
-        mouthFunnel: 0.03,
-        topBlendshapes: [{ name: "mouthSmileLeft", score: 0.62 }]
+      latency: {
+        frameAgeMs: 20,
+        deviceToDaemonMs: 10,
+        captureToDaemonMs: 20,
+        detectorEndToEndMs: 38
       },
-      lastExpressionAt: new Date("2026-05-18T12:00:00.000Z").toISOString(),
-      lastExpressionCommandAt: new Date("2026-05-18T12:00:00.000Z").toISOString(),
+      mediaCredit: {
+        enabled: false,
+        grantedFrames: 0,
+        outstandingFrames: 0
+      },
       lastFrameAt: new Date("2026-05-18T12:00:00.000Z").toISOString()
     },
     faces: [{ x: 0.2, y: 0.25, width: 0.3, height: 0.35, confidence: 1 }],
@@ -69,7 +94,13 @@ class FakeVisionTracking {
       width: 2,
       height: 2,
       dataBase64: "/9j/4AAQSkZJRgABAQAAAQABAAD/2w==",
-      timestamp: new Date("2026-05-18T12:00:00.000Z").toISOString()
+      timestamp: new Date("2026-05-18T12:00:00.000Z").toISOString(),
+      receivedAt: new Date("2026-05-18T12:00:00.020Z").toISOString(),
+      captureTimestamp: new Date("2026-05-18T12:00:00.000Z").toISOString(),
+      sentAt: new Date("2026-05-18T12:00:00.010Z").toISOString(),
+      trace: {
+        detectorFinishedAt: new Date("2026-05-18T12:00:00.038Z").toISOString()
+      }
     }
   };
 
@@ -91,7 +122,12 @@ class FakeVisionTracking {
     return this.snapshot.status;
   }
 
-  setControl(patch: { speed?: number; cameraPreset?: "fast" | "accurate" | "debug"; control?: { deadband?: number } }): VisionPreviewSnapshot["status"] {
+  setControl(patch: {
+    speed?: number;
+    cameraPreset?: "fast" | "accurate" | "debug";
+    camera?: Partial<{ width: number; height: number; fps: number; quality: number }>;
+    control?: { deadband?: number };
+  }): VisionPreviewSnapshot["status"] {
     if (typeof patch.speed === "number") {
       this.snapshot.status.control.speed = patch.speed;
     }
@@ -104,6 +140,15 @@ class FakeVisionTracking {
         quality: 28
       };
       this.snapshot.status.fps = 6;
+    }
+    if (patch.camera) {
+      this.snapshot.status.control.camera = {
+        ...this.snapshot.status.control.camera,
+        ...patch.camera,
+        width: 320,
+        height: 240
+      };
+      this.snapshot.status.fps = this.snapshot.status.control.camera.fps;
     }
     if (typeof patch.control?.deadband === "number") {
       this.snapshot.status.control.control.deadband = patch.control.deadband;
@@ -206,6 +251,15 @@ describe("PreviewServer", () => {
     });
     const announcements: Array<{ id: string; reason: string; taskSummary?: string }> = [];
     const rgbCommands: Array<{ enabled: boolean; color?: string; brightness?: number }> = [];
+    const moveCommands: Array<{ yaw: number; pitch: number; speed?: number }> = [];
+    const cameraStreamCommands: Array<{ enabled: boolean; fps?: number; width?: number; height?: number; quality?: number; format?: "jpeg" }> = [];
+    const telemetryCommands: Array<{
+      sensorSnapshotHz?: 0 | 0.5 | 1 | 2;
+      imuHz?: 0 | 1 | 2 | 4 | 10;
+      includeI2cScan?: boolean;
+      reason?: string;
+    }> = [];
+    let captureImageCount = 0;
     let ttsEnabled = true;
     let lightEnabled = true;
     let ttsVolume = 80;
@@ -219,6 +273,42 @@ describe("PreviewServer", () => {
             sent: true,
             deviceId: "stackchan-test",
             command: { kind: "setRgb", ...options },
+            ack: { received: true, status: "accepted" }
+          };
+        },
+        moveHead: async (options) => {
+          moveCommands.push(options);
+          return {
+            sent: true,
+            deviceId: "stackchan-test",
+            command: { kind: "moveHead", ...options },
+            ack: { received: true, status: "accepted" }
+          };
+        },
+        cameraStream: async (options) => {
+          cameraStreamCommands.push(options);
+          return {
+            sent: true,
+            deviceId: "stackchan-test",
+            command: { kind: "cameraStream", ...options },
+            ack: { received: true, status: "accepted" }
+          };
+        },
+        captureImage: async () => {
+          captureImageCount += 1;
+          return {
+            sent: true,
+            deviceId: "stackchan-test",
+            command: { kind: "captureImage", requestId: "capture-test", format: "jpeg" },
+            ack: { received: true, status: "accepted" }
+          };
+        },
+        telemetryConfig: async (options) => {
+          telemetryCommands.push(options);
+          return {
+            sent: true,
+            deviceId: "stackchan-test",
+            command: { kind: "telemetryConfig", ...options },
             ack: { received: true, status: "accepted" }
           };
         }
@@ -246,23 +336,18 @@ describe("PreviewServer", () => {
     const baseUrl = `http://127.0.0.1:${port}`;
 
     const html = await fetch(`${baseUrl}/`).then((response) => response.text());
-    expect(html).toContain("StackChan Vision");
-    expect(html).toContain("Hardware");
-    expect(html).toContain("Yaw P");
-    expect(html).toContain("Official Range");
-    expect(html).toContain("Camera Presets");
-    expect(html).toContain("Detector Sensitivity");
-    expect(html).toContain("Expression Sync");
-    expect(html).toContain("Responsive PID");
-    expect(html).toContain("Accurate");
-    expect(html).toContain("Detector latency");
-    expect(html).toContain("TTS Vol");
-    expect(html).toContain("RGB color");
-    expect(html).toContain("Mic level");
-    expect(html).toContain("st25r3916-probe");
+    expect(html).toContain("StackChan Hardware Console");
+    expect(html).toContain("/assets/");
+    const assetPath = html.match(/src="([^"]+\.js)"/)?.[1];
+    expect(assetPath).toBeTruthy();
+    if (assetPath) {
+      const asset = await fetch(`${baseUrl}${assetPath}`);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get("content-type")).toContain("text/javascript");
+    }
 
     const ipv6Html = await fetch(`http://[::1]:${port}/`).then((response) => response.text());
-    expect(ipv6Html).toContain("StackChan Vision");
+    expect(ipv6Html).toContain("StackChan Hardware Console");
 
     const status = (await fetch(`${baseUrl}/status`).then((response) => response.json())) as {
       frame: { frameId: string };
@@ -291,11 +376,28 @@ describe("PreviewServer", () => {
     const frame = await fetch(`${baseUrl}/frame.jpg`);
     expect(frame.status).toBe(200);
     expect(frame.headers.get("content-type")).toBe("image/jpeg");
+    expect(frame.headers.get("x-frame-stream")).toBe("raw");
+    expect(frame.headers.get("x-frame-received-at")).toBe("2026-05-18T12:00:00.020Z");
+    expect(frame.headers.get("x-frame-sent-at")).toBe("2026-05-18T12:00:00.010Z");
+    expect(frame.headers.get("x-frame-capture-timestamp")).toBe("2026-05-18T12:00:00.000Z");
+
+    const processedFrame = await fetch(`${baseUrl}/processed-frame.jpg`);
+    expect(processedFrame.status).toBe(200);
+    expect(processedFrame.headers.get("content-type")).toBe("image/jpeg");
+    expect(processedFrame.headers.get("x-frame-stream")).toBe("processed");
+    expect(processedFrame.headers.get("x-detector-finished-at")).toBe("2026-05-18T12:00:00.038Z");
 
     const stream = await fetch(`${baseUrl}/stream.mjpg`);
     expect(stream.status).toBe(200);
     expect(stream.headers.get("content-type")).toContain("multipart/x-mixed-replace");
+    expect(stream.headers.get("x-frame-stream")).toBe("raw");
     await stream.body?.cancel();
+
+    const processedStream = await fetch(`${baseUrl}/processed-stream.mjpg`);
+    expect(processedStream.status).toBe(200);
+    expect(processedStream.headers.get("content-type")).toContain("multipart/x-mixed-replace");
+    expect(processedStream.headers.get("x-frame-stream")).toBe("processed");
+    await processedStream.body?.cancel();
 
     const toggled = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",
@@ -336,6 +438,36 @@ describe("PreviewServer", () => {
     expect(rgb.color).toBe("#6CB6FF");
     expect(rgbCommands).toEqual([{ enabled: true, color: "#6CB6FF", brightness: undefined }]);
 
+    const moved = (await fetch(`${baseUrl}/api/hardware/move-head`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ yaw: 12, pitch: 345, speed: 420 })
+    }).then((response) => response.json())) as { ok: boolean };
+    expect(moved.ok).toBe(true);
+    expect(moveCommands).toEqual([{ yaw: 12, pitch: 345, speed: 420 }]);
+
+    const cameraStream = (await fetch(`${baseUrl}/api/hardware/camera-stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, fps: 10, width: 320, height: 240, quality: 18 })
+    }).then((response) => response.json())) as { ok: boolean };
+    expect(cameraStream.ok).toBe(true);
+    expect(cameraStreamCommands).toEqual([{ enabled: true, fps: 10, width: 320, height: 240, quality: 18, format: "jpeg" }]);
+
+    const captured = (await fetch(`${baseUrl}/api/hardware/capture-image`, {
+      method: "POST"
+    }).then((response) => response.json())) as { ok: boolean };
+    expect(captured.ok).toBe(true);
+    expect(captureImageCount).toBe(1);
+
+    const telemetry = (await fetch(`${baseUrl}/api/hardware/telemetry`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sensorSnapshotHz: 1, imuHz: 4, includeI2cScan: true, reason: "test" })
+    }).then((response) => response.json())) as { ok: boolean };
+    expect(telemetry.ok).toBe(true);
+    expect(telemetryCommands).toEqual([{ sensorSnapshotHz: 1, imuHz: 4, includeI2cScan: true, reason: "test" }]);
+
     const tuned = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -356,6 +488,19 @@ describe("PreviewServer", () => {
       width: 320,
       height: 240,
       fps: 6,
+      quality: 28
+    });
+
+    const customCamera = (await fetch(`${baseUrl}/api/tracking`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ control: { camera: { width: 640, height: 480, fps: 15 } } })
+    }).then((response) => response.json())) as { status: { control: { camera: { width: number; height: number; fps: number; quality: number } } } };
+
+    expect(customCamera.status.control.camera).toMatchObject({
+      width: 320,
+      height: 240,
+      fps: 15,
       quality: 28
     });
   });

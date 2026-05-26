@@ -41,7 +41,7 @@ public:
 
     virtual void SetExplainUrl(const std::string& url, const std::string& token);
     virtual bool Capture() override;
-    bool StreamCaptures();
+    bool StreamCaptures(bool fresh_frame = false);
     bool SetFrameSize(int width, int height);
 
     // 翻转控制函数

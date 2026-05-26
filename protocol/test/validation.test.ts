@@ -566,6 +566,12 @@ describe("protocol validation", () => {
             quality: 30,
             transport: "binary",
             adaptiveLevel: 1,
+            lastCaptureMs: 91,
+            lastEncodeMs: 11,
+            lastSendMs: 3,
+            lastTotalMs: 106,
+            lastFrameIntervalMs: 112,
+            lastJpegBytes: 3142,
             fallbackReason: "runtime_resolution_change_not_supported"
           },
           rgb: {

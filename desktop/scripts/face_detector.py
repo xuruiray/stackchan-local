@@ -2,7 +2,6 @@
 import base64
 from io import BytesIO
 import json
-import math
 import os
 from pathlib import Path
 import sys
@@ -49,8 +48,8 @@ def create_landmarker():
         min_face_detection_confidence=clamp(MIN_DETECTION_CONFIDENCE, 0.0, 1.0),
         min_face_presence_confidence=clamp(MIN_PRESENCE_CONFIDENCE, 0.0, 1.0),
         min_tracking_confidence=clamp(MIN_TRACKING_CONFIDENCE, 0.0, 1.0),
-        output_face_blendshapes=True,
-        output_facial_transformation_matrixes=True,
+        output_face_blendshapes=False,
+        output_facial_transformation_matrixes=False,
     )
     return vision.FaceLandmarker.create_from_options(options)
 
@@ -60,32 +59,6 @@ def landmarker():
     if LANDMARKER is None:
         LANDMARKER = create_landmarker()
     return LANDMARKER
-
-
-def normalized_point(landmark):
-    return {
-        "x": clamp(float(landmark.x), 0.0, 1.0),
-        "y": clamp(float(landmark.y), 0.0, 1.0),
-        "z": clamp(float(landmark.z), -1.0, 1.0),
-    }
-
-
-def averaged_point(landmarks, indices):
-    valid = [index for index in indices if index < len(landmarks)]
-    if not valid:
-        return None
-    count = len(valid)
-    return {
-        "x": clamp(sum(float(landmarks[index].x) for index in valid) / count, 0.0, 1.0),
-        "y": clamp(sum(float(landmarks[index].y) for index in valid) / count, 0.0, 1.0),
-        "z": clamp(sum(float(landmarks[index].z) for index in valid) / count, -1.0, 1.0),
-    }
-
-
-def landmark_or_none(landmarks, index):
-    if index >= len(landmarks):
-        return None
-    return normalized_point(landmarks[index])
 
 
 def normalized_bbox(landmarks):
@@ -107,60 +80,6 @@ def normalized_bbox(landmarks):
     }
 
 
-def blendshape_map(categories):
-    result = {}
-    for category in categories or []:
-        name = getattr(category, "category_name", "") or getattr(category, "display_name", "")
-        score = getattr(category, "score", None)
-        if not name or score is None:
-            continue
-        result[name] = clamp(float(score), 0.0, 1.0)
-    return result
-
-
-def expression_from_blendshapes(blendshapes):
-    left_blink = blendshapes.get("eyeBlinkLeft", 0.0)
-    right_blink = blendshapes.get("eyeBlinkRight", 0.0)
-    smile_values = [
-        blendshapes.get("mouthSmileLeft"),
-        blendshapes.get("mouthSmileRight"),
-    ]
-    smile_values = [value for value in smile_values if value is not None]
-    expression = {
-        "leftEyeOpen": clamp(1.0 - left_blink, 0.0, 1.0),
-        "rightEyeOpen": clamp(1.0 - right_blink, 0.0, 1.0),
-        "blendshapes": blendshapes,
-    }
-    if smile_values:
-        expression["smile"] = clamp(sum(smile_values) / len(smile_values), 0.0, 1.0)
-    return expression
-
-
-def flatten_matrix(matrix):
-    if matrix is None:
-        return None
-    values = np.asarray(matrix, dtype=float).reshape(-1)
-    if values.size != 16:
-        return None
-    return [float(value) for value in values]
-
-
-def pose_from_matrix(matrix):
-    values = np.asarray(matrix, dtype=float)
-    if values.size != 16:
-        return None
-    transform = values.reshape(4, 4)
-    rotation = transform[:3, :3]
-    yaw = math.degrees(math.atan2(rotation[0, 2], rotation[2, 2]))
-    pitch = math.degrees(math.atan2(-rotation[1, 2], math.sqrt(rotation[1, 0] ** 2 + rotation[1, 1] ** 2)))
-    roll = math.degrees(math.atan2(rotation[1, 0], rotation[1, 1]))
-    return {
-        "yawDeg": clamp(float(yaw), -180.0, 180.0),
-        "pitchDeg": clamp(float(pitch), -180.0, 180.0),
-        "rollDeg": clamp(float(roll), -180.0, 180.0),
-    }
-
-
 def decode_jpeg(data_base64):
     raw = base64.b64decode(data_base64)
     image = Image.open(BytesIO(raw)).convert("RGB")
@@ -178,38 +97,16 @@ def detect_faces(message):
     result = landmarker().detect_for_video(mp_image, timestamp_ms)
 
     face_landmarks = getattr(result, "face_landmarks", None) or []
-    face_blendshapes = getattr(result, "face_blendshapes", None) or []
-    transform_matrices = getattr(result, "facial_transformation_matrixes", None) or []
-
     faces = []
     for index, landmarks in enumerate(face_landmarks):
         face = normalized_bbox(landmarks)
-        blendshapes = blendshape_map(face_blendshapes[index] if index < len(face_blendshapes) else [])
-        matrix = transform_matrices[index] if index < len(transform_matrices) else None
         face.update(
             {
                 "confidence": 1.0,
                 "trackingId": f"face-{index}",
                 "detector": "mediapipe_tasks_face_landmarker",
-                "landmarks": {
-                    "all": [normalized_point(landmark) for landmark in landmarks],
-                    "nose": landmark_or_none(landmarks, 1),
-                    "leftEye": averaged_point(landmarks, [33, 133]),
-                    "rightEye": averaged_point(landmarks, [263, 362]),
-                    "mouthLeft": landmark_or_none(landmarks, 61),
-                    "mouthRight": landmark_or_none(landmarks, 291),
-                    "mouthCenter": averaged_point(landmarks, [13, 14]),
-                    "chin": landmark_or_none(landmarks, 152),
-                },
-                "expression": expression_from_blendshapes(blendshapes),
             }
         )
-        transform_matrix = flatten_matrix(matrix)
-        if transform_matrix:
-            face["transformMatrix"] = transform_matrix
-        pose = pose_from_matrix(matrix) if matrix is not None else None
-        if pose:
-            face["pose"] = pose
         faces.append(face)
 
     return {"frameId": frame_id, "faces": faces}

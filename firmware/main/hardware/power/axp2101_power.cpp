@@ -49,32 +49,43 @@ StackChanPmic::StackChanPmic(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : Ax
         ESP_LOGI(kTag, "set charge current success");
     }
 
-    SetBrightness(0);
+    (void)SetBrightness(0);
 }
 
-void StackChanPmic::SetBrightness(uint8_t brightness)
+bool StackChanPmic::SetBrightness(uint8_t brightness)
 {
     if (brightness == 0) {
-        uint8_t val = ReadReg(0x90);
-        WriteReg(0x90, val & 0x7F);
-        return;
+        uint8_t val = 0;
+        if (TryReadReg(0x90, &val) != ESP_OK) {
+            return false;
+        }
+        return TryWriteReg(0x90, val & 0x7F) == ESP_OK;
     }
 
     if (brightness > 100) {
         brightness = 100;
     }
     uint8_t reg_val = 20 + ((uint16_t)brightness * 8 / 100);
-    WriteReg(0x99, reg_val);
-
-    uint8_t val = ReadReg(0x90);
-    if (!(val & 0x80)) {
-        WriteReg(0x90, val | 0x80);
+    if (TryWriteReg(0x99, reg_val) != ESP_OK) {
+        return false;
     }
+
+    uint8_t val = 0;
+    if (TryReadReg(0x90, &val) != ESP_OK) {
+        return false;
+    }
+    if (!(val & 0x80)) {
+        return TryWriteReg(0x90, val | 0x80) == ESP_OK;
+    }
+    return true;
 }
 
 bool StackChanPmic::IsExternalPowerConnected()
 {
-    const uint8_t power_status      = ReadReg(0x01);
+    uint8_t power_status = 0;
+    if (TryReadReg(0x01, &power_status) != ESP_OK) {
+        return true;
+    }
     const uint8_t current_direction = (power_status & 0b01100000) >> 5;
     const bool is_charging_done     = (power_status & 0b00000111) == 0b00000100;
     return current_direction != 2 || is_charging_done;
@@ -101,8 +112,13 @@ StackChanBacklight::StackChanBacklight(StackChanPmic* pmic) : pmic_(pmic)
 void StackChanBacklight::SetBrightnessImpl(uint8_t brightness)
 {
     (void)brightness;
-    pmic_->SetBrightness(target_brightness_);
-    brightness_ = target_brightness_;
+    if (pmic_->SetBrightness(target_brightness_)) {
+        brightness_ = target_brightness_;
+    } else if (step_ == 1 && brightness_ > 0) {
+        --brightness_;
+    } else if (step_ != 1 && brightness_ < 100) {
+        ++brightness_;
+    }
 }
 
 }  // namespace stackchan::hal::hardware

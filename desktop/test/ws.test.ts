@@ -22,16 +22,16 @@ const baseConfig: DesktopConfig = {
   faceTrackingEnabled: false,
   faceTrackingFps: 4,
   faceTrackingMirrorX: false,
-  faceTrackingSpeed: 760,
-  faceTrackingDeadband: 0.018,
-  faceTrackingYawKp: 78,
+  faceTrackingSpeed: 420,
+  faceTrackingDeadband: 0.045,
+  faceTrackingYawKp: 42,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 10,
-  faceTrackingPitchKp: 54,
+  faceTrackingYawKd: 8,
+  faceTrackingPitchKp: 30,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 8,
-  faceTrackingIntegralLimit: 0.22,
-  faceTrackingOutputLimitDeg: 32,
+  faceTrackingPitchKd: 6,
+  faceTrackingIntegralLimit: 0.35,
+  faceTrackingOutputLimitDeg: 20,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
   faceLandmarkerModel: "/tmp/stackchan-local-face-landmarker.task",
@@ -103,6 +103,43 @@ describe("StackChanWebSocketServer", () => {
     expect(message.heartbeatIntervalMs).toBe(1000);
     expect(registry.listSnapshots()).toHaveLength(1);
     ws.close();
+  });
+
+  it("keeps the replacement session online when the stale socket closes", async () => {
+    const registry = new DeviceRegistry(createLogger("error"));
+    server = new StackChanWebSocketServer(baseConfig, registry, createLogger("error"));
+    const port = await server.start();
+
+    const handshake = {
+      type: "handshake",
+      deviceId: "stackchan-test",
+      firmwareVersion: "local-test",
+      pairingToken: "test-token",
+      capabilities: ["audio", "face", "motion"],
+      audioParams: {
+        format: "opus",
+        sampleRate: 16000,
+        channels: 1,
+        frameDurationMs: 30
+      }
+    };
+
+    const staleWs = new WebSocket(`ws://127.0.0.1:${port}/stackchan/local`);
+    await once(staleWs, "open");
+    staleWs.send(JSON.stringify(handshake));
+    await once(staleWs, "message");
+
+    const replacementWs = new WebSocket(`ws://127.0.0.1:${port}/stackchan/local`);
+    await once(replacementWs, "open");
+    replacementWs.send(JSON.stringify(handshake));
+    await once(replacementWs, "message");
+    await Promise.race([once(staleWs, "close"), delay(1000)]);
+    await delay(30);
+
+    const [snapshot] = registry.listSnapshots();
+    expect(snapshot.status).toBe("online");
+    expect(registry.getActiveSession()?.sessionId).toBe(snapshot.sessionId);
+    replacementWs.close();
   });
 
   it("normalizes negotiated binary camera frames into cameraFrame events", async () => {

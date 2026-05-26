@@ -43,6 +43,7 @@ void DeviceRuntime::init()
     peripheral_probe_init();
     rtc_init();
     imu_init();
+    recordI2cDiagnosticScan("after_sensor_init");
 
     context.mark_boot_phase("motion");
     mclog::tagInfo(_tag, "boot phase: motion");

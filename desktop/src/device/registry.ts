@@ -123,14 +123,23 @@ export class DeviceRegistry {
     return session;
   }
 
-  markOffline(deviceId: string): void {
+  markOffline(deviceId: string, sessionId?: string): void {
     const session = this.sessions.get(deviceId);
     if (!session) {
       return;
     }
+    if (sessionId && session.sessionId !== sessionId) {
+      this.logger.debug("ignored stale device close", {
+        type: "device",
+        deviceId,
+        sessionId,
+        currentSessionId: session.sessionId
+      });
+      return;
+    }
     session.status = "offline";
     session.lastSeenAt = new Date();
-    this.logger.warn("device offline", { type: "device", deviceId });
+    this.logger.warn("device offline", { type: "device", deviceId, sessionId: session.sessionId });
   }
 
   recordHeartbeat(deviceId: string): void {

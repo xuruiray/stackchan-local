@@ -11,6 +11,11 @@
 
 namespace stackchan::hal::local_companion {
 
+namespace {
+constexpr int kSupportedCameraWidth = 320;
+constexpr int kSupportedCameraHeight = 240;
+}  // namespace
+
 CameraStreamApplyResult apply_camera_stream_command(CameraStreamConfig& config, ArduinoJson::JsonObject command)
 {
     CameraStreamApplyResult result;
@@ -18,19 +23,17 @@ CameraStreamApplyResult apply_camera_stream_command(CameraStreamConfig& config, 
 
     const bool stream_enabled = command["enabled"] | false;
     int fps = command["fps"] | 4;
-    fps = std::max(1, std::min(10, fps));
+    fps = std::max(1, std::min(15, fps));
 
-    config.requestedWidth = std::max(1, command["width"] | config.requestedWidth);
-    config.requestedHeight = std::max(1, command["height"] | config.requestedHeight);
+    const int requested_width = std::max(1, command["width"] | kSupportedCameraWidth);
+    const int requested_height = std::max(1, command["height"] | kSupportedCameraHeight);
+    const bool unsupported_resolution = requested_width != kSupportedCameraWidth || requested_height != kSupportedCameraHeight;
+    config.requestedWidth = kSupportedCameraWidth;
+    config.requestedHeight = kSupportedCameraHeight;
     config.jpegQuality = std::max(1, std::min(100, command["quality"] | config.jpegQuality));
     config.fallbackReason.clear();
-
-    const bool unsupported_resolution = config.requestedWidth * config.requestedHeight > 320 * 240;
     if (unsupported_resolution) {
-        config.requestedWidth = 320;
-        config.requestedHeight = 240;
-        config.jpegQuality = std::min(config.jpegQuality, 35);
-        config.fallbackReason = "vga_disabled_for_stability";
+        config.fallbackReason = "unsupported_resolution";
     }
 
     config.intervalMs = 1000 / fps;

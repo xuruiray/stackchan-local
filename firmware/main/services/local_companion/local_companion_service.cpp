@@ -32,10 +32,12 @@
 #include <jpg/image_to_jpeg.h>
 #include <lwip/ip_addr.h>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <ctime>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -74,6 +76,22 @@ struct PlaybackEvent {
     std::string message;
 };
 
+enum class OutboundPriority : uint8_t {
+    Critical = 0,
+    Normal = 1,
+    Camera = 2,
+};
+
+struct OutboundMessage {
+    OutboundPriority priority = OutboundPriority::Normal;
+    bool binary = false;
+    bool cameraFrame = false;
+    std::string text;
+    std::vector<uint8_t> bytes;
+    uint32_t cameraTotalStartMs = 0;
+    uint32_t cameraJpegBytes = 0;
+};
+
 struct PowerTelemetryCache {
     uint8_t batteryLevel = 100;
     bool charging = false;
@@ -99,6 +117,36 @@ struct ServoTelemetryCache {
     bool pitchTorque = false;
 };
 
+struct SensorTelemetryCacheCopy {
+    LocalHeadTouchSnapshot headTouch;
+    LocalImuSnapshot imu;
+    LocalMicLevelSnapshot mic;
+    LocalPeripheralProbeSnapshot peripherals;
+    PowerTelemetryCache power;
+    NetworkTelemetryCache network;
+    ServoTelemetryCache servo;
+    bool includeI2cScan = true;
+    uint8_t adaptiveLevel = 0;
+};
+
+struct CameraTelemetryCopy {
+    bool streaming = false;
+    int requestedWidth = 0;
+    int requestedHeight = 0;
+    int actualWidth = 0;
+    int actualHeight = 0;
+    int jpegQuality = 0;
+    uint32_t intervalMs = 0;
+    std::string fallbackReason;
+    bool binaryFrameEnabled = false;
+    uint32_t lastCaptureMs = 0;
+    uint32_t lastEncodeMs = 0;
+    uint32_t lastSendMs = 0;
+    uint32_t lastTotalMs = 0;
+    uint32_t lastFrameIntervalMs = 0;
+    uint32_t lastJpegBytes = 0;
+};
+
 static constexpr size_t kMaxAudioBytes = 262144;
 static constexpr size_t kMaxAudioChunkBase64Bytes = 8192;
 static constexpr size_t kMaxAudioChunks = 128;
@@ -115,8 +163,22 @@ static constexpr uint32_t kMaxHeartbeatIntervalMs = 60000;
 static constexpr uint8_t kBinaryCameraFrameKind = 0x01;
 static constexpr int kDefaultCameraCreditFrames = 2;
 static constexpr int kMaxCameraCreditFrames = 12;
+static constexpr uint32_t kWorkerTickIntervalMs = 10;
+static constexpr uint32_t kCameraTaskTickIntervalMs = 20;
+static constexpr uint32_t kCameraTaskActiveYieldMs = 20;
+static constexpr uint32_t kSensorTaskTickIntervalMs = 20;
+static constexpr uint32_t kTxTaskIdleIntervalMs = 20;
+static constexpr size_t kCriticalTxQueueMax = 48;
+static constexpr size_t kNormalTxQueueMax = 48;
+static constexpr size_t kCameraTxQueueMax = 2;
+static constexpr int kWebSocketTimeoutSeconds = 3;
 
 using namespace stackchan::hal::local_companion;
+
+TickType_t delay_ticks(uint32_t milliseconds)
+{
+    return std::max<TickType_t>(1, pdMS_TO_TICKS(milliseconds));
+}
 
 bool ensure_mdns_started()
 {
@@ -152,7 +214,7 @@ std::string discover_daemon_url()
     mdns_result_t* results = nullptr;
     const esp_err_t err = mdns_query_ptr(_local_service_type, _local_service_proto, 1500, 5, &results);
     if (err != ESP_OK || results == nullptr) {
-        if (err != ESP_ERR_NOT_FOUND) {
+        if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
             mclog::tagWarn(_tag, "mDNS daemon query failed: {}", esp_err_to_name(err));
         }
         return {};
@@ -193,6 +255,8 @@ class LocalCompanionSocket {
 public:
     ~LocalCompanionSocket()
     {
+        stop_background_tasks();
+        clear_tx_queue();
         if (_head_touch_connection >= 0) {
             GetDeviceRuntime().onHeadPetGesture.disconnect(_head_touch_connection);
             _head_touch_connection = -1;
@@ -214,17 +278,18 @@ public:
             _has_pending_head_touch = true;
         });
 
+        start_background_tasks();
         connect();
     }
 
     void update()
     {
-        if (!_websocket) {
+        if (!has_websocket()) {
             reconnect_if_needed();
             return;
         }
 
-        if (!_websocket->IsConnected()) {
+        if (!websocket_connected()) {
             reconnect_if_needed();
             return;
         }
@@ -237,9 +302,6 @@ public:
             send_heartbeat();
             _last_heartbeat_time = now;
         }
-
-        capture_stream_frame_if_needed(now);
-        send_sensor_events_if_needed(now);
     }
 
 private:
@@ -248,11 +310,18 @@ private:
     std::string _fallback_url;
     std::string _token;
     std::function<void(std::string_view)> _on_start_log;
+    std::mutex _websocket_mutex;
     std::mutex _mutex;
     std::mutex _sensor_mutex;
     std::mutex _playback_event_mutex;
+    std::mutex _sequence_mutex;
+    std::mutex _telemetry_mutex;
+    std::mutex _tx_mutex;
     std::queue<ReceivedMessage> _msg_queue;
     std::queue<PlaybackEvent> _playback_events;
+    std::deque<OutboundMessage> _tx_critical;
+    std::deque<OutboundMessage> _tx_normal;
+    std::deque<OutboundMessage> _tx_camera;
     AudioTransferState _audio_transfer;
     uint32_t _last_reconnect_attempt = 0;
     uint32_t _last_heartbeat_time    = 0;
@@ -275,6 +344,7 @@ private:
     uint32_t _camera_frame_id = 0;
     uint32_t _outgoing_seq = 0;
     std::mutex _camera_mutex;
+    std::mutex _camera_hardware_mutex;
     CameraStreamConfig _camera_stream;
     bool _rgb_control_enabled = false;
     std::string _rgb_control_color = "#000000";
@@ -297,8 +367,250 @@ private:
     bool _camera_credit_enabled = false;
     int _camera_credit_frames = 0;
     int _camera_max_in_flight = kDefaultCameraCreditFrames;
+    uint32_t _last_camera_capture_ms = 0;
+    uint32_t _last_camera_encode_ms = 0;
+    uint32_t _last_camera_send_ms = 0;
+    uint32_t _last_camera_total_ms = 0;
+    uint32_t _last_camera_frame_interval_ms = 0;
+    uint32_t _last_camera_sent_at_ms = 0;
+    uint32_t _last_camera_jpeg_bytes = 0;
     bool _include_i2c_scan = true;
     uint8_t _adaptive_level = 0;
+    std::atomic<bool> _tasks_running{false};
+    TaskHandle_t _tx_task_handle = nullptr;
+    TaskHandle_t _camera_task_handle = nullptr;
+    TaskHandle_t _sensor_task_handle = nullptr;
+
+    uint32_t next_outgoing_seq()
+    {
+        std::lock_guard<std::mutex> lock(_sequence_mutex);
+        return _outgoing_seq++;
+    }
+
+    uint32_t next_camera_frame_id()
+    {
+        std::lock_guard<std::mutex> lock(_sequence_mutex);
+        return _camera_frame_id++;
+    }
+
+    bool has_websocket()
+    {
+        std::lock_guard<std::mutex> lock(_websocket_mutex);
+        return _websocket != nullptr;
+    }
+
+    bool websocket_connected()
+    {
+        std::lock_guard<std::mutex> lock(_websocket_mutex);
+        return _websocket && _websocket->IsConnected();
+    }
+
+    bool websocket_send_text(const std::string& payload)
+    {
+        std::lock_guard<std::mutex> lock(_websocket_mutex);
+        return _websocket && _websocket->IsConnected() && _websocket->Send(payload.c_str(), payload.size());
+    }
+
+    bool websocket_send_binary(const std::vector<uint8_t>& payload)
+    {
+        std::lock_guard<std::mutex> lock(_websocket_mutex);
+        return _websocket && _websocket->IsConnected() &&
+               _websocket->SendBinary(reinterpret_cast<const char*>(payload.data()), payload.size());
+    }
+
+    static void tx_task_entry(void* arg)
+    {
+        static_cast<LocalCompanionSocket*>(arg)->tx_task_loop();
+    }
+
+    static void camera_task_entry(void* arg)
+    {
+        static_cast<LocalCompanionSocket*>(arg)->camera_task_loop();
+    }
+
+    static void sensor_task_entry(void* arg)
+    {
+        static_cast<LocalCompanionSocket*>(arg)->sensor_task_loop();
+    }
+
+    void start_background_tasks()
+    {
+        if (_tasks_running.exchange(true)) {
+            return;
+        }
+
+        const BaseType_t tx_ok = xTaskCreate(tx_task_entry, "lc_tx", 8192, this, 6, &_tx_task_handle);
+        const BaseType_t camera_ok = xTaskCreate(camera_task_entry, "lc_camera", 12288, this, 3, &_camera_task_handle);
+        const BaseType_t sensor_ok = xTaskCreate(sensor_task_entry, "lc_sensors", 8192, this, 4, &_sensor_task_handle);
+        if (tx_ok != pdPASS || camera_ok != pdPASS || sensor_ok != pdPASS) {
+            mclog::tagError(_tag, "failed to start local companion tasks tx={} camera={} sensor={}",
+                            tx_ok == pdPASS ? "ok" : "fail", camera_ok == pdPASS ? "ok" : "fail",
+                            sensor_ok == pdPASS ? "ok" : "fail");
+            _tasks_running = false;
+            notify_task(_tx_task_handle);
+            notify_task(_camera_task_handle);
+            notify_task(_sensor_task_handle);
+            return;
+        }
+        mclog::tagInfo(_tag, "local companion tasks started");
+    }
+
+    void stop_background_tasks()
+    {
+        if (!_tasks_running.exchange(false)) {
+            return;
+        }
+        notify_task(_tx_task_handle);
+        notify_task(_camera_task_handle);
+        notify_task(_sensor_task_handle);
+        for (int i = 0; i < 40; ++i) {
+            if (_tx_task_handle == nullptr && _camera_task_handle == nullptr && _sensor_task_handle == nullptr) {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+    }
+
+    void notify_task(TaskHandle_t task)
+    {
+        if (task != nullptr) {
+            xTaskNotifyGive(task);
+        }
+    }
+
+    void notify_tx_task()
+    {
+        notify_task(_tx_task_handle);
+    }
+
+    void clear_tx_queue()
+    {
+        std::lock_guard<std::mutex> lock(_tx_mutex);
+        _tx_critical.clear();
+        _tx_normal.clear();
+        _tx_camera.clear();
+    }
+
+    bool enqueue_outbound(OutboundMessage message)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_tx_mutex);
+            switch (message.priority) {
+                case OutboundPriority::Critical:
+                    if (_tx_critical.size() >= kCriticalTxQueueMax) {
+                        if (!_tx_camera.empty()) {
+                            _tx_camera.pop_front();
+                        } else if (!_tx_normal.empty()) {
+                            _tx_normal.pop_front();
+                        } else {
+                            _tx_critical.pop_front();
+                        }
+                    }
+                    _tx_critical.push_back(std::move(message));
+                    break;
+                case OutboundPriority::Camera:
+                    while (_tx_camera.size() >= kCameraTxQueueMax) {
+                        _tx_camera.pop_front();
+                    }
+                    _tx_camera.push_back(std::move(message));
+                    break;
+                case OutboundPriority::Normal:
+                default:
+                    while (_tx_normal.size() >= kNormalTxQueueMax) {
+                        _tx_normal.pop_front();
+                    }
+                    _tx_normal.push_back(std::move(message));
+                    break;
+            }
+        }
+        notify_tx_task();
+        return true;
+    }
+
+    bool dequeue_outbound(OutboundMessage& message)
+    {
+        std::lock_guard<std::mutex> lock(_tx_mutex);
+        if (!_tx_critical.empty()) {
+            message = std::move(_tx_critical.front());
+            _tx_critical.pop_front();
+            return true;
+        }
+        if (!_tx_normal.empty()) {
+            message = std::move(_tx_normal.front());
+            _tx_normal.pop_front();
+            return true;
+        }
+        if (!_tx_camera.empty()) {
+            message = std::move(_tx_camera.front());
+            _tx_camera.pop_front();
+            return true;
+        }
+        return false;
+    }
+
+    void tx_task_loop()
+    {
+        while (_tasks_running.load()) {
+            OutboundMessage message;
+            if (!dequeue_outbound(message)) {
+                ulTaskNotifyTake(pdTRUE, delay_ticks(kTxTaskIdleIntervalMs));
+                continue;
+            }
+
+            const uint32_t send_start_ms = GetDeviceRuntime().millis();
+            const bool sent = message.binary ? websocket_send_binary(message.bytes) : websocket_send_text(message.text);
+            const uint32_t send_end_ms = GetDeviceRuntime().millis();
+            if (message.cameraFrame) {
+                record_camera_tx_result(message, sent, send_end_ms - send_start_ms, send_end_ms);
+            }
+        }
+        _tx_task_handle = nullptr;
+        vTaskDelete(nullptr);
+    }
+
+    void camera_task_loop()
+    {
+        while (_tasks_running.load()) {
+            bool captured = false;
+            captured = capture_stream_frame_if_needed(GetDeviceRuntime().millis());
+            vTaskDelay(delay_ticks(captured ? kCameraTaskActiveYieldMs : kCameraTaskTickIntervalMs));
+        }
+        _camera_task_handle = nullptr;
+        vTaskDelete(nullptr);
+    }
+
+    void sensor_task_loop()
+    {
+        while (_tasks_running.load()) {
+            const uint32_t now = GetDeviceRuntime().millis();
+            if (websocket_connected()) {
+                send_sensor_events_if_needed(now);
+            } else {
+                refresh_sensor_snapshot_cache_if_needed(now);
+            }
+            vTaskDelay(delay_ticks(kSensorTaskTickIntervalMs));
+        }
+        _sensor_task_handle = nullptr;
+        vTaskDelete(nullptr);
+    }
+
+    void record_camera_tx_result(const OutboundMessage& message, bool sent, uint32_t send_ms, uint32_t send_end_ms)
+    {
+        std::lock_guard<std::mutex> lock(_camera_mutex);
+        _last_camera_send_ms = send_ms;
+        _last_camera_total_ms =
+            message.cameraTotalStartMs > 0 ? send_end_ms - message.cameraTotalStartMs : send_ms;
+        _last_camera_jpeg_bytes = message.cameraJpegBytes;
+        if (sent) {
+            if (_last_camera_sent_at_ms > 0) {
+                _last_camera_frame_interval_ms = send_end_ms - _last_camera_sent_at_ms;
+            }
+            _last_camera_sent_at_ms = send_end_ms;
+            if (_camera_credit_enabled && _camera_credit_frames > 0) {
+                _camera_credit_frames--;
+            }
+        }
+    }
 
     void connect()
     {
@@ -307,7 +619,7 @@ private:
             _on_start_log("Connecting");
         }
 
-        _websocket.reset();
+        clear_tx_queue();
         _url = _fallback_url;
         if (_use_mdns) {
             auto discovered_url = discover_daemon_url();
@@ -321,46 +633,67 @@ private:
 
         auto& board  = Board::GetInstance();
         auto network = board.GetNetwork();
-        _websocket   = network->CreateWebSocket(1);
+        bool connected = false;
+        {
+            std::lock_guard<std::mutex> lock(_websocket_mutex);
+            _websocket.reset();
+            _websocket = network->CreateWebSocket(kWebSocketTimeoutSeconds);
 
-        if (!_websocket) {
-            _local_state = LocalCompanionState::Error;
-            mclog::tagError(_tag, "failed to create websocket");
-            return;
+            if (!_websocket) {
+                _local_state = LocalCompanionState::Error;
+                mclog::tagError(_tag, "failed to create websocket");
+                return;
+            }
+
+            _websocket->OnConnected([this]() {
+                mclog::tagInfo(_tag, "connected to local daemon");
+                _local_state          = LocalCompanionState::Connected;
+                _last_heartbeat_time = GetDeviceRuntime().millis();
+                _heartbeat_interval_ms = kDefaultHeartbeatIntervalMs;
+                {
+                    std::lock_guard<std::mutex> lock(_camera_mutex);
+                    _binary_camera_frame_enabled = false;
+                    _camera_credit_enabled = false;
+                    _camera_credit_frames = 0;
+                    _camera_max_in_flight = kDefaultCameraCreditFrames;
+                    _last_camera_sent_at_ms = 0;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(_telemetry_mutex);
+                    _adaptive_level = 0;
+                }
+                clear_tx_queue();
+                reset_sensor_cache_schedule(_last_heartbeat_time);
+                send_handshake();
+            });
+
+            _websocket->OnDisconnected([this]() {
+                mclog::tagInfo(_tag, "local daemon disconnected");
+                GetDeviceRuntime().releaseMicLevelInput();
+                clear_tx_queue();
+                reset_sensor_cache_schedule(GetDeviceRuntime().millis());
+                {
+                    std::lock_guard<std::mutex> lock(_sensor_mutex);
+                    _has_pending_head_touch = false;
+                }
+                if (_local_state != LocalCompanionState::PairingFailed) {
+                    _local_state = LocalCompanionState::Disconnected;
+                }
+            });
+
+            _websocket->OnData([this](const char* data, size_t len, bool binary) {
+                std::lock_guard<std::mutex> lock(_mutex);
+                _msg_queue.push({binary, std::vector<uint8_t>(data, data + len)});
+            });
+
+            connected = _websocket->Connect(_url.c_str());
         }
 
-        _websocket->OnConnected([this]() {
-            mclog::tagInfo(_tag, "connected to local daemon");
-            _local_state          = LocalCompanionState::Connected;
-            _last_heartbeat_time = GetDeviceRuntime().millis();
-            _heartbeat_interval_ms = kDefaultHeartbeatIntervalMs;
-            _binary_camera_frame_enabled = false;
-            _camera_credit_enabled = false;
-            _camera_credit_frames = 0;
-            _camera_max_in_flight = kDefaultCameraCreditFrames;
-            _adaptive_level = 0;
-            reset_sensor_cache_schedule(_last_heartbeat_time);
-            send_handshake();
-        });
-
-        _websocket->OnDisconnected([this]() {
-            mclog::tagInfo(_tag, "local daemon disconnected");
-            GetDeviceRuntime().releaseMicLevelInput();
-            _sensor_cache_initialized = false;
-            if (_local_state != LocalCompanionState::PairingFailed) {
-                _local_state = LocalCompanionState::Disconnected;
-            }
-        });
-
-        _websocket->OnData([this](const char* data, size_t len, bool binary) {
-            std::lock_guard<std::mutex> lock(_mutex);
-            _msg_queue.push({binary, std::vector<uint8_t>(data, data + len)});
-        });
-
-        if (!_websocket->Connect(_url.c_str())) {
+        if (!connected) {
             _local_state = LocalCompanionState::Disconnected;
             GetDeviceRuntime().releaseMicLevelInput();
-            _sensor_cache_initialized = false;
+            reset_sensor_cache_schedule(GetDeviceRuntime().millis());
+            clear_tx_queue();
             mclog::tagWarn(_tag, "failed to connect to {}", _url);
         }
         _last_reconnect_attempt = GetDeviceRuntime().millis();
@@ -439,52 +772,73 @@ private:
         _local_state = LocalCompanionState::Connected;
         const uint32_t requested_heartbeat = doc["heartbeatIntervalMs"] | kDefaultHeartbeatIntervalMs;
         _heartbeat_interval_ms = std::max(kMinHeartbeatIntervalMs, std::min(kMaxHeartbeatIntervalMs, requested_heartbeat));
-        _binary_camera_frame_enabled = false;
-        _camera_credit_enabled = false;
 
+        bool binary_camera_frame_enabled = false;
+        bool camera_credit_enabled = false;
+        int camera_max_in_flight = kDefaultCameraCreditFrames;
         auto flags = doc["featureFlags"].as<ArduinoJson::JsonArray>();
         for (auto flag : flags) {
             const char* value = flag | "";
             if (strcmp(value, "binaryCameraFrame") == 0) {
-                _binary_camera_frame_enabled = true;
+                binary_camera_frame_enabled = true;
             }
             if (strcmp(value, "mediaCredit") == 0) {
-                _camera_credit_enabled = true;
+                camera_credit_enabled = true;
             }
         }
 
         auto media_credit = doc["featureParams"]["mediaCredit"].as<ArduinoJson::JsonObject>();
         if (!media_credit.isNull()) {
-            _camera_max_in_flight = std::max(1, std::min(kMaxCameraCreditFrames,
-                                                         media_credit["maxCreditFrames"] | kDefaultCameraCreditFrames));
+            camera_max_in_flight = std::max(1, std::min(kMaxCameraCreditFrames,
+                                                        media_credit["maxCreditFrames"] | kDefaultCameraCreditFrames));
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(_camera_mutex);
+            _binary_camera_frame_enabled = binary_camera_frame_enabled;
+            _camera_credit_enabled = camera_credit_enabled;
+            _camera_max_in_flight = camera_max_in_flight;
+            _camera_credit_frames = 0;
         }
 
         mclog::tagInfo(_tag, "daemon hello heartbeat={}ms binaryCameraFrame={} mediaCredit={}",
-                       _heartbeat_interval_ms, _binary_camera_frame_enabled ? "yes" : "no",
-                       _camera_credit_enabled ? "yes" : "no");
+                       _heartbeat_interval_ms, binary_camera_frame_enabled ? "yes" : "no",
+                       camera_credit_enabled ? "yes" : "no");
     }
 
     void handle_telemetry_config(ArduinoJson::JsonObject command)
     {
-        if (!command["sensorSnapshotHz"].isNull()) {
-            const float hz = command["sensorSnapshotHz"] | 1.0f;
-            _sensor_snapshot_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
-        }
+        uint32_t sensor_snapshot_interval_ms = 0;
+        uint32_t imu_event_interval_ms = 0;
+        bool include_i2c_scan = true;
+        uint8_t adaptive_level = 0;
+        {
+            std::lock_guard<std::mutex> lock(_telemetry_mutex);
+            if (!command["sensorSnapshotHz"].isNull()) {
+                const float hz = command["sensorSnapshotHz"] | 1.0f;
+                _sensor_snapshot_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
+            }
 
-        if (!command["imuHz"].isNull()) {
-            const float hz = command["imuHz"] | 4.0f;
-            _imu_event_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
-        }
+            if (!command["imuHz"].isNull()) {
+                const float hz = command["imuHz"] | 4.0f;
+                _imu_event_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
+            }
 
-        if (!command["includeI2cScan"].isNull()) {
-            _include_i2c_scan = command["includeI2cScan"] | true;
-        }
+            if (!command["includeI2cScan"].isNull()) {
+                _include_i2c_scan = command["includeI2cScan"] | true;
+            }
 
-        _adaptive_level =
-            (_sensor_snapshot_interval_ms > 1000 || _imu_event_interval_ms > 250 || !_include_i2c_scan) ? 1 : 0;
+            _adaptive_level =
+                (_sensor_snapshot_interval_ms > 1000 || _imu_event_interval_ms > 250 || !_include_i2c_scan) ? 1 : 0;
+            _sensor_cache_initialized = false;
+            sensor_snapshot_interval_ms = _sensor_snapshot_interval_ms;
+            imu_event_interval_ms = _imu_event_interval_ms;
+            include_i2c_scan = _include_i2c_scan;
+            adaptive_level = _adaptive_level;
+        }
         mclog::tagInfo(_tag, "telemetry config snapshot={}ms imu={}ms i2cScan={} adaptiveLevel={}",
-                       _sensor_snapshot_interval_ms, _imu_event_interval_ms, _include_i2c_scan ? "yes" : "no",
-                       static_cast<int>(_adaptive_level));
+                       sensor_snapshot_interval_ms, imu_event_interval_ms, include_i2c_scan ? "yes" : "no",
+                       static_cast<int>(adaptive_level));
     }
 
     void handle_media_flow_control(ArduinoJson::JsonObject command)
@@ -495,6 +849,7 @@ private:
         }
 
         const int credit = std::max(0, std::min(kMaxCameraCreditFrames, command["creditFrames"] | 0));
+        std::lock_guard<std::mutex> lock(_camera_mutex);
         const int max_in_flight = std::max(1, std::min(kMaxCameraCreditFrames, command["maxInFlight"] | _camera_max_in_flight));
         _camera_max_in_flight = max_in_flight;
         _camera_credit_frames = std::min(_camera_credit_frames + credit, _camera_max_in_flight);
@@ -583,9 +938,9 @@ private:
             {
                 std::lock_guard<std::mutex> lock(_camera_mutex);
                 camera_result = apply_camera_stream_command(_camera_stream, command);
-            }
-            if (!camera_result.isEnabled) {
-                _last_camera_frame_time = 0;
+                if (!camera_result.isEnabled) {
+                    _last_camera_frame_time = 0;
+                }
             }
             if (camera_result.isEnabled && !camera_result.wasEnabled) {
                 std::lock_guard<std::mutex> lock(_face_tracking_mutex);
@@ -610,15 +965,11 @@ private:
 
         if (strcmp(kind, "mediaFlowControl") == 0) {
             handle_media_flow_control(command);
-            send_command_ack(command_id, kind, nullptr, true, "accepted");
-            send_command_status(command_id, kind, nullptr, "completed", "media credit applied", 1.0f);
             return;
         }
 
         if (strcmp(kind, "trackFace") == 0) {
             handle_track_face(command);
-            send_command_ack(command_id, kind, nullptr, true, "accepted");
-            send_command_status(command_id, kind, nullptr, "completed", "face target applied", 1.0f);
             return;
         }
 
@@ -846,50 +1197,76 @@ private:
         }
     }
 
-    void capture_stream_frame_if_needed(uint32_t now)
+    bool capture_stream_frame_if_needed(uint32_t now)
     {
-        if (!_camera_stream.enabled || now - _last_camera_frame_time < _camera_stream.intervalMs) {
-            return;
+        CameraStreamConfig stream_config;
+        {
+            std::lock_guard<std::mutex> lock(_camera_mutex);
+            if (!_camera_stream.enabled || now - _last_camera_frame_time < _camera_stream.intervalMs) {
+                return false;
+            }
+            if (_camera_credit_enabled && _camera_credit_frames <= 0) {
+                return false;
+            }
+            stream_config = _camera_stream;
         }
-        if (_camera_credit_enabled && _camera_credit_frames <= 0) {
-            return;
+
+        if (!websocket_connected()) {
+            return false;
         }
-        _last_camera_frame_time = now;
+        const uint32_t total_start_ms = GetDeviceRuntime().millis();
 
         auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
         if (!camera) {
-            return;
+            return false;
         }
 
         uint8_t* jpeg_data = nullptr;
         size_t jpeg_len    = 0;
         int frame_width    = 0;
         int frame_height   = 0;
+        std::string capture_timestamp;
         {
             std::lock_guard<std::mutex> lock(_camera_mutex);
-            if (!_camera_stream.enabled) {
-                return;
+            _last_camera_frame_time = now;
+            capture_timestamp = iso_now();
+        }
+
+        const uint32_t capture_start_ms = GetDeviceRuntime().millis();
+        {
+            std::lock_guard<std::mutex> hardware_lock(_camera_hardware_mutex);
+            if (!camera->StreamCaptures(false) || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
+                std::lock_guard<std::mutex> lock(_camera_mutex);
+                _last_camera_capture_ms = GetDeviceRuntime().millis() - capture_start_ms;
+                return true;
             }
-            if (!camera->StreamCaptures() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
-                return;
+            const uint32_t capture_end_ms = GetDeviceRuntime().millis();
+            {
+                std::lock_guard<std::mutex> lock(_camera_mutex);
+                _last_camera_capture_ms = capture_end_ms - capture_start_ms;
             }
             frame_width  = camera->GetFrameWidth();
             frame_height = camera->GetFrameHeight();
+            const uint32_t encode_start_ms = GetDeviceRuntime().millis();
             if (!image_to_jpeg((uint8_t*)camera->GetFrameData(), camera->GetFrameSize(), frame_width, frame_height,
-                               (v4l2_pix_fmt_t)camera->GetFrameFormat(), _camera_stream.jpegQuality, &jpeg_data,
+                               (v4l2_pix_fmt_t)camera->GetFrameFormat(), stream_config.jpegQuality, &jpeg_data,
                                &jpeg_len)) {
                 if (jpeg_data) {
                     free(jpeg_data);
                 }
-                return;
+                std::lock_guard<std::mutex> lock(_camera_mutex);
+                _last_camera_encode_ms = GetDeviceRuntime().millis() - encode_start_ms;
+                return true;
+            }
+            {
+                std::lock_guard<std::mutex> lock(_camera_mutex);
+                _last_camera_encode_ms = GetDeviceRuntime().millis() - encode_start_ms;
             }
         }
 
-        if (send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height) && _camera_credit_enabled &&
-            _camera_credit_frames > 0) {
-            _camera_credit_frames--;
-        }
+        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height, capture_timestamp, total_start_ms);
         free(jpeg_data);
+        return true;
     }
 
     void send_sensor_events_if_needed(uint32_t now)
@@ -898,7 +1275,15 @@ private:
         send_pending_head_touch();
         send_screen_touch_if_needed(now);
 
-        if (_imu_event_interval_ms > 0 && now - _last_imu_event_time >= _imu_event_interval_ms) {
+        uint32_t imu_event_interval_ms = 0;
+        uint32_t sensor_snapshot_interval_ms = 0;
+        {
+            std::lock_guard<std::mutex> lock(_telemetry_mutex);
+            imu_event_interval_ms = _imu_event_interval_ms;
+            sensor_snapshot_interval_ms = _sensor_snapshot_interval_ms;
+        }
+
+        if (imu_event_interval_ms > 0 && now - _last_imu_event_time >= imu_event_interval_ms) {
             send_imu_event();
             _last_imu_event_time = now;
         }
@@ -913,7 +1298,8 @@ private:
             _last_wifi_event_time = now;
         }
 
-        if (_sensor_snapshot_interval_ms > 0 && now - _last_sensor_snapshot_event_time >= _sensor_snapshot_interval_ms) {
+        if (sensor_snapshot_interval_ms > 0 &&
+            now - _last_sensor_snapshot_event_time >= sensor_snapshot_interval_ms) {
             send_sensor_snapshot_event(now);
             _last_sensor_snapshot_event_time = now;
         }
@@ -921,6 +1307,7 @@ private:
 
     void reset_sensor_cache_schedule(uint32_t now)
     {
+        std::lock_guard<std::mutex> lock(_telemetry_mutex);
         _sensor_cache_initialized = false;
         _next_imu_cache_time = now;
         _next_head_touch_cache_time = now;
@@ -938,6 +1325,7 @@ private:
 
     void refresh_sensor_snapshot_cache_if_needed(uint32_t now)
     {
+        std::lock_guard<std::mutex> lock(_telemetry_mutex);
         if (!_sensor_cache_initialized) {
             refresh_imu_cache();
             refresh_head_touch_cache();
@@ -1046,31 +1434,73 @@ private:
         _peripheral_cache = GetDeviceRuntime().getLocalPeripheralProbeSnapshot();
     }
 
+    SensorTelemetryCacheCopy copy_sensor_cache()
+    {
+        std::lock_guard<std::mutex> lock(_telemetry_mutex);
+        SensorTelemetryCacheCopy copy;
+        copy.headTouch = _head_touch_cache;
+        copy.imu = _imu_cache;
+        copy.mic = _mic_cache;
+        copy.peripherals = _peripheral_cache;
+        copy.power = _power_cache;
+        copy.network = _network_cache;
+        copy.servo = _servo_cache;
+        copy.includeI2cScan = _include_i2c_scan;
+        copy.adaptiveLevel = _adaptive_level;
+        return copy;
+    }
+
+    CameraTelemetryCopy copy_camera_telemetry(StackChanCamera* camera)
+    {
+        std::lock_guard<std::mutex> lock(_camera_mutex);
+        CameraTelemetryCopy copy;
+        copy.streaming = _camera_stream.enabled;
+        copy.requestedWidth = _camera_stream.requestedWidth;
+        copy.requestedHeight = _camera_stream.requestedHeight;
+        copy.jpegQuality = _camera_stream.jpegQuality;
+        copy.intervalMs = _camera_stream.intervalMs;
+        copy.fallbackReason = _camera_stream.fallbackReason;
+        copy.binaryFrameEnabled = _binary_camera_frame_enabled;
+        copy.lastCaptureMs = _last_camera_capture_ms;
+        copy.lastEncodeMs = _last_camera_encode_ms;
+        copy.lastSendMs = _last_camera_send_ms;
+        copy.lastTotalMs = _last_camera_total_ms;
+        copy.lastFrameIntervalMs = _last_camera_frame_interval_ms;
+        copy.lastJpegBytes = _last_camera_jpeg_bytes;
+        if (camera) {
+            copy.actualWidth = camera->GetFrameWidth();
+            copy.actualHeight = camera->GetFrameHeight();
+        }
+        return copy;
+    }
+
     void prepare_event_doc(ArduinoJson::JsonDocument& doc, const char* kind)
     {
-        prepare_robot_event(doc, kind, _outgoing_seq++);
+        prepare_robot_event(doc, kind, next_outgoing_seq());
     }
 
     void send_battery_event()
     {
+        const auto cache = copy_sensor_cache();
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "battery");
-        doc["event"]["level"]    = _power_cache.batteryLevel;
-        doc["event"]["charging"] = _power_cache.charging;
+        doc["event"]["level"]    = cache.power.batteryLevel;
+        doc["event"]["charging"] = cache.power.charging;
         send_json(doc);
     }
 
     void send_wifi_event()
     {
+        const auto cache = copy_sensor_cache();
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "wifi");
-        if (_network_cache.wifiStatus == "connected") {
+        if (cache.network.wifiStatus == "connected") {
             doc["event"]["status"] = "connected";
-            doc["event"]["rssi"]   = _network_cache.rssi;
-            if (!_network_cache.ssid.empty()) {
-                doc["event"]["ssid"] = _network_cache.ssid;
+            doc["event"]["rssi"]   = cache.network.rssi;
+            if (!cache.network.ssid.empty()) {
+                doc["event"]["ssid"] = cache.network.ssid;
             }
-        } else if (_network_cache.wifiStatus == "connecting") {
+        } else if (cache.network.wifiStatus == "connecting") {
             doc["event"]["status"] = "connecting";
         } else {
             doc["event"]["status"] = "disconnected";
@@ -1080,7 +1510,8 @@ private:
 
     void send_imu_event()
     {
-        const auto& imu = _imu_cache;
+        const auto cache = copy_sensor_cache();
+        const auto& imu = cache.imu;
         if (!imu.available) {
             return;
         }
@@ -1101,35 +1532,37 @@ private:
     void send_sensor_snapshot_event(uint32_t now)
     {
         auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
+        const auto cache = copy_sensor_cache();
+        const auto camera_state = copy_camera_telemetry(camera);
         const auto touch = embedded_runtime_bridge::get_touch_point();
-        const auto& head_touch = _head_touch_cache;
-        const auto& imu = _imu_cache;
-        const auto& mic = _mic_cache;
-        const auto& peripherals = _peripheral_cache;
+        const auto& head_touch = cache.headTouch;
+        const auto& imu = cache.imu;
+        const auto& mic = cache.mic;
+        const auto& peripherals = cache.peripherals;
 
         ArduinoJson::JsonDocument doc;
         prepare_event_doc(doc, "sensorSnapshot");
         doc["event"]["uptimeMs"] = now;
 
-        doc["event"]["power"]["batteryLevel"] = _power_cache.batteryLevel;
-        doc["event"]["power"]["charging"] = _power_cache.charging;
-        doc["event"]["power"]["backlight"] = _power_cache.backlight;
-        doc["event"]["power"]["speakerVolume"] = _power_cache.speakerVolume;
-        doc["event"]["power"]["servoPower"] = _servo_cache.servoPower;
+        doc["event"]["power"]["batteryLevel"] = cache.power.batteryLevel;
+        doc["event"]["power"]["charging"] = cache.power.charging;
+        doc["event"]["power"]["backlight"] = cache.power.backlight;
+        doc["event"]["power"]["speakerVolume"] = cache.power.speakerVolume;
+        doc["event"]["power"]["servoPower"] = cache.servo.servoPower;
 
-        if (_network_cache.wifiStatus == "connected") {
+        if (cache.network.wifiStatus == "connected") {
             doc["event"]["network"]["wifi"]["status"] = "connected";
-            doc["event"]["network"]["wifi"]["rssi"] = _network_cache.rssi;
-            if (!_network_cache.ssid.empty()) {
-                doc["event"]["network"]["wifi"]["ssid"] = _network_cache.ssid;
+            doc["event"]["network"]["wifi"]["rssi"] = cache.network.rssi;
+            if (!cache.network.ssid.empty()) {
+                doc["event"]["network"]["wifi"]["ssid"] = cache.network.ssid;
             }
-        } else if (_network_cache.wifiStatus == "connecting") {
+        } else if (cache.network.wifiStatus == "connecting") {
             doc["event"]["network"]["wifi"]["status"] = "connecting";
         } else {
             doc["event"]["network"]["wifi"]["status"] = "disconnected";
         }
         doc["event"]["network"]["ble"]["available"] = true;
-        doc["event"]["network"]["ble"]["connected"] = _network_cache.bleConnected;
+        doc["event"]["network"]["ble"]["connected"] = cache.network.bleConnected;
         doc["event"]["network"]["ble"]["provisioning"] = true;
 
         doc["event"]["motion"]["imu"]["available"] = imu.available;
@@ -1147,13 +1580,13 @@ private:
         }
 
         doc["event"]["motion"]["servos"]["available"] = true;
-        doc["event"]["motion"]["servos"]["power"] = _servo_cache.servoPower;
-        doc["event"]["motion"]["servos"]["yaw"]["angle"] = _servo_cache.yawAngle;
-        doc["event"]["motion"]["servos"]["yaw"]["moving"] = _servo_cache.yawMoving;
-        doc["event"]["motion"]["servos"]["yaw"]["torque"] = _servo_cache.yawTorque;
-        doc["event"]["motion"]["servos"]["pitch"]["angle"] = _servo_cache.pitchAngle;
-        doc["event"]["motion"]["servos"]["pitch"]["moving"] = _servo_cache.pitchMoving;
-        doc["event"]["motion"]["servos"]["pitch"]["torque"] = _servo_cache.pitchTorque;
+        doc["event"]["motion"]["servos"]["power"] = cache.servo.servoPower;
+        doc["event"]["motion"]["servos"]["yaw"]["angle"] = cache.servo.yawAngle;
+        doc["event"]["motion"]["servos"]["yaw"]["moving"] = cache.servo.yawMoving;
+        doc["event"]["motion"]["servos"]["yaw"]["torque"] = cache.servo.yawTorque;
+        doc["event"]["motion"]["servos"]["pitch"]["angle"] = cache.servo.pitchAngle;
+        doc["event"]["motion"]["servos"]["pitch"]["moving"] = cache.servo.pitchMoving;
+        doc["event"]["motion"]["servos"]["pitch"]["torque"] = cache.servo.pitchTorque;
 
         doc["event"]["interaction"]["screenTouch"]["available"] = true;
         doc["event"]["interaction"]["screenTouch"]["pressed"] = touch.num > 0;
@@ -1181,33 +1614,39 @@ private:
         doc["event"]["interaction"]["wakeWord"]["available"] = true;
         doc["event"]["interaction"]["wakeWord"]["text"] = "Hi, Stack Chan";
 
-        const bool io_expander_available = _servo_cache.ioExpanderAvailable;
+        const bool io_expander_available = cache.servo.ioExpanderAvailable;
         doc["event"]["peripherals"]["ioExpander"]["available"] = io_expander_available;
         if (!io_expander_available) {
             doc["event"]["peripherals"]["ioExpander"]["reason"] = "driver_unavailable";
         }
 
         doc["event"]["peripherals"]["camera"]["available"] = camera != nullptr;
-        doc["event"]["peripherals"]["camera"]["streaming"] = _camera_stream.enabled;
-        doc["event"]["peripherals"]["camera"]["requestedWidth"] = _camera_stream.requestedWidth;
-        doc["event"]["peripherals"]["camera"]["requestedHeight"] = _camera_stream.requestedHeight;
-        doc["event"]["peripherals"]["camera"]["quality"] = _camera_stream.jpegQuality;
+        doc["event"]["peripherals"]["camera"]["streaming"] = camera_state.streaming;
+        doc["event"]["peripherals"]["camera"]["requestedWidth"] = camera_state.requestedWidth;
+        doc["event"]["peripherals"]["camera"]["requestedHeight"] = camera_state.requestedHeight;
+        doc["event"]["peripherals"]["camera"]["quality"] = camera_state.jpegQuality;
         doc["event"]["peripherals"]["camera"]["transport"] =
-            _binary_camera_frame_enabled ? "binary" : "jsonBase64";
-        doc["event"]["peripherals"]["camera"]["adaptiveLevel"] = _adaptive_level;
+            camera_state.binaryFrameEnabled ? "binary" : "jsonBase64";
+        doc["event"]["peripherals"]["camera"]["adaptiveLevel"] = cache.adaptiveLevel;
+        doc["event"]["peripherals"]["camera"]["lastCaptureMs"] = camera_state.lastCaptureMs;
+        doc["event"]["peripherals"]["camera"]["lastEncodeMs"] = camera_state.lastEncodeMs;
+        doc["event"]["peripherals"]["camera"]["lastSendMs"] = camera_state.lastSendMs;
+        doc["event"]["peripherals"]["camera"]["lastTotalMs"] = camera_state.lastTotalMs;
+        doc["event"]["peripherals"]["camera"]["lastFrameIntervalMs"] = camera_state.lastFrameIntervalMs;
+        doc["event"]["peripherals"]["camera"]["lastJpegBytes"] = camera_state.lastJpegBytes;
         if (camera) {
-            if (camera->GetFrameWidth() > 0) {
-                doc["event"]["peripherals"]["camera"]["width"] = camera->GetFrameWidth();
-                doc["event"]["peripherals"]["camera"]["actualWidth"] = camera->GetFrameWidth();
+            if (camera_state.actualWidth > 0) {
+                doc["event"]["peripherals"]["camera"]["width"] = camera_state.actualWidth;
+                doc["event"]["peripherals"]["camera"]["actualWidth"] = camera_state.actualWidth;
             }
-            if (camera->GetFrameHeight() > 0) {
-                doc["event"]["peripherals"]["camera"]["height"] = camera->GetFrameHeight();
-                doc["event"]["peripherals"]["camera"]["actualHeight"] = camera->GetFrameHeight();
+            if (camera_state.actualHeight > 0) {
+                doc["event"]["peripherals"]["camera"]["height"] = camera_state.actualHeight;
+                doc["event"]["peripherals"]["camera"]["actualHeight"] = camera_state.actualHeight;
             }
             doc["event"]["peripherals"]["camera"]["fps"] =
-                _camera_stream.intervalMs > 0 ? (1000.0f / static_cast<float>(_camera_stream.intervalMs)) : 0.0f;
-            if (!_camera_stream.fallbackReason.empty()) {
-                doc["event"]["peripherals"]["camera"]["fallbackReason"] = _camera_stream.fallbackReason.c_str();
+                camera_state.intervalMs > 0 ? (1000.0f / static_cast<float>(camera_state.intervalMs)) : 0.0f;
+            if (!camera_state.fallbackReason.empty()) {
+                doc["event"]["peripherals"]["camera"]["fallbackReason"] = camera_state.fallbackReason.c_str();
             }
         } else {
             doc["event"]["peripherals"]["camera"]["reason"] = "driver_unavailable";
@@ -1223,9 +1662,14 @@ private:
         if (!io_expander_available) {
             doc["event"]["peripherals"]["rgb"]["reason"] = "io_expander_unavailable";
         }
-        doc["event"]["peripherals"]["rtc"]["available"] = true;
-        doc["event"]["peripherals"]["rtc"]["timestamp"] = iso_now();
-        doc["event"]["peripherals"]["rtc"]["timezone"] = GetDeviceRuntime().getTimezone();
+        const auto rtc_status = stackchan::hal::hardware::GetHardwareRegistry().module_status("rtc-pcf8563");
+        doc["event"]["peripherals"]["rtc"]["available"] = rtc_status.available;
+        if (rtc_status.available) {
+            doc["event"]["peripherals"]["rtc"]["timestamp"] = iso_now();
+            doc["event"]["peripherals"]["rtc"]["timezone"] = GetDeviceRuntime().getTimezone();
+        } else if (!rtc_status.reason.empty()) {
+            doc["event"]["peripherals"]["rtc"]["reason"] = rtc_status.reason.c_str();
+        }
 
         doc["event"]["peripherals"]["nfc"]["available"] = peripherals.nfcAvailable;
         doc["event"]["peripherals"]["nfc"]["driver"] = peripherals.nfcDriver.c_str();
@@ -1298,11 +1742,11 @@ private:
             doc["event"]["peripherals"]["magnetometer"]["reason"] = peripherals.magnetometerReason.c_str();
         }
 
-        if (_include_i2c_scan) {
+        if (cache.includeI2cScan) {
             auto i2c_scans = doc["event"]["peripherals"]["i2cScan"].to<ArduinoJson::JsonArray>();
             for (const auto& scan : peripherals.i2cScans) {
                 auto scan_doc = i2c_scans.add<ArduinoJson::JsonObject>();
-                scan_doc["stage"] = scan.stage.c_str();
+                scan_doc["stage"] = scan.stage.data();
                 scan_doc["uptimeMs"] = scan.uptimeMs;
                 auto addresses = scan_doc["addresses"].to<ArduinoJson::JsonArray>();
                 for (const auto address : scan.addresses) {
@@ -1390,13 +1834,19 @@ private:
         send_json(doc);
     }
 
-    bool send_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height)
+    bool send_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height,
+                           const std::string& capture_timestamp, uint32_t total_start_ms)
     {
-        const uint32_t frame_id = _camera_frame_id++;
-        const uint32_t seq = _outgoing_seq++;
-        const std::string capture_timestamp = iso_now();
-        if (_binary_camera_frame_enabled &&
-            send_binary_camera_frame(jpeg_data, jpeg_len, width, height, frame_id, seq, capture_timestamp)) {
+        const uint32_t frame_id = next_camera_frame_id();
+        const uint32_t seq = next_outgoing_seq();
+        bool binary_camera_frame_enabled = false;
+        {
+            std::lock_guard<std::mutex> lock(_camera_mutex);
+            binary_camera_frame_enabled = _binary_camera_frame_enabled;
+        }
+        if (binary_camera_frame_enabled &&
+            send_binary_camera_frame(jpeg_data, jpeg_len, width, height, frame_id, seq, capture_timestamp,
+                                     total_start_ms)) {
             return true;
         }
 
@@ -1427,13 +1877,14 @@ private:
         doc["event"]["sentAt"]     = sent_at;
         doc["event"]["trace"]["deviceCapturedAt"] = capture_timestamp;
         doc["event"]["trace"]["deviceSentAt"] = sent_at;
-        return send_json(doc);
+        return send_json(doc, OutboundPriority::Camera, true, total_start_ms,
+                         static_cast<uint32_t>(std::min<size_t>(jpeg_len, UINT32_MAX)));
     }
 
     bool send_binary_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height, uint32_t frame_id,
-                                  uint32_t seq, const std::string& capture_timestamp)
+                                  uint32_t seq, const std::string& capture_timestamp, uint32_t total_start_ms)
     {
-        if (!_websocket || !_websocket->IsConnected() || jpeg_data == nullptr || jpeg_len == 0) {
+        if (jpeg_data == nullptr || jpeg_len == 0) {
             return false;
         }
 
@@ -1469,7 +1920,14 @@ private:
         envelope[7] = static_cast<uint8_t>(header.size() & 0xff);
         memcpy(envelope.data() + 8, header.data(), header.size());
         memcpy(envelope.data() + 8 + header.size(), jpeg_data, jpeg_len);
-        return _websocket->SendBinary(reinterpret_cast<const char*>(envelope.data()), envelope.size());
+        OutboundMessage message;
+        message.priority = OutboundPriority::Camera;
+        message.binary = true;
+        message.cameraFrame = true;
+        message.cameraTotalStartMs = total_start_ms;
+        message.cameraJpegBytes = static_cast<uint32_t>(std::min<size_t>(jpeg_len, UINT32_MAX));
+        message.bytes = std::move(envelope);
+        return enqueue_outbound(std::move(message));
     }
 
     void send_handshake()
@@ -1510,17 +1968,17 @@ private:
         doc["audioParams"]["channels"]        = 1;
         doc["audioParams"]["frameDurationMs"] = 30;
 
-        send_json(doc);
+        send_json(doc, OutboundPriority::Critical);
     }
 
     void send_heartbeat()
     {
         ArduinoJson::JsonDocument doc;
         doc["type"]      = "heartbeat";
-        doc["seq"]       = _outgoing_seq++;
+        doc["seq"]       = next_outgoing_seq();
         doc["deviceId"]  = GetDeviceRuntime().getFactoryMacString(":");
         doc["timestamp"] = iso_now();
-        send_json(doc);
+        send_json(doc, OutboundPriority::Critical);
     }
 
     void send_state_event(const char* mode, const char* detail)
@@ -1547,7 +2005,7 @@ private:
         if (message && strlen(message) > 0) {
             doc["event"]["message"] = message;
         }
-        send_json(doc);
+        send_json(doc, OutboundPriority::Critical);
     }
 
     void send_command_status(const char* command_id, const char* command_kind, const char* request_id, const char* status,
@@ -1565,7 +2023,7 @@ private:
         if (message && strlen(message) > 0) {
             doc["event"]["message"] = message;
         }
-        send_json(doc);
+        send_json(doc, OutboundPriority::Critical);
     }
 
     void send_playback_event(const char* request_id, const char* state, const char* message)
@@ -1577,7 +2035,7 @@ private:
         if (message && strlen(message) > 0) {
             doc["event"]["message"] = message;
         }
-        send_json(doc);
+        send_json(doc, OutboundPriority::Critical);
     }
 
     bool handle_capture_image(const char* command_id, const char* request_id)
@@ -1588,10 +2046,11 @@ private:
             return false;
         }
 
+        embedded_runtime_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
+
         std::string encoded;
         {
-            std::lock_guard<std::mutex> lock(_camera_mutex);
-            embedded_runtime_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
+            std::lock_guard<std::mutex> hardware_lock(_camera_hardware_mutex);
             if (!camera->Capture() || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
                 send_error("capture_failed", "camera capture failed", true, command_id);
                 return false;
@@ -1630,17 +2089,22 @@ private:
         if (command_id && strlen(command_id) > 0) {
             doc["commandId"] = command_id;
         }
-        send_json(doc);
+        send_json(doc, OutboundPriority::Critical);
     }
 
-    bool send_json(ArduinoJson::JsonDocument& doc)
+    bool send_json(ArduinoJson::JsonDocument& doc, OutboundPriority priority = OutboundPriority::Normal,
+                   bool camera_frame = false, uint32_t camera_total_start_ms = 0, uint32_t camera_jpeg_bytes = 0)
     {
-        if (!_websocket || !_websocket->IsConnected()) {
-            return false;
-        }
         std::string payload;
         ArduinoJson::serializeJson(doc, payload);
-        return _websocket->Send(payload.c_str());
+        OutboundMessage message;
+        message.priority = priority;
+        message.binary = false;
+        message.cameraFrame = camera_frame;
+        message.cameraTotalStartMs = camera_total_start_ms;
+        message.cameraJpegBytes = camera_jpeg_bytes;
+        message.text = std::move(payload);
+        return enqueue_outbound(std::move(message));
     }
 };
 
@@ -1654,7 +2118,7 @@ public:
 
     void onRunning() override
     {
-        if (GetDeviceRuntime().millis() - _last_tick < 20) {
+        if (GetDeviceRuntime().millis() - _last_tick < kWorkerTickIntervalMs) {
             return;
         }
         _last_tick = GetDeviceRuntime().millis();

@@ -7,6 +7,7 @@
 
 #include <hardware/bus/i2c_bus.h>
 
+#include <freertos/FreeRTOS.h>
 #include <mooncake_log.h>
 
 namespace stackchan::hal::sensors {
@@ -17,19 +18,40 @@ static const std::string_view kTag = "INA226";
 constexpr uint8_t INA226_CONFIGURATION = 0x00;
 constexpr uint8_t INA226_SHUNT_VOLTAGE = 0x01;
 constexpr uint8_t INA226_BUS_VOLTAGE = 0x02;
+constexpr uint8_t INA226_CALIBRATION = 0x05;
 constexpr float INA226_SHUNT_RESISTOR_OHMS = 0.01f;
 constexpr float INA226_BUS_VOLTAGE_LSB = 0.00125f;
 constexpr float INA226_SHUNT_VOLTAGE_LSB = 0.0000025f;
+constexpr uint16_t INA226_CALIBRATION_VALUE = 2048;
 
 }  // namespace
 
 void Ina226::init(LocalPeripheralProbeSnapshot& snapshot)
 {
+    if (dev_) {
+        I2cBusGuard guard;
+        i2c_master_bus_rm_device(dev_);
+        dev_ = nullptr;
+    }
+
     snapshot.powerMonitorDriver = "ina226";
     snapshot.powerMonitorAddress = kAddress;
     snapshot.powerMonitorReason = "not_detected_i2c_0x41";
 
-    if (!probe_i2c(bus_, kAddress)) {
+    if (!bus_) {
+        snapshot.powerMonitorReason = "i2c_bus_unavailable";
+        return;
+    }
+
+    uint8_t config_data[2] = {};
+    const bool config_ok = diagnostic_read_reg(bus_, kAddress, INA226_CONFIGURATION, config_data, sizeof(config_data));
+    if (!config_ok && !probe_i2c_with_retry(bus_, kAddress, 5, 60)) {
+        snapshot.powerMonitorReason = "not_detected_i2c_0x41_after_retry";
+        return;
+    }
+
+    if (!config_ok && !diagnostic_read_reg(bus_, kAddress, INA226_CONFIGURATION, config_data, sizeof(config_data))) {
+        snapshot.powerMonitorReason = "config_read_failed_i2c_0x41";
         return;
     }
 
@@ -38,10 +60,16 @@ void Ina226::init(LocalPeripheralProbeSnapshot& snapshot)
         return;
     }
 
-    uint8_t config_data[2] = {};
-    if (read_regs(dev_, INA226_CONFIGURATION, config_data, sizeof(config_data)) != ESP_OK) {
+    const uint8_t calibration_data[3] = {
+        INA226_CALIBRATION,
+        static_cast<uint8_t>(INA226_CALIBRATION_VALUE >> 8),
+        static_cast<uint8_t>(INA226_CALIBRATION_VALUE & 0xFF),
+    };
+    I2cBusGuard guard;
+    if (i2c_master_transmit(dev_, calibration_data, sizeof(calibration_data), 100) != ESP_OK) {
         i2c_master_bus_rm_device(dev_);
         dev_ = nullptr;
+        snapshot.powerMonitorReason = "calibration_write_failed_i2c_0x41";
         return;
     }
 

@@ -105,7 +105,7 @@ struct LocalMicLevelSnapshot {
 };
 
 struct LocalI2cScanStageSnapshot {
-    std::string stage;
+    std::array<char, 32> stage = {};
     uint32_t uptimeMs = 0;
     std::vector<uint8_t> addresses;
     bool foundLtr553 = false;

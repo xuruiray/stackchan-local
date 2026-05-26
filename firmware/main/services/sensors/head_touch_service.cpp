@@ -191,6 +191,8 @@ void DeviceRuntime::head_touch_init()
     esp_err_t err = si12t_init(&si12t_cfg, &si12t);
     if (err != ESP_OK) {
         mclog::tagError(_tag, "init failed: {}", esp_err_to_name(err));
+        stackchan::hal::hardware::GetHardwareRegistry().set_module_status("head-touch-si12t", false,
+                                                                           esp_err_to_name(err));
         std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
         _head_touch_snapshot.available = false;
         _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
@@ -200,6 +202,8 @@ void DeviceRuntime::head_touch_init()
     err = si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
     if (err != ESP_OK) {
         mclog::tagError(_tag, "setup failed: {}", esp_err_to_name(err));
+        stackchan::hal::hardware::GetHardwareRegistry().set_module_status("head-touch-si12t", false,
+                                                                           esp_err_to_name(err));
         si12t_delete(si12t);
         si12t = nullptr;
         std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
@@ -213,12 +217,16 @@ void DeviceRuntime::head_touch_init()
                                                                    si12t, 2, NULL, 1, MALLOC_CAP_SPIRAM);
     if (task_result != pdPASS) {
         mclog::tagError(_tag, "failed to create update task");
+        stackchan::hal::hardware::GetHardwareRegistry().set_module_status("head-touch-si12t", false,
+                                                                           "task_create_failed");
         si12t_delete(si12t);
         si12t = nullptr;
         std::lock_guard<std::mutex> lock(_head_touch_snapshot_mutex);
         _head_touch_snapshot.available = false;
         _head_touch_snapshot.updatedAt = GetDeviceRuntime().millis();
+        return;
     }
+    stackchan::hal::hardware::GetHardwareRegistry().set_module_status("head-touch-si12t", true);
 }
 
 LocalHeadTouchSnapshot DeviceRuntime::getLocalHeadTouchSnapshot()

@@ -8,6 +8,8 @@
 #include <hardware/bus/i2c_bus.h>
 
 #include <algorithm>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <mooncake_log.h>
 
 namespace stackchan::hal::sensors {
@@ -25,16 +27,46 @@ constexpr uint8_t LTR553_MANUFACTURER_ID = 0x87;
 constexpr uint8_t LTR553_ALS_DATA_CH1_0 = 0x88;
 constexpr uint8_t LTR553_PS_DATA_0 = 0x8D;
 
+bool write_ltr_config(i2c_master_dev_handle_t dev)
+{
+    return write_reg(dev, LTR553_PS_CONTR, 0x00) == ESP_OK &&
+           write_reg(dev, LTR553_ALS_CONTR, 0x00) == ESP_OK &&
+           write_reg(dev, LTR553_PS_LED, 0x3C) == ESP_OK &&
+           write_reg(dev, LTR553_PS_MEAS_RATE, 0x00) == ESP_OK &&
+           write_reg(dev, LTR553_PS_N_PULSES, 0x01) == ESP_OK &&
+           write_reg(dev, LTR553_ALS_MEAS_RATE, 0x03) == ESP_OK &&
+           write_reg(dev, LTR553_ALS_CONTR, 0x19) == ESP_OK &&
+           write_reg(dev, LTR553_PS_CONTR, 0x02) == ESP_OK;
+}
+
 }  // namespace
 
 void Ltr553::init(LocalPeripheralProbeSnapshot& snapshot)
 {
+    if (dev_) {
+        I2cBusGuard guard;
+        i2c_master_bus_rm_device(dev_);
+        dev_ = nullptr;
+    }
+
     snapshot.proximityDriver = "ltr553";
     snapshot.ambientLightDriver = "ltr553";
     snapshot.proximityReason = "not_detected_i2c_0x23";
     snapshot.ambientLightReason = "not_detected_i2c_0x23";
 
-    if (!probe_i2c(bus_, kAddress)) {
+    if (!bus_) {
+        snapshot.proximityReason = "i2c_bus_unavailable";
+        snapshot.ambientLightReason = "i2c_bus_unavailable";
+        return;
+    }
+
+    uint8_t part_id = 0;
+    uint8_t manufacturer_id = 0;
+    const bool identity_ok = diagnostic_read_reg(bus_, kAddress, kPartIdRegister, &part_id, 1) &&
+                             diagnostic_read_reg(bus_, kAddress, LTR553_MANUFACTURER_ID, &manufacturer_id, 1);
+    if (!identity_ok && !probe_i2c_with_retry(bus_, kAddress, 8, 60)) {
+        snapshot.proximityReason = "not_detected_i2c_0x23_after_retry";
+        snapshot.ambientLightReason = "not_detected_i2c_0x23_after_retry";
         return;
     }
 
@@ -44,24 +76,24 @@ void Ltr553::init(LocalPeripheralProbeSnapshot& snapshot)
         return;
     }
 
-    uint8_t part_id = 0;
-    uint8_t manufacturer_id = 0;
-    read_regs(dev_, kPartIdRegister, &part_id, 1);
-    read_regs(dev_, LTR553_MANUFACTURER_ID, &manufacturer_id, 1);
+    if (!write_ltr_config(dev_)) {
+        I2cBusGuard guard;
+        i2c_master_bus_rm_device(dev_);
+        dev_ = nullptr;
+        snapshot.proximityReason = "config_write_failed_i2c_0x23";
+        snapshot.ambientLightReason = "config_write_failed_i2c_0x23";
+        return;
+    }
 
-    write_reg(dev_, LTR553_PS_CONTR, 0x00);
-    write_reg(dev_, LTR553_ALS_CONTR, 0x00);
-    write_reg(dev_, LTR553_PS_LED, 0x3C);
-    write_reg(dev_, LTR553_PS_MEAS_RATE, 0x00);
-    write_reg(dev_, LTR553_PS_N_PULSES, 0x01);
-    write_reg(dev_, LTR553_ALS_MEAS_RATE, 0x03);
-    write_reg(dev_, LTR553_ALS_CONTR, 0x19);
-    write_reg(dev_, LTR553_PS_CONTR, 0x02);
     snapshot.proximityAvailable = true;
     snapshot.ambientLightAvailable = true;
     snapshot.proximityReason.clear();
     snapshot.ambientLightReason.clear();
-    mclog::tagInfo(kTag, "detected part=0x%02x manufacturer=0x%02x", part_id, manufacturer_id);
+    if (identity_ok) {
+        mclog::tagInfo(kTag, "detected part=0x{:02x} manufacturer=0x{:02x}", part_id, manufacturer_id);
+    } else {
+        mclog::tagInfo(kTag, "detected ack identity unavailable");
+    }
 }
 
 void Ltr553::refresh(LocalPeripheralProbeSnapshot& snapshot)

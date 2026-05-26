@@ -27,9 +27,11 @@ void DeviceRuntime::rtc_init()
     _pcf8563 = std::make_unique<m5::PCF8563_Class>(i2c_bus);
     if (!_pcf8563->begin()) {
         _pcf8563.reset();
+        stackchan::hal::hardware::GetHardwareRegistry().set_module_status("rtc-pcf8563", false, "init_failed");
         mclog::tagError(_tag, "PCF8563 init failed");
         return;
     }
+    stackchan::hal::hardware::GetHardwareRegistry().set_module_status("rtc-pcf8563", true);
     mclog::tagInfo(_tag, "PCF8563 init ok");
 
     // Load timezone from settings

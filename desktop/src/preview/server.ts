@@ -1,26 +1,24 @@
 import { Buffer } from "node:buffer";
-import { createRequire } from "node:module";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { extname, normalize } from "node:path";
 
 import type { Logger, LogLevel } from "../config.js";
 import type { DebugLogBuffer, DebugLogType } from "../debug/log-buffer.js";
 import type { DeviceRegistry } from "../device/registry.js";
-import type { RobotController } from "../robot/controller.js";
+import type { RobotActionResult, RobotController } from "../robot/controller.js";
 import type {
-  VisionPreviewSnapshot,
   VisionTrackingService,
+  RawPreviewSettingsPatch,
   VisionTrackingSettingsPatch
 } from "../vision/tracking.js";
-import { renderPreviewHtml } from "./ui.js";
+import type { CompletionTtsSnapshot, DebugSnapshot, PreviewSnapshot } from "./public-types.js";
 
-const require = createRequire(import.meta.url);
-const threeBuildDir = dirname(require.resolve("three"));
-const threeVendorFiles = new Set(["three.module.js", "three.core.js"]);
 const VISION_SNAPSHOT_BROADCAST_MIN_MS = 200;
 const DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 500;
 const FRAME_STREAM_MAX_BUFFER_BYTES = 512 * 1024;
+const previewUiDistDir = new URL("../../preview-ui/dist/", import.meta.url);
+const previewUiIndexFile = new URL("index.html", previewUiDistDir);
 
 export interface PreviewServerOptions {
   host: string;
@@ -30,7 +28,8 @@ export interface PreviewServerOptions {
 export interface PreviewServerExtras {
   registry?: DeviceRegistry;
   debugLog?: DebugLogBuffer;
-  robotController?: Pick<RobotController, "setRgb">;
+  robotController?: Pick<RobotController, "setRgb"> &
+    Partial<Pick<RobotController, "moveHead" | "cameraStream" | "captureImage" | "telemetryConfig">>;
   completionAnnouncer?: {
     announce(completion: { id: string; reason: string; taskSummary?: string }): void;
     isEnabled(): boolean;
@@ -41,10 +40,6 @@ export interface PreviewServerExtras {
     setVolume(volume: number): number;
   };
 }
-
-type PublicVisionSnapshot = Omit<VisionPreviewSnapshot, "frame"> & {
-  frame?: Omit<NonNullable<VisionPreviewSnapshot["frame"]>, "dataBase64">;
-};
 
 interface FrameStreamClientState {
   lastFrameId?: string;
@@ -59,7 +54,8 @@ export class PreviewServer {
   private unsubscribeLog?: () => void;
   private readonly snapshotClients = new Set<ServerResponse>();
   private readonly logClients = new Set<ServerResponse>();
-  private readonly frameStreamClients = new Map<ServerResponse, FrameStreamClientState>();
+  private readonly rawFrameStreamClients = new Map<ServerResponse, FrameStreamClientState>();
+  private readonly processedFrameStreamClients = new Map<ServerResponse, FrameStreamClientState>();
   private snapshotBroadcastTimer?: NodeJS.Timeout;
   private lastSnapshotBroadcastAt = 0;
 
@@ -77,7 +73,7 @@ export class PreviewServer {
 
     this.server = createServer((request, response) => void this.handleRequest(request, response));
     this.unsubscribeVision = this.visionTracking.onPreviewUpdate(() => {
-      this.broadcastFrameStream();
+      this.broadcastFrameStreams();
       this.scheduleSnapshotBroadcast(VISION_SNAPSHOT_BROADCAST_MIN_MS);
     });
     this.unsubscribeDevice = this.extras.registry?.onEvent((message) => {
@@ -117,10 +113,14 @@ export class PreviewServer {
       client.end();
     }
     this.logClients.clear();
-    for (const client of this.frameStreamClients.keys()) {
+    for (const client of this.rawFrameStreamClients.keys()) {
       client.end();
     }
-    this.frameStreamClients.clear();
+    this.rawFrameStreamClients.clear();
+    for (const client of this.processedFrameStreamClients.keys()) {
+      client.end();
+    }
+    this.processedFrameStreamClients.clear();
 
     await closeServer(this.loopbackIpv6Server);
     await closeServer(this.server);
@@ -167,7 +167,12 @@ export class PreviewServer {
 
     try {
       if (request.method === "GET" && url.pathname === "/") {
-        this.sendHtml(response);
+        await this.sendPreviewIndex(response, request.method);
+        return;
+      }
+
+      if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/assets/")) {
+        await this.sendPreviewAsset(response, request.method, url.pathname);
         return;
       }
 
@@ -243,17 +248,22 @@ export class PreviewServer {
       }
 
       if (request.method === "GET" && url.pathname === "/frame.jpg") {
-        this.sendFrame(response);
+        this.sendFrame(response, "raw");
+        return;
+      }
+
+      if (request.method === "GET" && (url.pathname === "/processed-frame.jpg" || url.pathname === "/face-frame.jpg")) {
+        this.sendFrame(response, "processed");
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/stream.mjpg") {
-        this.handleFrameStream(response);
+        this.handleFrameStream(response, "raw");
         return;
       }
 
-      if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/vendor/")) {
-        await this.sendVendorModule(response, request.method, url.pathname);
+      if (request.method === "GET" && (url.pathname === "/processed-stream.mjpg" || url.pathname === "/face-stream.mjpg")) {
+        this.handleFrameStream(response, "processed");
         return;
       }
 
@@ -273,6 +283,119 @@ export class PreviewServer {
           this.visionTracking.setEnabled(parsed.enabled);
         }
         this.sendJson(response, this.publicSnapshot());
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/raw-preview") {
+        const body = await readBody(request);
+        const parsed = body
+          ? (JSON.parse(body) as { enabled?: unknown; fps?: unknown; width?: unknown; height?: unknown; quality?: unknown })
+          : {};
+        if (typeof parsed.enabled !== "boolean") {
+          this.sendJson(response, { ok: false, error: "missing enabled" });
+          return;
+        }
+        const patch: RawPreviewSettingsPatch = {
+          enabled: parsed.enabled,
+          fps: sanitizeNumber(parsed.fps, 1, 15),
+          width: 320,
+          height: 240,
+          quality: sanitizeNumber(parsed.quality, 1, 35)
+        };
+        this.visionTracking.setRawPreview(patch);
+        this.sendJson(response, { ok: true, snapshot: this.publicSnapshot() });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/hardware/move-head") {
+        if (!this.extras.robotController?.moveHead) {
+          this.sendJson(response, { ok: false, error: "moveHead unavailable" });
+          return;
+        }
+        const body = await readBody(request);
+        const parsed = body ? (JSON.parse(body) as { yaw?: unknown; pitch?: unknown; speed?: unknown }) : {};
+        const yaw = sanitizeNumber(parsed.yaw, -1800, 1800);
+        const pitch = sanitizeNumber(parsed.pitch, -1200, 1200);
+        const speed = sanitizeNumber(parsed.speed, 0, 1000);
+        if (yaw === undefined || pitch === undefined) {
+          this.sendJson(response, { ok: false, error: "invalid yaw or pitch" });
+          return;
+        }
+        const result = await this.extras.robotController.moveHead(
+          { yaw, pitch, speed },
+          { waitForAck: true, waitForCompletion: false }
+        );
+        this.sendJson(response, commandResponse(result));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/hardware/camera-stream") {
+        if (!this.extras.robotController?.cameraStream) {
+          this.sendJson(response, { ok: false, error: "cameraStream unavailable" });
+          return;
+        }
+        const body = await readBody(request);
+        const parsed = body
+          ? (JSON.parse(body) as { enabled?: unknown; fps?: unknown; width?: unknown; height?: unknown; quality?: unknown })
+          : {};
+        if (typeof parsed.enabled !== "boolean") {
+          this.sendJson(response, { ok: false, error: "missing enabled" });
+          return;
+        }
+        const result = await this.extras.robotController.cameraStream(
+          {
+            enabled: parsed.enabled,
+            fps: sanitizeNumber(parsed.fps, 0, 30),
+            width: 320,
+            height: 240,
+            quality: sanitizeNumber(parsed.quality, 1, 63),
+            format: "jpeg"
+          },
+          { waitForAck: true, waitForCompletion: false }
+        );
+        this.sendJson(response, commandResponse(result));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/hardware/capture-image") {
+        if (!this.extras.robotController?.captureImage) {
+          this.sendJson(response, { ok: false, error: "captureImage unavailable" });
+          return;
+        }
+        const result = await this.extras.robotController.captureImage(undefined, {
+          waitForAck: true,
+          waitForCompletion: false
+        });
+        this.sendJson(response, commandResponse(result));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/hardware/telemetry") {
+        if (!this.extras.robotController?.telemetryConfig) {
+          this.sendJson(response, { ok: false, error: "telemetryConfig unavailable" });
+          return;
+        }
+        const body = await readBody(request);
+        const parsed = body
+          ? (JSON.parse(body) as {
+              sensorSnapshotHz?: unknown;
+              imuHz?: unknown;
+              includeI2cScan?: unknown;
+              reason?: unknown;
+            })
+          : {};
+        const sensorSnapshotHz = sanitizeEnumNumber(parsed.sensorSnapshotHz, [0, 0.5, 1, 2] as const);
+        const imuHz = sanitizeEnumNumber(parsed.imuHz, [0, 1, 2, 4, 10] as const);
+        const result = await this.extras.robotController.telemetryConfig(
+          {
+            sensorSnapshotHz,
+            imuHz,
+            includeI2cScan: typeof parsed.includeI2cScan === "boolean" ? parsed.includeI2cScan : undefined,
+            reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 120) : "preview-ui"
+          },
+          { waitForAck: true, waitForCompletion: false }
+        );
+        this.sendJson(response, commandResponse(result));
         return;
       }
 
@@ -349,12 +472,11 @@ export class PreviewServer {
     }
   }
 
-  private sendHtml(response: ServerResponse): void {
-    response.writeHead(200, {
+  private async sendPreviewIndex(response: ServerResponse, method: string): Promise<void> {
+    await this.sendStaticFile(response, method, previewUiIndexFile, {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store"
     });
-    response.end(renderPreviewHtml(this.publicSnapshot()));
   }
 
   private handleSnapshotEvents(response: ServerResponse): void {
@@ -386,14 +508,14 @@ export class PreviewServer {
     response.end(JSON.stringify(value));
   }
 
-  private sendFrame(response: ServerResponse): void {
-    const frame = this.visionTracking.previewSnapshot().frame;
+  private sendFrame(response: ServerResponse, kind: "raw" | "processed"): void {
+    const frame = this.frameForKind(kind);
     if (!frame) {
       response.writeHead(404, {
         "content-type": "text/plain; charset=utf-8",
         "cache-control": "no-store"
       });
-      response.end("no frame");
+      response.end(kind === "processed" ? "no processed frame" : "no frame");
       return;
     }
 
@@ -403,45 +525,62 @@ export class PreviewServer {
       pragma: "no-cache",
       expires: "0",
       "x-frame-id": frame.frameId,
-      "x-frame-timestamp": frame.timestamp
+      "x-frame-timestamp": frame.timestamp,
+      "x-frame-received-at": frame.receivedAt,
+      ...(frame.sentAt ? { "x-frame-sent-at": frame.sentAt } : {}),
+      ...(frame.captureTimestamp ? { "x-frame-capture-timestamp": frame.captureTimestamp } : {}),
+      "x-frame-stream": kind,
+      ...(frame.trace?.detectorFinishedAt ? { "x-detector-finished-at": frame.trace.detectorFinishedAt } : {})
     });
     response.end(Buffer.from(frame.dataBase64, "base64"));
   }
 
-  private handleFrameStream(response: ServerResponse): void {
+  private handleFrameStream(response: ServerResponse, kind: "raw" | "processed"): void {
     response.writeHead(200, {
       "content-type": "multipart/x-mixed-replace; boundary=stackchanframe",
       "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
       pragma: "no-cache",
       expires: "0",
       "x-accel-buffering": "no",
-      connection: "keep-alive"
+      connection: "keep-alive",
+      "x-frame-stream": kind
     });
-    this.frameStreamClients.set(response, { draining: false });
-    this.writeFrameStream(response);
-    response.on("close", () => this.frameStreamClients.delete(response));
+    this.frameStreamClients(kind).set(response, { draining: false });
+    this.writeFrameStream(response, kind);
+    response.on("close", () => this.frameStreamClients(kind).delete(response));
   }
 
-  private async sendVendorModule(response: ServerResponse, method: string, pathname: string): Promise<void> {
-    const filename = pathname.slice("/vendor/".length);
-    if (!threeVendorFiles.has(filename)) {
+  private async sendPreviewAsset(response: ServerResponse, method: string, pathname: string): Promise<void> {
+    const relative = normalize(pathname.slice(1));
+    if (relative.startsWith("..") || relative.includes("/../")) {
       response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       response.end("not found");
       return;
     }
-
-    const source = await readFile(join(threeBuildDir, filename), "utf8");
-    response.writeHead(200, {
-      "content-type": "text/javascript; charset=utf-8",
-      "cache-control": "public, max-age=3600"
-    });
-    response.end(method === "HEAD" ? undefined : source);
+    await this.sendStaticFile(response, method, new URL(relative, previewUiDistDir));
   }
 
-  private publicSnapshot(): PublicVisionSnapshot & {
-    devices?: ReturnType<DeviceRegistry["listSnapshots"]>;
-    completionTts?: { enabled: boolean; lightEnabled: boolean; volume: number };
-  } {
+  private async sendStaticFile(
+    response: ServerResponse,
+    method: string,
+    fileUrl: URL,
+    headers: Record<string, string> = {}
+  ): Promise<void> {
+    try {
+      const data = await readFile(fileUrl);
+      response.writeHead(200, {
+        "content-type": contentTypeFor(fileUrl.pathname),
+        "cache-control": "public, max-age=31536000, immutable",
+        ...headers
+      });
+      response.end(method === "HEAD" ? undefined : data);
+    } catch {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("preview UI has not been built; run npm run preview:build -w @stackchan-local/desktop");
+    }
+  }
+
+  private publicSnapshot(): PreviewSnapshot {
     const snapshot = this.visionTracking.previewSnapshot();
     return {
       status: snapshot.status,
@@ -466,7 +605,7 @@ export class PreviewServer {
     };
   }
 
-  private debugSnapshot(): unknown {
+  private debugSnapshot(): DebugSnapshot {
     return {
       vision: this.publicSnapshot(),
       devices: this.extras.registry?.listSnapshots() ?? [],
@@ -475,7 +614,7 @@ export class PreviewServer {
     };
   }
 
-  private completionTtsSnapshot(): { enabled: boolean; lightEnabled: boolean; volume: number } {
+  private completionTtsSnapshot(): CompletionTtsSnapshot {
     return {
       enabled: this.extras.completionAnnouncer?.isEnabled() ?? false,
       lightEnabled: this.extras.completionAnnouncer?.isLightEnabled() ?? false,
@@ -491,27 +630,34 @@ export class PreviewServer {
     this.lastSnapshotBroadcastAt = Date.now();
   }
 
-  private broadcastFrameStream(): void {
-    if (this.frameStreamClients.size === 0) {
+  private broadcastFrameStreams(): void {
+    this.broadcastFrameStream("raw");
+    this.broadcastFrameStream("processed");
+  }
+
+  private broadcastFrameStream(kind: "raw" | "processed"): void {
+    const clients = this.frameStreamClients(kind);
+    if (clients.size === 0) {
       return;
     }
-    const frame = this.visionTracking.previewSnapshot().frame;
+    const frame = this.frameForKind(kind);
     if (!frame) {
       return;
     }
-    for (const client of this.frameStreamClients.keys()) {
-      this.writeFrameStream(client, frame);
+    for (const client of clients.keys()) {
+      this.writeFrameStream(client, kind, frame);
     }
   }
 
   private writeFrameStream(
     response: ServerResponse,
-    frame = this.visionTracking.previewSnapshot().frame
+    kind: "raw" | "processed",
+    frame = this.frameForKind(kind)
   ): void {
     if (!frame || response.writableEnded || response.destroyed) {
       return;
     }
-    const state = this.frameStreamClients.get(response);
+    const state = this.frameStreamClients(kind).get(response);
     if (!state) {
       return;
     }
@@ -525,7 +671,11 @@ export class PreviewServer {
     const jpeg = Buffer.from(frame.dataBase64, "base64");
     const ok =
       response.write(
-      `--stackchanframe\r\ncontent-type: ${frame.mimeType}\r\ncontent-length: ${jpeg.length}\r\nx-frame-id: ${frame.frameId}\r\nx-frame-timestamp: ${frame.timestamp}\r\n\r\n`
+      `--stackchanframe\r\ncontent-type: ${frame.mimeType}\r\ncontent-length: ${jpeg.length}\r\nx-frame-id: ${frame.frameId}\r\nx-frame-timestamp: ${frame.timestamp}\r\nx-frame-received-at: ${frame.receivedAt}${
+        frame.sentAt ? `\r\nx-frame-sent-at: ${frame.sentAt}` : ""
+      }${frame.captureTimestamp ? `\r\nx-frame-capture-timestamp: ${frame.captureTimestamp}` : ""}\r\nx-frame-stream: ${kind}${
+        frame.trace?.detectorFinishedAt ? `\r\nx-detector-finished-at: ${frame.trace.detectorFinishedAt}` : ""
+      }\r\n\r\n`
       ) &&
       response.write(jpeg) &&
       response.write("\r\n");
@@ -533,12 +683,24 @@ export class PreviewServer {
     if (!ok) {
       state.draining = true;
       response.once("drain", () => {
-        const current = this.frameStreamClients.get(response);
+        const current = this.frameStreamClients(kind).get(response);
         if (current) {
           current.draining = false;
         }
       });
     }
+  }
+
+  private frameStreamClients(kind: "raw" | "processed"): Map<ServerResponse, FrameStreamClientState> {
+    return kind === "processed" ? this.processedFrameStreamClients : this.rawFrameStreamClients;
+  }
+
+  private frameForKind(kind: "raw" | "processed"): ReturnType<VisionTrackingService["previewSnapshot"]>["frame"] {
+    const frame = this.visionTracking.previewSnapshot().frame;
+    if (kind === "processed" && !frame?.trace?.detectorFinishedAt) {
+      return undefined;
+    }
+    return frame;
   }
 
   private scheduleSnapshotBroadcast(minIntervalMs: number): void {
@@ -640,6 +802,59 @@ function sanitizeRgbBrightness(value: unknown): number | undefined {
     return undefined;
   }
   return Math.min(1, Math.max(0, value));
+}
+
+function sanitizeNumber(value: unknown, min: number, max: number): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
+function sanitizeEnumNumber<const T extends readonly number[]>(value: unknown, allowed: T): T[number] | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return allowed.includes(value) ? (value as T[number]) : undefined;
+}
+
+function commandResponse(result: RobotActionResult): Record<string, unknown> {
+  return {
+    ok: result.sent && (!result.ack || result.ack.status === "accepted"),
+    sent: result.sent,
+    reason: result.reason,
+    ack: result.ack,
+    completion: result.completion,
+    command: result.command,
+    motion: result.motion
+  };
+}
+
+function contentTypeFor(pathname: string): string {
+  switch (extname(pathname)) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function usesIpv4Loopback(host: string): boolean {

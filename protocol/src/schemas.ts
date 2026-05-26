@@ -380,8 +380,8 @@ export const robotCommandSchema = {
           required: ["kind"],
           properties: {
             kind: { const: "telemetryConfig" },
-            sensorSnapshotHz: { enum: [0, 0.5, 1] },
-            imuHz: { enum: [0, 1, 2, 4] },
+            sensorSnapshotHz: { enum: [0, 0.5, 1, 2] },
+            imuHz: { enum: [0, 1, 2, 4, 10] },
             includeI2cScan: { type: "boolean" },
             reason: { type: "string" }
           }
@@ -582,6 +582,12 @@ const sensorSnapshotSchema = {
             quality: { type: "integer", minimum: 1, maximum: 100 },
             transport: { enum: ["jsonBase64", "binary"] },
             adaptiveLevel: { type: "integer", minimum: 0, maximum: 5 },
+            lastCaptureMs: { type: "integer", minimum: 0 },
+            lastEncodeMs: { type: "integer", minimum: 0 },
+            lastSendMs: { type: "integer", minimum: 0 },
+            lastTotalMs: { type: "integer", minimum: 0 },
+            lastFrameIntervalMs: { type: "integer", minimum: 0 },
+            lastJpegBytes: { type: "integer", minimum: 0 },
             fallbackReason: { type: "string" },
             reason: { type: "string" }
           }

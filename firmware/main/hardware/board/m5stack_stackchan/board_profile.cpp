@@ -132,7 +132,7 @@ private:
             for (int j = 0; j < 16; j++) {
                 fflush(stdout);
                 address       = i + j;
-                esp_err_t ret = i2c_master_probe(i2c_bus_, address, pdMS_TO_TICKS(200));
+                esp_err_t ret = i2c_master_probe(i2c_bus_, address, 200);
                 if (ret == ESP_OK) {
                     printf("%02x ", address);
                 } else if (ret == ESP_ERR_TIMEOUT) {

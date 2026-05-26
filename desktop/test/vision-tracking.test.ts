@@ -25,16 +25,16 @@ const baseConfig: DesktopConfig = {
   faceTrackingEnabled: false,
   faceTrackingFps: 4,
   faceTrackingMirrorX: false,
-  faceTrackingSpeed: 760,
-  faceTrackingDeadband: 0.018,
-  faceTrackingYawKp: 78,
+  faceTrackingSpeed: 420,
+  faceTrackingDeadband: 0.045,
+  faceTrackingYawKp: 42,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 10,
-  faceTrackingPitchKp: 54,
+  faceTrackingYawKd: 8,
+  faceTrackingPitchKp: 30,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 8,
-  faceTrackingIntegralLimit: 0.22,
-  faceTrackingOutputLimitDeg: 32,
+  faceTrackingPitchKd: 6,
+  faceTrackingIntegralLimit: 0.35,
+  faceTrackingOutputLimitDeg: 20,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
   faceLandmarkerModel: "/tmp/stackchan-local-face-landmarker.task",
@@ -128,11 +128,11 @@ async function nextRobotCommand(ws: WebSocket): Promise<Record<string, unknown>>
   }
 }
 
-async function nextRobotCommandMessage(ws: WebSocket): Promise<Record<string, any>> {
+async function nextRobotCommandMessage(ws: WebSocket, kind?: string): Promise<Record<string, any>> {
   for (;;) {
     const [data] = (await once(ws, "message")) as [Buffer];
     const message = JSON.parse(data.toString("utf8"));
-    if (message.type === "robot.command" && message.command) {
+    if (message.type === "robot.command" && message.command && (!kind || message.command.kind === kind)) {
       return message;
     }
   }
@@ -206,6 +206,16 @@ function sendFrame(
   );
 }
 
+function faceAtCenter(centerX: number, centerY: number, width = 0.24, height = 0.32): NormalizedFaceBox {
+  return {
+    x: centerX - width / 2,
+    y: centerY - height / 2,
+    width,
+    height,
+    confidence: 0.9
+  };
+}
+
 describe("VisionTrackingService", () => {
   let server: StackChanWebSocketServer | undefined;
   let service: VisionTrackingService | undefined;
@@ -251,14 +261,14 @@ describe("VisionTrackingService", () => {
     expect(trackFace.detected).toBe(true);
     expect(trackFace.centerX).toBeCloseTo(0.3);
     expect(trackFace.centerY).toBeCloseTo(0.4);
-    expect(trackFace.speed).toBe(760);
+    expect(trackFace.speed).toBe(420);
     expect(trackFace.control).toEqual({
       mode: "pid",
-      deadband: 0.018,
-      yaw: { kp: 78, ki: 0, kd: 10 },
-      pitch: { kp: 54, ki: 0, kd: 8 },
-      integralLimit: 0.22,
-      outputLimitDeg: 32,
+      deadband: 0.045,
+      yaw: { kp: 42, ki: 0, kd: 8 },
+      pitch: { kp: 30, ki: 0, kd: 6 },
+      integralLimit: 0.35,
+      outputLimitDeg: 20,
       servoRange: {
         yawMin: -1280,
         yawMax: 1280,
@@ -275,7 +285,37 @@ describe("VisionTrackingService", () => {
     ws.close();
   });
 
-  it("preserves detector landmarks, pose, transform matrix, and blendshapes in trackFace commands", async () => {
+  it("stabilizes detector target jumps before commanding servos", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([[faceAtCenter(0.3, 0.4)], [faceAtCenter(0.75, 0.75)]]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector, { commandMaxHz: 20 });
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    await nextCommand(ws, "cameraStream");
+
+    sendFrame(ws, "frame-1");
+    const first = await nextCommand(ws, "trackFace");
+    expect(first.detected).toBe(true);
+    expect(first.centerX).toBeCloseTo(0.3);
+    expect(first.centerY).toBeCloseTo(0.4);
+
+    await delay(130);
+    sendFrame(ws, "frame-2");
+    const second = await nextCommand(ws, "trackFace");
+    const jump = Math.hypot(Number(second.centerX) - Number(first.centerX), Number(second.centerY) - Number(first.centerY));
+    expect(jump).toBeLessThanOrEqual(0.055);
+    expect(second.centerX).toBeLessThan(0.36);
+    expect(second.centerY).toBeLessThan(0.46);
+    ws.close();
+  });
+
+  it("sends only face position in tracking commands", async () => {
     const logger = createLogger("error");
     const registry = new DeviceRegistry(logger);
     const controller = new RobotController(registry, logger);
@@ -324,44 +364,21 @@ describe("VisionTrackingService", () => {
     service.setEnabled(true);
     await nextCommand(ws, "cameraStream");
 
-    const commandPromise = collectRobotCommands(ws, 2);
     sendFrame(ws, "frame-1");
-    const commands = await commandPromise;
-    const trackFace = commands.find((command) => command.kind === "trackFace");
-    const react = commands.find((command) => command.kind === "react");
-    expect(trackFace).toBeTruthy();
-    expect(react).toBeTruthy();
+    const trackFace = await nextCommand(ws, "trackFace");
     expect(trackFace.bbox).toMatchObject({
-      trackingId: "face-7",
-      landmarks: {
-        all: [
-          { x: 0.31, y: 0.42, z: -0.03 },
-          { x: 0.22, y: 0.34, z: 0.01 }
-        ],
-        nose: { x: 0.31, y: 0.42, z: -0.03 }
-      },
-      pose: {
-        yawDeg: -9.5,
-        pitchDeg: 3.25,
-        rollDeg: 1.5
-      },
-      transformMatrix: matrix,
-      expression: {
-        blendshapes: {
-          mouthSmileLeft: 0.21
-        }
-      }
+      x: 0.1,
+      y: 0.2,
+      width: 0.4,
+      height: 0.4,
+      confidence: 0.9,
+      trackingId: "face-7"
     });
-    expect(react).toMatchObject({
-      emotion: "neutral",
-      durationMs: 1200,
-      avatarJson: {
-        type: "bleAvatar",
-        leftEye: { weight: 93 },
-        rightEye: { weight: 88 },
-        mouth: { weight: 20 }
-      }
-    });
+    expect(trackFace.bbox).not.toHaveProperty("landmarks");
+    expect(trackFace.bbox).not.toHaveProperty("pose");
+    expect(trackFace.bbox).not.toHaveProperty("transformMatrix");
+    expect(trackFace.bbox).not.toHaveProperty("expression");
+    expect(service.status()).not.toHaveProperty("lastExpression");
     ws.close();
   });
 
@@ -411,8 +428,7 @@ describe("VisionTrackingService", () => {
 
     const ws = await connectDevice(port);
     service.setEnabled(true);
-    const initialCameraStream = await nextRobotCommandMessage(ws);
-    expect(initialCameraStream.command.kind).toBe("cameraStream");
+    const initialCameraStream = await nextRobotCommandMessage(ws, "cameraStream");
     ackCommand(ws, initialCameraStream);
     await delay(20);
 
@@ -428,7 +444,7 @@ describe("VisionTrackingService", () => {
     });
     expect(telemetryConfig).toMatchObject({
       sensorSnapshotHz: 0.5,
-      imuHz: 2,
+      imuHz: 4,
       includeI2cScan: false
     });
     expect(service.status().adaptive.active).toBe(true);
@@ -447,27 +463,29 @@ describe("VisionTrackingService", () => {
 
     const ws = await connectDevice(port, ["audio", "face", "motion", "camera", "mediaCredit"]);
     service.setEnabled(true);
-    const cameraStream = await nextRobotCommandMessage(ws);
-    expect(cameraStream.command.kind).toBe("cameraStream");
+    const cameraStream = await nextRobotCommandMessage(ws, "cameraStream");
     ackCommand(ws, cameraStream);
 
     const initialCredit = await nextCommand(ws, "mediaFlowControl");
     expect(initialCredit).toMatchObject({
       stream: "camera",
-      creditFrames: 2,
-      maxInFlight: 2
+      creditFrames: 3,
+      maxInFlight: 3
     });
 
-    const commandPromise = collectRobotCommands(ws, 2);
     sendFrame(ws, "frame-credit");
-    const commands = await commandPromise;
-    expect(commands.map((command) => command.kind)).toEqual(["trackFace", "mediaFlowControl"]);
-    expect(commands[1]).toMatchObject({
+    const trackFace = await nextCommand(ws, "trackFace");
+    expect(trackFace.detected).toBe(true);
+
+    sendFrame(ws, "frame-credit-2");
+    const refillCredit = await nextCommand(ws, "mediaFlowControl");
+    expect(refillCredit).toMatchObject({
       stream: "camera",
-      creditFrames: 1,
-      maxInFlight: 2
+      creditFrames: 2,
+      maxInFlight: 3
     });
     expect(service.status().mediaCredit.enabled).toBe(true);
+    expect(service.status().mediaCredit.outstandingFrames).toBe(3);
     ws.close();
   });
 
@@ -522,7 +540,7 @@ describe("VisionTrackingService", () => {
     const found = await nextCommand(ws, "trackFace");
     expect(found.detected).toBe(true);
 
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    await delay(125);
     sendFrame(ws, "frame-2");
     const lost = await nextCommand(ws, "trackFace");
     expect(lost.detected).toBe(false);
@@ -530,12 +548,13 @@ describe("VisionTrackingService", () => {
     ws.close();
   });
 
-  it("uses a local landmark and pose detector instead of OpenCV Haar cascades", async () => {
+  it("uses a local MediaPipe face detector without expression outputs", async () => {
     const source = await readFile(new URL("../scripts/face_detector.py", import.meta.url), "utf8");
     expect(source).toContain("mediapipe");
     expect(source).toContain("FaceLandmarker");
     expect(source).toContain("detect_for_video");
-    expect(source).toContain("output_facial_transformation_matrixes=True");
+    expect(source).toContain("output_face_blendshapes=False");
+    expect(source).toContain("output_facial_transformation_matrixes=False");
     expect(source).not.toContain("solvePnP");
     expect(source).not.toContain("cv2");
     expect(source).not.toContain("mp.solutions");

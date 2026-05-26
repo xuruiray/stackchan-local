@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "PCF8563_Class.hpp"
+#include <hardware/bus/i2c_bus.h>
 #include "esp_log.h"
 #include <cstring>
 #include <cstdlib>
@@ -25,6 +26,7 @@ static std::uint8_t byteToBcd2(std::uint8_t value)
 
 PCF8563_Class::PCF8563_Class(i2c_master_bus_handle_t i2c_bus_handle, uint8_t addr) : _addr(addr), _init(false)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address  = _addr,
@@ -36,6 +38,7 @@ PCF8563_Class::PCF8563_Class(i2c_master_bus_handle_t i2c_bus_handle, uint8_t add
 PCF8563_Class::~PCF8563_Class()
 {
     if (_i2c_dev) {
+        stackchan::hal::hardware::bus::I2cBusGuard guard;
         i2c_master_bus_rm_device(_i2c_dev);
     }
 }
@@ -50,12 +53,14 @@ bool PCF8563_Class::begin()
 
 esp_err_t PCF8563_Class::writeRegister8(uint8_t reg, uint8_t value)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     uint8_t buf[2] = {reg, value};
     return i2c_master_transmit(_i2c_dev, buf, sizeof(buf), 1000);
 }
 
 uint8_t PCF8563_Class::readRegister8(uint8_t reg)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     uint8_t val   = 0;
     esp_err_t err = i2c_master_transmit_receive(_i2c_dev, &reg, 1, &val, 1, 1000);
     if (err != ESP_OK) {
@@ -74,6 +79,7 @@ esp_err_t PCF8563_Class::writeRegister(uint8_t reg, const uint8_t* data, size_t 
     buf[0] = reg;
     memcpy(buf + 1, data, len);
 
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     esp_err_t err = i2c_master_transmit(_i2c_dev, buf, len + 1, 1000);
     free(buf);
     return err;
@@ -81,6 +87,7 @@ esp_err_t PCF8563_Class::writeRegister(uint8_t reg, const uint8_t* data, size_t 
 
 esp_err_t PCF8563_Class::readRegister(uint8_t reg, uint8_t* data, size_t len)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     return i2c_master_transmit_receive(_i2c_dev, &reg, 1, data, len, 1000);
 }
 

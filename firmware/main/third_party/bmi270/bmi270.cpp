@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "bmi270.h"
+#include <hardware/bus/i2c_bus.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -37,6 +38,7 @@ constexpr uint8_t BMM150_OP_MODE = 0x4C;
 
 BMI270::BMI270(i2c_master_bus_handle_t i2c_bus_handle, uint8_t addr) : _addr(addr), _initialized(false)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address  = _addr,
@@ -56,6 +58,7 @@ BMI270::BMI270(i2c_master_bus_handle_t i2c_bus_handle, uint8_t addr) : _addr(add
 BMI270::~BMI270()
 {
     if (_i2c_dev) {
+        stackchan::hal::hardware::bus::I2cBusGuard guard;
         i2c_master_bus_rm_device(_i2c_dev);
     }
 }
@@ -63,6 +66,7 @@ BMI270::~BMI270()
 BMI2_INTF_RETURN_TYPE BMI270::bmi2_i2c_read(uint8_t reg_addr, uint8_t* reg_data, uint32_t len, void* intf_ptr)
 {
     i2c_master_dev_handle_t dev = *(i2c_master_dev_handle_t*)intf_ptr;
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     esp_err_t err               = i2c_master_transmit_receive(dev, &reg_addr, 1, reg_data, len, 1000);
     return (err == ESP_OK) ? BMI2_OK : BMI2_E_COM_FAIL;
 }
@@ -77,6 +81,7 @@ BMI2_INTF_RETURN_TYPE BMI270::bmi2_i2c_write(uint8_t reg_addr, const uint8_t* re
     buf[0] = reg_addr;
     memcpy(buf + 1, reg_data, len);
 
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     esp_err_t err = i2c_master_transmit(dev, buf, len + 1, 1000);
     free(buf);
 

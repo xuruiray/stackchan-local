@@ -32,4 +32,10 @@ idf.py build
 idf.py flash monitor
 ```
 
-See `../docs/firmware.md` for Wi-Fi provisioning, local endpoint configuration, and runtime behavior.
+If no Wi-Fi credentials are saved, the firmware starts a `StackChan-XXXX` provisioning AP. Connect to it and open `http://192.168.4.1`.
+
+Local Companion uses the NVS namespace `stackchan_local`:
+
+- `url`: fallback desktop daemon WebSocket URL.
+- `token`: pairing token. Use the same value as `STACKCHAN_PAIRING_TOKEN`.
+- `mdns`: whether mDNS discovery for `_stackchan-local._tcp` is enabled.

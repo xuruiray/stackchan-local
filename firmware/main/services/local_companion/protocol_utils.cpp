@@ -6,9 +6,11 @@
 #include "protocol_utils.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <ctime>
 #include <cstring>
 #include <mbedtls/base64.h>
+#include <sys/time.h>
 
 namespace stackchan::hal::local_companion {
 
@@ -61,11 +63,18 @@ const char* known_command_kind_or_unknown(const char* kind)
 
 std::string iso_now()
 {
-    time_t now = time(nullptr);
+    timeval tv {};
+    gettimeofday(&tv, nullptr);
+
     struct tm timeinfo;
-    gmtime_r(&now, &timeinfo);
+    gmtime_r(&tv.tv_sec, &timeinfo);
+
     char buffer[32];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+    const size_t date_len = strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &timeinfo);
+    if (date_len == 0 || date_len + 5 >= sizeof(buffer)) {
+        return "1970-01-01T00:00:00.000Z";
+    }
+    std::snprintf(buffer + date_len, sizeof(buffer) - date_len, ".%03dZ", static_cast<int>(tv.tv_usec / 1000));
     return std::string(buffer);
 }
 

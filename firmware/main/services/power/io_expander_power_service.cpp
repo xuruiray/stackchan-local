@@ -27,11 +27,13 @@ void DeviceRuntime::io_expander_init()
 
         if (GetDeviceRuntime().millis() - start_tick > 1200) {
             mclog::tagError(_tag, "init timeout");
+            stackchan::hal::hardware::GetHardwareRegistry().set_module_status("body-io-py32", false, "init_timeout");
             stackchan::hal::hardware::body_io_expander_release();
             break;
         }
 
         if (stackchan::hal::hardware::body_io_expander_begin()) {
+            stackchan::hal::hardware::GetHardwareRegistry().set_module_status("body-io-py32", true);
             GetDeviceRuntime().recordI2cDiagnosticScan("after_py32_begin");
             break;
         }

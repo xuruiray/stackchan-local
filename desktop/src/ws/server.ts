@@ -155,9 +155,16 @@ export class StackChanWebSocketServer {
       });
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code, reason) => {
       if (session) {
-        this.registry.markOffline(session.deviceId);
+        this.logger.warn("device websocket closed", {
+          type: "device",
+          deviceId: session.deviceId,
+          sessionId: session.sessionId,
+          code,
+          reason: reason.toString("utf8")
+        });
+        this.registry.markOffline(session.deviceId, session.sessionId);
       }
     });
 

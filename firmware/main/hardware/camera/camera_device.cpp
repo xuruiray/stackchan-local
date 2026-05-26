@@ -878,7 +878,7 @@ bool StackChanCamera::Capture()
     return true;
 }
 
-bool StackChanCamera::StreamCaptures()
+bool StackChanCamera::StreamCaptures(bool fresh_frame)
 {
     if (encoder_thread_.joinable()) {
         encoder_thread_.join();
@@ -886,6 +886,20 @@ bool StackChanCamera::StreamCaptures()
 
     if (!streaming_on_ || video_fd_ < 0) {
         return false;
+    }
+
+    if (fresh_frame) {
+        struct v4l2_buffer stale_buf = {};
+        stale_buf.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        stale_buf.memory             = V4L2_MEMORY_MMAP;
+        if (ioctl(video_fd_, VIDIOC_DQBUF, &stale_buf) == 0) {
+            if (ioctl(video_fd_, VIDIOC_QBUF, &stale_buf) != 0) {
+                ESP_LOGE(TAG, "fresh frame discard VIDIOC_QBUF failed");
+                return false;
+            }
+        } else {
+            ESP_LOGW(TAG, "fresh frame discard VIDIOC_DQBUF failed, errno=%d(%s)", errno, strerror(errno));
+        }
     }
 
     {

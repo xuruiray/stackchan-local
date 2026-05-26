@@ -1,9 +1,7 @@
 import type {
-  FaceExpression,
   FaceTrackingControl,
   NormalizedFaceBox,
   ProtocolTrace,
-  RobotEmotion,
   RobotEventMessage
 } from "@stackchan-local/protocol";
 
@@ -39,6 +37,8 @@ export interface VisionTrackingStatus {
   fps: number;
   mirrorX: boolean;
   control: VisionTrackingSettings;
+  sourceCamera: VisionCameraSourceStatus;
+  rawPreview: VisionRawPreviewStatus;
   adaptive: VisionAdaptiveStatus;
   detectorAvailable: boolean;
   lastFrameAt?: string;
@@ -46,9 +46,6 @@ export interface VisionTrackingStatus {
   lastFaceAt?: string;
   lastCommandAt?: string;
   lastTarget?: NormalizedFaceBox;
-  lastExpression?: FaceExpressionSummary;
-  lastExpressionAt?: string;
-  lastExpressionCommandAt?: string;
   lastError?: string;
   framesReceived: number;
   framesDropped: number;
@@ -64,6 +61,21 @@ export interface VisionAdaptiveStatus {
   quality: number;
   dropRate: number;
   reason?: string;
+  lastChangedAt?: string;
+}
+
+export interface VisionCameraSourceStatus {
+  enabled: boolean;
+  owner: "rawPreview" | "faceTracking" | "idle";
+  fps: number;
+  quality: number;
+  width: number;
+  height: number;
+}
+
+export interface VisionRawPreviewStatus {
+  enabled: boolean;
+  camera: CameraStreamSettings;
   lastChangedAt?: string;
 }
 
@@ -91,6 +103,7 @@ export interface VisionLatencyStatus {
 export interface VisionMediaCreditStatus {
   enabled: boolean;
   grantedFrames: number;
+  outstandingFrames: number;
   lastGrantedAt?: string;
   reason?: string;
 }
@@ -114,6 +127,7 @@ export interface VisionTrackingSettings {
 export interface VisionTrackingSettingsPatch {
   speed?: number;
   cameraPreset?: CameraPresetName;
+  camera?: Partial<Pick<CameraStreamSettings, "width" | "height" | "fps" | "quality">>;
   detector?: Partial<FaceDetectorSettings>;
   control?: Partial<Omit<FaceTrackingControl, "mode" | "yaw" | "pitch" | "servoRange">> & {
     mode?: "pid";
@@ -121,6 +135,14 @@ export interface VisionTrackingSettingsPatch {
     pitch?: Partial<FaceTrackingControl["pitch"]>;
     servoRange?: Partial<FaceTrackingControl["servoRange"]>;
   };
+}
+
+export interface RawPreviewSettingsPatch {
+  enabled: boolean;
+  width?: number;
+  height?: number;
+  fps?: number;
+  quality?: number;
 }
 
 export interface VisionTrackingOptions {
@@ -132,7 +154,7 @@ export interface VisionTrackingOptions {
 }
 
 const DEFAULT_OPTIONS: Required<VisionTrackingOptions> = {
-  commandMaxHz: 10,
+  commandMaxHz: 6,
   lostTimeoutMs: 1500,
   streamRetryMs: 1000,
   adaptivePressureMs: 5000,
@@ -148,12 +170,30 @@ const ADAPTIVE_DROP_RATE_THRESHOLD = 0.08;
 const ADAPTIVE_LATENCY_FRAME_RATIO = 0.8;
 const ADAPTIVE_WINDOW_MS = 5_000;
 const ADAPTIVE_MAX_LEVEL = 2;
-const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 2;
-const CAMERA_MEDIA_STEADY_CREDIT_FRAMES = 1;
-const CAMERA_MEDIA_MAX_IN_FLIGHT = 2;
-const EXPRESSION_CHANGED_INTERVAL_MS = 450;
-const EXPRESSION_REFRESH_INTERVAL_MS = 900;
-const EXPRESSION_REACT_DURATION_MS = 1200;
+const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 3;
+const CAMERA_MEDIA_STEADY_CREDIT_FRAMES = 3;
+const CAMERA_MEDIA_MAX_IN_FLIGHT = 3;
+const CAMERA_MEDIA_REFILL_THRESHOLD = 1;
+const RAW_PREVIEW_MEDIA_INITIAL_CREDIT_FRAMES = 3;
+const RAW_PREVIEW_MEDIA_STEADY_CREDIT_FRAMES = 3;
+const RAW_PREVIEW_MEDIA_MAX_IN_FLIGHT = 3;
+const RAW_PREVIEW_MEDIA_REFILL_THRESHOLD = 1;
+const CAMERA_STREAM_WIDTH = 320;
+const CAMERA_STREAM_HEIGHT = 240;
+const RAW_PREVIEW_CAMERA: CameraStreamSettings = {
+  preset: "fast",
+  width: CAMERA_STREAM_WIDTH,
+  height: CAMERA_STREAM_HEIGHT,
+  fps: 10,
+  quality: 14
+};
+const TRACK_TARGET_CENTER_EPSILON = 0.025;
+const TRACK_TARGET_SIZE_EPSILON = 0.03;
+const TRACK_TARGET_REFRESH_MS = 1200;
+const TRACK_TARGET_SMOOTH_ALPHA = 0.35;
+const TRACK_TARGET_SIZE_ALPHA = 0.25;
+const TRACK_TARGET_MAX_CENTER_STEP = 0.045;
+const TRACK_TARGET_STICKINESS_WEIGHT = 0.18;
 
 const OFFICIAL_SERVO_RANGE: FaceTrackingControl["servoRange"] = {
   yawMin: -1280,
@@ -161,18 +201,6 @@ const OFFICIAL_SERVO_RANGE: FaceTrackingControl["servoRange"] = {
   pitchMin: 0,
   pitchMax: 900
 };
-
-export interface FaceExpressionSummary {
-  emotion: RobotEmotion;
-  smile?: number;
-  leftEyeOpen?: number;
-  rightEyeOpen?: number;
-  jawOpen?: number;
-  mouthFunnel?: number;
-  eyeWide?: number;
-  browInnerUp?: number;
-  topBlendshapes?: Array<{ name: string; score: number }>;
-}
 
 export class VisionTrackingService {
   private readonly detector: FaceDetector;
@@ -189,23 +217,27 @@ export class VisionTrackingService {
   private lastDetectionAt?: Date;
   private lastFaceAt?: Date;
   private lastTarget?: NormalizedFaceBox;
-  private lastExpression?: FaceExpressionSummary;
-  private lastExpressionAt?: Date;
-  private lastExpressionCommandAt = 0;
-  private lastExpressionSignature?: string;
+  private smoothedTarget?: NormalizedFaceBox;
+  private lastSentTrackTarget?: NormalizedFaceBox;
   private lastFrame?: VisionFrameSnapshot;
   private lastFaces: NormalizedFaceBox[] = [];
   private lastError?: string;
   private detectorLatencyMs?: number;
   private lastDetectorTimestampMs = 0;
+  private lastDetectionInputAt = 0;
   private cameraStreamInFlight = false;
   private cameraStreamAckFailures = 0;
   private lastCameraRecoveryAt = 0;
+  private streamEnabled = false;
+  private streamOwner: VisionCameraSourceStatus["owner"] = "idle";
+  private streamCamera: CameraStreamSettings = { ...RAW_PREVIEW_CAMERA };
   private framesReceived = 0;
   private framesDropped = 0;
   private mediaCreditGrantedFrames = 0;
+  private mediaCreditOutstandingFrames = 0;
   private mediaCreditLastGrantedAt = 0;
   private mediaCreditReason?: string;
+  private mediaCreditSessionId?: string;
   private adaptiveLevel = 0;
   private adaptiveReason?: string;
   private adaptiveLastChangedAt = 0;
@@ -215,6 +247,9 @@ export class VisionTrackingService {
   private adaptiveWindowFrames = 0;
   private adaptiveWindowDropped = 0;
   private adaptiveDropRate = 0;
+  private rawPreviewEnabled = false;
+  private rawPreviewCamera: CameraStreamSettings = { ...RAW_PREVIEW_CAMERA };
+  private rawPreviewLastChangedAt = 0;
   private settings: VisionTrackingSettings;
   private readonly previewListeners = new Set<VisionPreviewListener>();
 
@@ -269,24 +304,23 @@ export class VisionTrackingService {
     this.enabled = enabled;
     this.lostCommandSent = false;
     this.lastError = undefined;
+    this.lastTarget = undefined;
+    this.smoothedTarget = undefined;
+    this.lastSentTrackTarget = undefined;
     if (enabled) {
+      this.lastDetectionInputAt = 0;
       this.logger.info("face tracking enabled", {
         fps: this.effectiveCameraSettings().fps,
         camera: this.effectiveCameraSettings(),
         mirrorX: this.config.faceTrackingMirrorX
       });
       this.ensureCameraStream(true);
+      setImmediate(() => this.configureTelemetryForTracking(true, "face tracking enabled"));
     } else {
       this.logger.info("face tracking disabled");
       this.resetAdaptiveState("face tracking disabled");
-      void this.controller.cameraStream({
-        enabled: false,
-        fps: this.settings.camera.fps,
-        width: this.settings.camera.width,
-        height: this.settings.camera.height,
-        quality: this.settings.camera.quality,
-        format: "jpeg"
-      });
+      this.ensureCameraStream(true);
+      setImmediate(() => this.configureTelemetryForTracking(false, "face tracking disabled"));
       void this.controller.trackFace({
         detected: false,
         reason: "tracking_disabled",
@@ -307,12 +341,11 @@ export class VisionTrackingService {
       this.detectorAvailable = true;
       this.detectorLatencyMs = undefined;
       this.lastDetectionAt = undefined;
+      this.lastDetectionInputAt = 0;
       this.lastFaces = [];
       this.lastTarget = undefined;
-      this.lastExpression = undefined;
-      this.lastExpressionAt = undefined;
-      this.lastExpressionCommandAt = 0;
-      this.lastExpressionSignature = undefined;
+      this.smoothedTarget = undefined;
+      this.lastSentTrackTarget = undefined;
     }
     if (
       this.enabled &&
@@ -330,13 +363,36 @@ export class VisionTrackingService {
     return this.status();
   }
 
+  setRawPreview(patch: RawPreviewSettingsPatch): VisionTrackingStatus {
+    this.rawPreviewEnabled = patch.enabled;
+    this.rawPreviewCamera = {
+      preset: "fast",
+      width: CAMERA_STREAM_WIDTH,
+      height: CAMERA_STREAM_HEIGHT,
+      fps: clampInt(patch.fps ?? this.rawPreviewCamera.fps, 1, 15),
+      quality: clampInt(patch.quality ?? this.rawPreviewCamera.quality, 1, 35)
+    };
+    this.rawPreviewLastChangedAt = Date.now();
+    this.lastStreamCommandAt = 0;
+    this.ensureCameraStream(true);
+    this.emitPreviewUpdate();
+    return this.status();
+  }
+
   status(): VisionTrackingStatus {
     const camera = this.effectiveCameraSettings();
+    const sourceCamera = this.currentSourceCameraStatus();
     return {
       enabled: this.enabled,
       fps: camera.fps,
       mirrorX: this.config.faceTrackingMirrorX,
       control: this.settings,
+      sourceCamera,
+      rawPreview: {
+        enabled: this.rawPreviewEnabled,
+        camera: this.rawPreviewCamera,
+        lastChangedAt: this.rawPreviewLastChangedAt > 0 ? new Date(this.rawPreviewLastChangedAt).toISOString() : undefined
+      },
       adaptive: {
         level: this.adaptiveLevel,
         active: this.adaptiveLevel > 0,
@@ -352,10 +408,6 @@ export class VisionTrackingService {
       lastFaceAt: this.lastFaceAt?.toISOString(),
       lastCommandAt: this.lastCommandAt > 0 ? new Date(this.lastCommandAt).toISOString() : undefined,
       lastTarget: this.lastTarget,
-      lastExpression: this.lastExpression,
-      lastExpressionAt: this.lastExpressionAt?.toISOString(),
-      lastExpressionCommandAt:
-        this.lastExpressionCommandAt > 0 ? new Date(this.lastExpressionCommandAt).toISOString() : undefined,
       lastError: this.lastError,
       framesReceived: this.framesReceived,
       framesDropped: this.framesDropped,
@@ -364,6 +416,7 @@ export class VisionTrackingService {
       mediaCredit: {
         enabled: this.mediaCreditEnabled(),
         grantedFrames: this.mediaCreditGrantedFrames,
+        outstandingFrames: this.mediaCreditOutstandingFrames,
         lastGrantedAt: this.mediaCreditLastGrantedAt > 0 ? new Date(this.mediaCreditLastGrantedAt).toISOString() : undefined,
         reason: this.mediaCreditReason
       }
@@ -385,26 +438,60 @@ export class VisionTrackingService {
   }
 
   private ensureCameraStream(force = false): void {
-    if (!this.enabled) {
+    const desired = this.desiredCameraStream();
+    if (!desired) {
+      if (!this.streamEnabled || this.cameraStreamInFlight) {
+        return;
+      }
+      this.cameraStreamInFlight = true;
+      const resultPromise = this.controller.cameraStream({
+        enabled: false,
+        fps: this.streamCamera.fps,
+        width: this.streamCamera.width,
+        height: this.streamCamera.height,
+        quality: this.streamCamera.quality,
+        format: "jpeg"
+      });
+      void resultPromise
+        .then((result) => {
+          if (result.sent && (!result.ack || result.ack.status === "accepted")) {
+            this.streamEnabled = false;
+            this.streamOwner = "idle";
+            this.mediaCreditOutstandingFrames = 0;
+            this.mediaCreditSessionId = undefined;
+          } else {
+            this.lastError = result.reason ?? result.ack?.message ?? "camera stream stop was not accepted";
+          }
+        })
+        .catch((error) => {
+          this.lastError = error instanceof Error ? error.message : String(error);
+        })
+        .finally(() => {
+          this.cameraStreamInFlight = false;
+          this.emitPreviewUpdate();
+        });
       return;
     }
+
     const now = Date.now();
     if (this.cameraStreamInFlight) {
       return;
     }
 
     const frameStale = !this.lastFrameAt || now - this.lastFrameAt.getTime() > CAMERA_STREAM_STALE_MS;
+    const cameraChanged =
+      !this.streamEnabled || this.streamOwner !== desired.owner || !sameCameraSettings(this.streamCamera, desired.camera);
     const retryMs = frameStale
       ? Math.min(
           CAMERA_STREAM_MAX_RETRY_MS,
           this.options.streamRetryMs * Math.max(1, 2 ** Math.min(this.cameraStreamAckFailures, 4))
         )
       : CAMERA_STREAM_HEALTHY_REFRESH_MS;
-    if (!force && now - this.lastStreamCommandAt < retryMs) {
+    if (!force && !cameraChanged && now - this.lastStreamCommandAt < retryMs) {
       return;
     }
     this.cameraStreamInFlight = true;
-    const camera = this.effectiveCameraSettings();
+    const { camera, owner } = desired;
     const resultPromise = this.controller.cameraStream({
       enabled: true,
       fps: camera.fps,
@@ -418,7 +505,14 @@ export class VisionTrackingService {
       this.cameraStreamInFlight = false;
       if (result.sent && (!result.ack || result.ack.status === "accepted")) {
         this.cameraStreamAckFailures = 0;
-        this.grantCameraMediaCredit(CAMERA_MEDIA_INITIAL_CREDIT_FRAMES, "camera stream active");
+        this.streamEnabled = true;
+        this.streamOwner = owner;
+        this.streamCamera = { ...camera };
+        this.mediaCreditOutstandingFrames = 0;
+        this.grantCameraMediaCredit(
+          owner === "rawPreview" ? RAW_PREVIEW_MEDIA_INITIAL_CREDIT_FRAMES : CAMERA_MEDIA_INITIAL_CREDIT_FRAMES,
+          "camera stream active"
+        );
         return;
       }
       this.cameraStreamAckFailures += 1;
@@ -449,7 +543,7 @@ export class VisionTrackingService {
   }
 
   private async handleEvent(message: RobotEventMessage): Promise<void> {
-    if (!this.enabled || message.event.kind !== "cameraFrame") {
+    if (message.event.kind !== "cameraFrame" || (!this.enabled && !this.rawPreviewEnabled)) {
       return;
     }
     const receivedAt = new Date();
@@ -461,6 +555,9 @@ export class VisionTrackingService {
     this.framesReceived += 1;
     this.adaptiveWindowFrames += 1;
     this.cameraStreamAckFailures = 0;
+    if (this.mediaCreditEnabled()) {
+      this.mediaCreditOutstandingFrames = Math.max(0, this.mediaCreditOutstandingFrames - 1);
+    }
     this.lastFrameAt = receivedAt;
     this.lastFrame = {
       frameId: message.event.frameId,
@@ -476,6 +573,14 @@ export class VisionTrackingService {
       trace
     };
     this.emitPreviewUpdate();
+
+    if (!this.shouldRunDetector(receivedAt.getTime())) {
+      this.grantCameraMediaCredit(
+        this.rawPreviewEnabled ? RAW_PREVIEW_MEDIA_STEADY_CREDIT_FRAMES : CAMERA_MEDIA_STEADY_CREDIT_FRAMES,
+        this.rawPreviewEnabled ? "raw preview ready" : "detector sample skipped"
+      );
+      return;
+    }
 
     if (this.inFlight) {
       this.framesDropped += 1;
@@ -519,17 +624,37 @@ export class VisionTrackingService {
   }
 
   private grantCameraMediaCredit(creditFrames: number, reason: string): void {
-    if (!this.enabled || !this.mediaCreditEnabled()) {
+    if (!this.enabled && !this.rawPreviewEnabled) {
       return;
     }
-    this.mediaCreditGrantedFrames += creditFrames;
+    const session = this.registry.getActiveSession();
+    if (!session?.capabilities.includes("mediaCredit")) {
+      this.mediaCreditOutstandingFrames = 0;
+      this.mediaCreditSessionId = undefined;
+      return;
+    }
+    const maxInFlight = this.rawPreviewEnabled ? RAW_PREVIEW_MEDIA_MAX_IN_FLIGHT : CAMERA_MEDIA_MAX_IN_FLIGHT;
+    const refillThreshold = this.rawPreviewEnabled ? RAW_PREVIEW_MEDIA_REFILL_THRESHOLD : CAMERA_MEDIA_REFILL_THRESHOLD;
+    if (this.mediaCreditSessionId !== session.sessionId) {
+      this.mediaCreditSessionId = session.sessionId;
+      this.mediaCreditOutstandingFrames = 0;
+    }
+    if (this.mediaCreditOutstandingFrames > refillThreshold) {
+      return;
+    }
+    const grantedFrames = Math.min(creditFrames, maxInFlight - this.mediaCreditOutstandingFrames);
+    if (grantedFrames <= 0) {
+      return;
+    }
+    this.mediaCreditOutstandingFrames += grantedFrames;
+    this.mediaCreditGrantedFrames += grantedFrames;
     this.mediaCreditLastGrantedAt = Date.now();
     this.mediaCreditReason = reason;
     void this.controller.mediaFlowControl(
       {
         stream: "camera",
-        creditFrames,
-        maxInFlight: CAMERA_MEDIA_MAX_IN_FLIGHT,
+        creditFrames: grantedFrames,
+        maxInFlight,
         reason
       },
       { waitForAck: false }
@@ -538,6 +663,42 @@ export class VisionTrackingService {
 
   private mediaCreditEnabled(): boolean {
     return this.registry.getActiveSession()?.capabilities.includes("mediaCredit") ?? false;
+  }
+
+  private shouldRunDetector(receivedAtMs: number): boolean {
+    if (!this.enabled) {
+      return false;
+    }
+    const fps = Math.max(1, this.settings.camera.fps);
+    const minIntervalMs = 1000 / fps;
+    if (receivedAtMs - this.lastDetectionInputAt < minIntervalMs) {
+      return false;
+    }
+    this.lastDetectionInputAt = receivedAtMs;
+    return true;
+  }
+
+  private desiredCameraStream(): { owner: "rawPreview" | "faceTracking"; camera: CameraStreamSettings } | undefined {
+    if (this.rawPreviewEnabled) {
+      return { owner: "rawPreview", camera: this.rawPreviewCamera };
+    }
+    if (this.enabled) {
+      return { owner: "faceTracking", camera: this.effectiveCameraSettings() };
+    }
+    return undefined;
+  }
+
+  private currentSourceCameraStatus(): VisionCameraSourceStatus {
+    const desired = this.desiredCameraStream();
+    const camera = desired?.camera ?? this.streamCamera;
+    return {
+      enabled: Boolean(desired),
+      owner: desired?.owner ?? "idle",
+      fps: camera.fps,
+      quality: camera.quality,
+      width: camera.width,
+      height: camera.height
+    };
   }
 
   private effectiveCameraSettings(): CameraStreamSettings {
@@ -610,8 +771,8 @@ export class VisionTrackingService {
     this.ensureCameraStream(true);
     void this.controller.telemetryConfig(
       {
-        sensorSnapshotHz: level > 0 ? 0.5 : 1,
-        imuHz: level > 0 ? 2 : 4,
+        sensorSnapshotHz: level > 0 ? 0.5 : 2,
+        imuHz: level > 0 ? 4 : 10,
         includeI2cScan: level === 0,
         reason
       },
@@ -634,8 +795,8 @@ export class VisionTrackingService {
     if (wasAdaptive) {
       void this.controller.telemetryConfig(
         {
-          sensorSnapshotHz: 1,
-          imuHz: 4,
+          sensorSnapshotHz: 2,
+          imuHz: 10,
           includeI2cScan: true,
           reason
         },
@@ -644,26 +805,38 @@ export class VisionTrackingService {
     }
   }
 
+  private configureTelemetryForTracking(enabled: boolean, reason: string): void {
+    void this.controller.telemetryConfig(
+      {
+        sensorSnapshotHz: enabled ? 1 : 2,
+        imuHz: enabled ? 4 : 10,
+        includeI2cScan: !enabled,
+        reason
+      },
+      { waitForAck: false }
+    );
+  }
+
   private handleDetection(result: FaceDetectionResult): void {
-    this.lastFaces = result.faces;
-    const selected = selectTrackingFace(result.faces);
+    this.lastFaces = result.faces.map(positionOnlyFace);
+    const selected = selectTrackingFace(this.lastFaces, this.smoothedTarget ?? this.lastTarget);
     if (selected) {
-      const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(selected) : selected;
+      const stableTarget = this.stabilizeTrackingTarget(selected);
+      const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(stableTarget) : stableTarget;
       const centerX = trackingTarget.x + trackingTarget.width / 2;
       const centerY = trackingTarget.y + trackingTarget.height / 2;
       this.lastFaceAt = new Date();
-      this.lastTarget = selected;
+      this.lastTarget = stableTarget;
       this.lostCommandSent = false;
       this.sendTrackCommand({
         detected: true,
         centerX,
         centerY,
-        bbox: selected,
-        confidence: selected.confidence,
+        bbox: trackingTarget,
+        confidence: stableTarget.confidence,
         speed: this.settings.speed,
         control: this.settings.control
       });
-      this.syncExpression(selected);
       this.emitPreviewUpdate();
       return;
     }
@@ -677,6 +850,7 @@ export class VisionTrackingService {
 
     if (Date.now() - this.lastFaceAt.getTime() >= this.options.lostTimeoutMs) {
       this.lostCommandSent = true;
+      this.smoothedTarget = undefined;
       this.sendTrackCommand({
         detected: false,
         reason: "face_lost",
@@ -686,13 +860,45 @@ export class VisionTrackingService {
     }
   }
 
+  private stabilizeTrackingTarget(rawTarget: NormalizedFaceBox): NormalizedFaceBox {
+    const previous = this.smoothedTarget;
+    if (!previous) {
+      this.smoothedTarget = clampFace(rawTarget);
+      return this.smoothedTarget;
+    }
+
+    const previousCenter = faceCenter(previous);
+    const rawCenter = faceCenter(rawTarget);
+    const lowPassCenter = {
+      x: previousCenter.x + (rawCenter.x - previousCenter.x) * TRACK_TARGET_SMOOTH_ALPHA,
+      y: previousCenter.y + (rawCenter.y - previousCenter.y) * TRACK_TARGET_SMOOTH_ALPHA
+    };
+    const center = limitCenterStep(previousCenter, lowPassCenter, TRACK_TARGET_MAX_CENTER_STEP);
+    const width = clampNumber(previous.width + (rawTarget.width - previous.width) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
+    const height = clampNumber(previous.height + (rawTarget.height - previous.height) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
+    const stableTarget: NormalizedFaceBox = {
+      ...rawTarget,
+      width,
+      height,
+      x: clampNumber(center.x - width / 2, 0, 1 - width),
+      y: clampNumber(center.y - height / 2, 0, 1 - height)
+    };
+    this.smoothedTarget = stableTarget;
+    return stableTarget;
+  }
+
   private sendTrackCommand(command: Parameters<RobotController["trackFace"]>[0]): void {
     const now = Date.now();
     const minInterval = 1000 / this.options.commandMaxHz;
-    if (command.detected && now - this.lastCommandAt < minInterval) {
+    if (command.detected && !this.shouldSendDetectedTarget(command.bbox, now, minInterval)) {
       return;
     }
     this.lastCommandAt = now;
+    if (command.detected && command.bbox) {
+      this.lastSentTrackTarget = command.bbox;
+    } else {
+      this.lastSentTrackTarget = undefined;
+    }
     void this.controller.trackFace(command, { waitForAck: false }).then((result) => {
       if (!result.sent) {
         this.lastError = result.reason ?? "face tracking command was not sent";
@@ -701,37 +907,27 @@ export class VisionTrackingService {
     });
   }
 
-  private syncExpression(face: NormalizedFaceBox): void {
-    const expression = buildExpressionSync(face);
-    if (!expression) {
-      return;
+  private shouldSendDetectedTarget(target: NormalizedFaceBox | undefined, now: number, minIntervalMs: number): boolean {
+    if (now - this.lastCommandAt < minIntervalMs) {
+      return false;
+    }
+    if (!target || !this.lastSentTrackTarget) {
+      return true;
+    }
+    if (now - this.lastCommandAt >= TRACK_TARGET_REFRESH_MS) {
+      return true;
     }
 
-    const now = Date.now();
-    this.lastExpression = expression.summary;
-    this.lastExpressionAt = new Date(now);
-
-    const changed = expression.signature !== this.lastExpressionSignature;
-    const minInterval = changed ? EXPRESSION_CHANGED_INTERVAL_MS : EXPRESSION_REFRESH_INTERVAL_MS;
-    if (now - this.lastExpressionCommandAt < minInterval) {
-      return;
-    }
-
-    this.lastExpressionSignature = expression.signature;
-    this.lastExpressionCommandAt = now;
-    void this.controller.react(
-      {
-        emotion: expression.summary.emotion,
-        durationMs: EXPRESSION_REACT_DURATION_MS,
-        avatarJson: expression.avatarJson
-      },
-      { waitForAck: false }
-    ).then((result) => {
-      if (!result.sent) {
-        this.lastError = result.reason ?? "face expression command was not sent";
-      }
-      this.emitPreviewUpdate();
-    });
+    const previousCenterX = this.lastSentTrackTarget.x + this.lastSentTrackTarget.width / 2;
+    const previousCenterY = this.lastSentTrackTarget.y + this.lastSentTrackTarget.height / 2;
+    const centerX = target.x + target.width / 2;
+    const centerY = target.y + target.height / 2;
+    return (
+      Math.abs(centerX - previousCenterX) >= TRACK_TARGET_CENTER_EPSILON ||
+      Math.abs(centerY - previousCenterY) >= TRACK_TARGET_CENTER_EPSILON ||
+      Math.abs(target.width - this.lastSentTrackTarget.width) >= TRACK_TARGET_SIZE_EPSILON ||
+      Math.abs(target.height - this.lastSentTrackTarget.height) >= TRACK_TARGET_SIZE_EPSILON
+    );
   }
 
   private nextDetectorTimestampMs(timestamp: string): number {
@@ -765,18 +961,24 @@ export class VisionTrackingService {
   }
 }
 
-export function selectTrackingFace(faces: NormalizedFaceBox[]): NormalizedFaceBox | undefined {
+export function selectTrackingFace(
+  faces: NormalizedFaceBox[],
+  previousTarget?: NormalizedFaceBox
+): NormalizedFaceBox | undefined {
   return faces
     .filter((face) => face.width > 0 && face.height > 0)
-    .sort((a, b) => faceScore(b) - faceScore(a))[0];
+    .sort((a, b) => faceScore(b, previousTarget) - faceScore(a, previousTarget))[0];
 }
 
-function faceScore(face: NormalizedFaceBox): number {
+function faceScore(face: NormalizedFaceBox, previousTarget?: NormalizedFaceBox): number {
   const area = face.width * face.height;
   const centerX = face.x + face.width / 2;
   const centerY = face.y + face.height / 2;
   const distanceFromCenter = Math.hypot(centerX - 0.5, centerY - 0.5);
-  return area - distanceFromCenter * 0.05;
+  const distanceFromPrevious = previousTarget
+    ? Math.hypot(centerX - (previousTarget.x + previousTarget.width / 2), centerY - (previousTarget.y + previousTarget.height / 2))
+    : 0;
+  return area - distanceFromCenter * 0.05 - distanceFromPrevious * TRACK_TARGET_STICKINESS_WEIGHT;
 }
 
 function mirrorFace(face: NormalizedFaceBox): NormalizedFaceBox {
@@ -786,187 +988,60 @@ function mirrorFace(face: NormalizedFaceBox): NormalizedFaceBox {
   };
 }
 
-function buildExpressionSync(face: NormalizedFaceBox):
-  | {
-      summary: FaceExpressionSummary;
-      avatarJson: Record<string, unknown>;
-      signature: string;
-    }
-  | undefined {
-  if (!face.expression) {
-    return undefined;
-  }
-
-  const expression = normalizeExpression(face.expression);
-  const emotion = classifyExpression(expression);
-  const avatarJson = expressionAvatarJson(expression);
-  const summary: FaceExpressionSummary = {
-    emotion,
-    smile: expression.smile,
-    leftEyeOpen: expression.leftEyeOpen,
-    rightEyeOpen: expression.rightEyeOpen,
-    jawOpen: expression.jawOpen,
-    mouthFunnel: expression.mouthFunnel,
-    eyeWide: expression.eyeWide,
-    browInnerUp: expression.browInnerUp,
-    topBlendshapes: topBlendshapes(expression.blendshapes)
-  };
-
+function positionOnlyFace(face: NormalizedFaceBox): NormalizedFaceBox {
   return {
-    summary,
-    avatarJson,
-    signature: [
-      emotion,
-      roundBucket(expression.smile, 0.08),
-      roundBucket(expression.leftEyeOpen, 0.08),
-      roundBucket(expression.rightEyeOpen, 0.08),
-      roundBucket(expression.jawOpen, 0.08),
-      roundBucket(expression.mouthFunnel, 0.08),
-      roundBucket(expression.eyeWide, 0.08),
-      avatarJsonSignature(avatarJson)
-    ].join(":")
+    x: face.x,
+    y: face.y,
+    width: face.width,
+    height: face.height,
+    confidence: face.confidence,
+    trackingId: face.trackingId,
+    detector: face.detector
   };
 }
 
-interface NormalizedExpression {
-  smile: number;
-  leftEyeOpen: number;
-  rightEyeOpen: number;
-  jawOpen: number;
-  mouthFunnel: number;
-  eyeWide: number;
-  eyeSquint: number;
-  cheekSquint: number;
-  browInnerUp: number;
-  browDown: number;
-  noseSneer: number;
-  mouthSmileLeft: number;
-  mouthSmileRight: number;
-  blendshapes: Record<string, number>;
-}
-
-function normalizeExpression(expression: FaceExpression): NormalizedExpression {
-  const blendshapes = expression.blendshapes ?? {};
-  const leftBlink = numberOrZero(blendshapes.eyeBlinkLeft);
-  const rightBlink = numberOrZero(blendshapes.eyeBlinkRight);
-  const mouthSmileLeft = numberOrZero(blendshapes.mouthSmileLeft);
-  const mouthSmileRight = numberOrZero(blendshapes.mouthSmileRight);
-
+function faceCenter(face: NormalizedFaceBox): { x: number; y: number } {
   return {
-    smile: clamp01(expression.smile ?? average(mouthSmileLeft, mouthSmileRight)),
-    leftEyeOpen: clamp01(expression.leftEyeOpen ?? 1 - leftBlink),
-    rightEyeOpen: clamp01(expression.rightEyeOpen ?? 1 - rightBlink),
-    jawOpen: clamp01(numberOrZero(blendshapes.jawOpen)),
-    mouthFunnel: clamp01(numberOrZero(blendshapes.mouthFunnel)),
-    eyeWide: clamp01(average(numberOrZero(blendshapes.eyeWideLeft), numberOrZero(blendshapes.eyeWideRight))),
-    eyeSquint: clamp01(average(numberOrZero(blendshapes.eyeSquintLeft), numberOrZero(blendshapes.eyeSquintRight))),
-    cheekSquint: clamp01(average(numberOrZero(blendshapes.cheekSquintLeft), numberOrZero(blendshapes.cheekSquintRight))),
-    browInnerUp: clamp01(numberOrZero(blendshapes.browInnerUp)),
-    browDown: clamp01(average(numberOrZero(blendshapes.browDownLeft), numberOrZero(blendshapes.browDownRight))),
-    noseSneer: clamp01(average(numberOrZero(blendshapes.noseSneerLeft), numberOrZero(blendshapes.noseSneerRight))),
-    mouthSmileLeft,
-    mouthSmileRight,
-    blendshapes
+    x: face.x + face.width / 2,
+    y: face.y + face.height / 2
   };
 }
 
-function classifyExpression(expression: NormalizedExpression): RobotEmotion {
-  const eyesOpen = average(expression.leftEyeOpen, expression.rightEyeOpen);
-  if (eyesOpen < 0.24 || expression.eyeSquint > 0.65) {
-    return "sleepy";
+function limitCenterStep(
+  previous: { x: number; y: number },
+  next: { x: number; y: number },
+  maxStep: number
+): { x: number; y: number } {
+  const deltaX = next.x - previous.x;
+  const deltaY = next.y - previous.y;
+  const distance = Math.hypot(deltaX, deltaY);
+  if (distance <= maxStep || distance === 0) {
+    return {
+      x: clampNumber(next.x, 0, 1),
+      y: clampNumber(next.y, 0, 1)
+    };
   }
-  if (expression.eyeWide > 0.42 && (expression.jawOpen > 0.2 || expression.mouthFunnel > 0.2 || expression.browInnerUp > 0.34)) {
-    return "surprised";
-  }
-  if (expression.browDown > 0.38 || expression.noseSneer > 0.32) {
-    return "angry";
-  }
-  if (
-    expression.smile > 0.32 ||
-    (expression.smile > 0.22 && (expression.eyeSquint > 0.12 || expression.cheekSquint > 0.12))
-  ) {
-    return "happy";
-  }
-  return "neutral";
-}
-
-function expressionAvatarJson(expression: NormalizedExpression): Record<string, unknown> {
-  const smile = expression.smile;
-  const mouthWeight = clampInt(Math.max(smile, expression.jawOpen, expression.mouthFunnel * 0.65) * 100, 0, 100);
-  const mouthX = clampInt((expression.mouthSmileRight - expression.mouthSmileLeft) * 100, -100, 100);
-  let leftEyeWeight = clampInt(expression.leftEyeOpen * 100, 0, 100);
-  let rightEyeWeight = clampInt(expression.rightEyeOpen * 100, 0, 100);
-  let leftEyeRotation = 0;
-  let rightEyeRotation = 0;
-
-  if (smile > 0.3) {
-    leftEyeWeight = clampInt(leftEyeWeight - 35, 0, 100);
-    rightEyeWeight = clampInt(rightEyeWeight - 35, 0, 100);
-    leftEyeRotation = normalizeRotation(-2150);
-    rightEyeRotation = normalizeRotation(2150);
-  } else if (smile < 0.1 && (expression.leftEyeOpen < 0.5 || expression.rightEyeOpen < 0.5)) {
-    leftEyeRotation = normalizeRotation(450);
-    rightEyeRotation = normalizeRotation(-450);
-  }
-
+  const scale = maxStep / distance;
   return {
-    type: "bleAvatar",
-    leftEye: expressionItem(leftEyeWeight, leftEyeRotation),
-    rightEye: expressionItem(rightEyeWeight, rightEyeRotation),
-    mouth: {
-      x: mouthX,
-      y: 0,
-      rotation: 0,
-      weight: mouthWeight,
-      size: 0
-    }
+    x: clampNumber(previous.x + deltaX * scale, 0, 1),
+    y: clampNumber(previous.y + deltaY * scale, 0, 1)
   };
 }
 
-function expressionItem(weight: number, rotation: number): Record<string, number> {
+function clampFace(face: NormalizedFaceBox): NormalizedFaceBox {
+  const width = clampNumber(face.width, 0.01, 1);
+  const height = clampNumber(face.height, 0.01, 1);
   return {
-    x: 0,
-    y: 0,
-    rotation,
-    weight,
-    size: 0
+    ...face,
+    width,
+    height,
+    x: clampNumber(face.x, 0, 1 - width),
+    y: clampNumber(face.y, 0, 1 - height)
   };
-}
-
-function topBlendshapes(blendshapes: Record<string, number>): Array<{ name: string; score: number }> {
-  return Object.entries(blendshapes)
-    .filter(([, score]) => Number.isFinite(score))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([name, score]) => ({ name, score: clamp01(score) }));
-}
-
-function avatarJsonSignature(value: Record<string, unknown>): string {
-  return JSON.stringify(value);
-}
-
-function roundBucket(value: number, bucket: number): number {
-  return Math.round(clamp01(value) / bucket) * bucket;
-}
-
-function numberOrZero(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function average(left: number, right: number): number {
-  return (left + right) / 2;
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.round(Math.min(max, Math.max(min, value)));
-}
-
-function normalizeRotation(value: number): number {
-  return ((Math.round(value) % 3600) + 3600) % 3600;
 }
 
 function detectorSettingsFromConfig(config: DesktopConfig): FaceDetectorSettings {
@@ -991,6 +1066,10 @@ function sameDetectorSettings(left: FaceDetectorSettings, right: FaceDetectorSet
     left.minPresenceConfidence === right.minPresenceConfidence &&
     left.minTrackingConfidence === right.minTrackingConfidence
   );
+}
+
+function sameCameraSettings(left: CameraStreamSettings, right: CameraStreamSettings): boolean {
+  return left.width === right.width && left.height === right.height && left.fps === right.fps && left.quality === right.quality;
 }
 
 function settingsFromConfig(config: DesktopConfig): VisionTrackingSettings {
@@ -1019,9 +1098,17 @@ function settingsFromConfig(config: DesktopConfig): VisionTrackingSettings {
 }
 
 function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSettingsPatch): VisionTrackingSettings {
+  const baseCamera = patch.cameraPreset ? cameraSettingsFromPreset(patch.cameraPreset, current.camera) : { ...current.camera };
+  const cameraPatch = patch.camera;
   const next = {
     speed: patch.speed === undefined ? current.speed : clampNumber(patch.speed, 0, 1000),
-    camera: patch.cameraPreset ? cameraSettingsFromPreset(patch.cameraPreset, current.camera) : { ...current.camera },
+    camera: {
+      preset: baseCamera.preset,
+      width: CAMERA_STREAM_WIDTH,
+      height: CAMERA_STREAM_HEIGHT,
+      fps: cameraPatch?.fps === undefined ? baseCamera.fps : clampInt(cameraPatch.fps, 1, 15),
+      quality: cameraPatch?.quality === undefined ? baseCamera.quality : clampInt(cameraPatch.quality, 1, 63)
+    },
     detector: {
       minDetectionConfidence:
         patch.detector?.minDetectionConfidence === undefined
@@ -1108,7 +1195,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 function cameraSettingsFromPreset(
   preset: CameraPresetName | string,
-  fallback: CameraStreamSettings = CAMERA_STREAM_PRESETS.fast
+  fallback: CameraStreamSettings = CAMERA_STREAM_PRESETS.accurate
 ): CameraStreamSettings {
   if (preset === "fast" || preset === "accurate" || preset === "debug") {
     return { ...CAMERA_STREAM_PRESETS[preset] };

@@ -1,94 +1,168 @@
 # StackChan Local
 
-[English](README.md) | [中文](README_zh.md)
+[English](README.md) | [Chinese](README_zh.md)
 
-StackChan Local turns M5Stack StackChan into a local-first desktop robot for Codex.
-It removes the runtime dependency on the original cloud server and mobile app path, then connects the hardware to a local TypeScript daemon over LAN WebSocket.
+StackChan Local is a local-first desktop daemon and ESP-IDF firmware for M5Stack StackChan on ESP32-S3. The hardware connects to a Mac on the LAN over WebSocket, while Codex, the browser console, and optional local vision services run on the desktop.
 
-The project is intended for makers who want a physical Codex companion that can show `idle`, `thinking`, and `speaking` states, speak local task-completion messages, flash RGB lights, track faces with its camera, and expose live debugging data in a browser.
+The current architecture has three explicit firmware layers:
 
-## Features
+- `hardware`: board profile, buses, chip drivers, and device-facing IO.
+- `services`: hardware application behavior such as display, motion, sensors, power, audio, network, and local companion protocol handling.
+- `system`: boot, lifecycle, settings, diagnostics, runtime bridge, and ESP-IDF platform adapters.
 
-- **Local-only runtime**: desktop daemon and firmware communicate over your LAN; no cloud server is required for the core control loop.
-- **Codex state companion**: mirrors Codex activity into StackChan states such as `idle`, `thinking`, and `speaking`.
-- **Completion notifications**: optional task-completion TTS plus RGB light flash when a Codex task finishes.
-- **Face tracking**: StackChan camera streams low-FPS JPEG frames to the desktop daemon; local MediaPipe Tasks Face Landmarker drives smooth head tracking with pose, landmarks, and expression hints.
-- **Hardware dashboard**: `http://localhost:8788` shows camera preview, face boxes, PID tuning, sensors, device state, command status, and structured logs.
-- **MCP tools**: Codex can control speech, emotion, head motion, animation, image capture, mode, and face tracking.
-- **Firmware local companion mode**: boots directly into the StackChan face UI with local WebSocket control, idle motion, blinking, sensor events, and offline shutdown behavior.
+The old `firmware/main/vendor/embedded_runtime` path is no longer part of the project. Passive third-party chip libraries live in `firmware/main/third_party`; runtime behavior is owned by `hardware`, `services`, and `system`.
 
-## Screenshots
+## What It Does
 
-<p align="center">
-  <img src="docs/assets/webui-screenshot.png" alt="StackChan Local WebUI screenshot" width="820">
-</p>
+- Runs StackChan as a local Codex companion without the original cloud server or mobile app runtime.
+- Mirrors Codex activity into hardware states such as idle, thinking, and speaking.
+- Plays optional Codex completion TTS and RGB light alerts.
+- Streams camera frames to the desktop for local face-position tracking.
+- Exposes a componentized React console at `http://localhost:8788`.
+- Reports hardware telemetry for power, touch, IMU, magnetometer, camera, servos, audio, RTC, NFC, IR, LTR553, INA226, Wi-Fi, BLE, RGB, and IO expander state.
+- Provides MCP tools so Codex can query status, speak, move the head, capture images, set modes, and control face tracking.
 
-<p align="center">
-  <sub>Real local WebUI session. The camera preview is blurred for README privacy.</sub>
-</p>
-
-<table>
-  <tr>
-    <td width="58%">
-      <img src="docs/assets/webui-dashboard.svg" alt="StackChan Local desktop WebUI preview">
-    </td>
-    <td width="42%">
-      <img src="docs/assets/webui-mobile.svg" alt="StackChan Local mobile WebUI preview">
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Desktop dashboard layout</sub></td>
-    <td align="center"><sub>Vertical mobile layout</sub></td>
-  </tr>
-</table>
+Face tracking is position tracking only. It does not perform identity recognition, and expression recognition UI/runtime has been removed.
 
 ## Repository Layout
 
 ```text
 .
-├── desktop/          TypeScript daemon, MCP server, WebUI, vision sidecar integration
-├── firmware/         ESP-IDF firmware overlay for StackChan Local Companion
-├── protocol/         Shared TypeScript types and JSON Schema validation
-├── docs/             Architecture, setup, WebUI, firmware, protocol, troubleshooting
-└── scripts/          Convenience scripts for desktop and firmware workflows
+├── desktop/             TypeScript daemon, WebSocket server, MCP server, vision, TTS, WebUI server
+│   ├── src/
+│   │   ├── codex/       Codex session watcher
+│   │   ├── device/      Device registry and snapshots
+│   │   ├── mcp/         MCP tool server
+│   │   ├── preview/     8788 HTTP/SSE/MJPEG/API server
+│   │   ├── robot/       Command controller and motion arbitration
+│   │   ├── tts/         Completion announcer and provider integration
+│   │   ├── vision/      Face detector sidecar and tracking controller
+│   │   └── ws/          Firmware WebSocket protocol server
+│   └── preview-ui/      React + Vite hardware console
+├── firmware/            ESP-IDF firmware project for M5Stack StackChan / ESP32-S3
+│   └── main/
+│       ├── hardware/    Board profile, bus, driver, and sensor modules
+│       ├── services/    Display, sensors, motion, audio, power, network, local companion
+│       ├── system/      Boot, core context, lifecycle, runtime bridge, ESP-IDF adapters
+│       ├── third_party/ Passive chip libraries
+│       └── app/         Local Companion UI entry
+├── protocol/            Shared TypeScript protocol types and JSON schema validation
+└── scripts/             Build, flash, and hygiene scripts
 ```
-
-## Documentation
-
-- [Setup](docs/setup.md)
-- [Configuration](docs/configuration.md)
-- [Architecture](docs/architecture.md)
-- [WebUI](docs/web-ui.md)
-- [Codex MCP](docs/codex-mcp.md)
-- [Local Protocol](docs/protocol.md)
-- [Firmware](docs/firmware.md)
-- [Troubleshooting](docs/troubleshooting.md)
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Codex["Codex / MCP client"] --> Desktop["desktop daemon"]
-  Browser["8788 WebUI"] --> Desktop
-  Desktop --> Vision["Python MediaPipe Tasks detector"]
-  Desktop <-->|"ws://<mac-ip>:8787/stackchan/local"| Firmware["StackChan firmware"]
-  Firmware --> Hardware["avatar, servos, RGB, camera, IMU, touch, audio"]
+  Codex["Codex / MCP"] --> Desktop["desktop daemon"]
+  Browser["React WebUI :8788"] --> Desktop
+  Desktop --> Vision["Python MediaPipe detector"]
+  Desktop <-->|"ws://<mac-ip>:8787/stackchan/local"| Firmware["ESP32-S3 firmware"]
+  Firmware --> System["system"]
+  Firmware --> Services["services"]
+  Firmware --> Hardware["hardware"]
+  Hardware --> Devices["PMIC, display, touch, camera, audio, servos, sensors, network"]
 ```
 
-The desktop daemon owns protocol validation, device registry, command ACKs, motion arbitration, Codex session watching, face detection orchestration, TTS dispatch, and the 8788 dashboard. Firmware owns local UI rendering, camera capture, audio playback, wake word/audio chain, servos, RGB, sensors, and reconnection behavior.
+### Desktop Responsibilities
+
+- Listen for firmware WebSocket connections on `8787`.
+- Validate protocol messages with shared schemas from `protocol/`.
+- Maintain device sessions, heartbeat state, command ACKs, and public snapshots.
+- Expose the React WebUI, status APIs, debug logs, SSE updates, and raw/processed camera streams on `8788`.
+- Run MCP tools for Codex.
+- Watch Codex session state and dispatch companion mode changes.
+- Run optional completion TTS and RGB light alerts.
+- Run local face-position tracking through `desktop/scripts/face_detector.py`.
+
+### Firmware Responsibilities
+
+- Boot the M5Stack StackChan board profile and initialize hardware drivers.
+- Compose drivers into services for display, motion, sensors, power, audio, network, and local companion transport.
+- Connect to the desktop daemon using mDNS or saved fallback WebSocket URL.
+- Send heartbeat, state, sensor snapshots, touch, IMU, battery, Wi-Fi, camera, and audio telemetry.
+- Execute commands for mode, audio playback, camera stream, RGB, servo motion, face tracking, and telemetry configuration.
+- Keep local avatar rendering, blinking, idle behavior, and power policy on-device.
+
+## Firmware Layering
+
+```text
+firmware/main/
+  hardware/
+    board/m5stack_stackchan/   pinmap, hardware_config, BoardProfile
+    bus/                       I2C device/bus helpers
+    power/                     AXP2101 and backlight
+    display/                   ILI9342/LVGL driver boundary
+    touch/                     FT6336 screen touch
+    audio/                     ES7210/AW88298/CoreS3 codec surface
+    camera/                    GC0308 camera
+    motion/                    SCS servo driver surface
+    io_expander/               AW9523/PY32 IO expander
+    lighting/                  RGB strip driver boundary
+    sensors/                   SI12T, BMI270, BMM150, RTC, INA226, LTR553, NFC, IR, mic level
+    network/                   Wi-Fi, BLE, provisioning helpers
+
+  services/
+    display/                   LVGL runtime, avatar binding, status display, RGB behavior
+    sensors/                   Polling, snapshots, I2C diagnostics, sensor events
+    motion/                    Servo calibration and expression-motion output
+    power/                     Servo power and IO expander power policy
+    audio/                     Codec service, wake word/audio runtime, mic level
+    network/                   Wi-Fi, SNTP, BLE provisioning
+    expression_motion/         Avatar, animation, modifiers, StackChan motion engine
+    local_companion/           WebSocket session, command dispatch, telemetry, media streams
+
+  system/
+    boot/                      Startup sequence and runtime boot
+    core/                      SystemContext, settings, event bus, service registry, diagnostics
+    lifecycle/                 Reboot, power off, factory reset/runtime state
+    power_policy/              Idle power policy namespace
+    platform/esp_idf/          ESP-IDF adapters
+    runtime_bridge/            Narrow compatibility bridge
+    legacy_runtime/            Temporary compatibility primitives only
+
+  third_party/                 Passive chip libraries only
+```
+
+Rules for new firmware code:
+
+- `hardware` drivers take bus/config dependencies and expose `begin`, `available`, `read`, `write`, or `control` style APIs.
+- `hardware` must not depend on LVGL app objects, Local Companion services, desktop protocol code, or `Board::GetInstance()`.
+- `services` compose drivers and publish application-level behavior, telemetry, and events.
+- `system` owns boot order, shared context, lifecycle, settings, diagnostics, and compatibility boundaries.
+- Do not reintroduce `firmware/main/vendor/embedded_runtime` or expand runtime bridge usage for new code.
+
+## WebUI
+
+The WebUI is served by the desktop daemon at `http://localhost:8788`. It is a React + Vite app under `desktop/preview-ui/`.
+
+The console has three groups:
+
+- **Modules**: one page per chip or hardware module: Power, INA226, Display, Screen Touch, Head Touch, IMU, Magnetometer, Camera, Servo, IO Expander, RGB LED, RTC, ALS/Proximity, NFC, IR, Audio, Wi-Fi/BLE.
+- **Applications**: Codex announcer/light alert and face-position tracking.
+- **Debug**: system counters, raw public snapshot, and daemon logs.
+
+Camera pages expose separate raw and processed streams:
+
+- Raw preview: camera stream before face detection.
+- Face tracking: processed stream with face-position overlay.
 
 ## Quick Start
 
-### 1. Install desktop dependencies
+### 1. Install Desktop Dependencies
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set at least `STACKCHAN_PAIRING_TOKEN`.
+Edit `.env` before using real hardware. At minimum, change:
 
-### 2. Start the daemon
+```bash
+STACKCHAN_PAIRING_TOKEN=dev-local-token
+```
+
+### 2. Start Desktop Daemon
 
 ```bash
 npm run dev
@@ -96,13 +170,11 @@ npm run dev
 
 Default endpoints:
 
-- Device WebSocket: `ws://<mac-ip>:8787/stackchan/local`
-- WebUI dashboard: `http://localhost:8788`
-- mDNS service advertised by desktop: `_stackchan-local._tcp`
+- Firmware WebSocket: `ws://<mac-ip>:8787/stackchan/local`
+- WebUI: `http://localhost:8788`
+- mDNS service: `_stackchan-local._tcp`
 
-### 3. Install vision dependencies, optional
-
-Face tracking uses a local Python sidecar.
+### 3. Optional Face Tracking Setup
 
 ```bash
 npm run vision:install
@@ -110,14 +182,17 @@ npm run vision:model
 STACKCHAN_FACE_TRACKING=1 npm run dev
 ```
 
-### 4. Build and flash firmware
+Face tracking uses the local Python sidecar and fixed 320 x 240 camera input. The WebUI exposes FPS options for the active stream.
+
+### 4. Build And Flash Firmware
+
+Use ESP-IDF 5.5.4 for the current firmware tree:
 
 ```bash
 source ~/esp/esp-idf-v5.5.4/export.sh
 npm run firmware:build
 npm run firmware:check-local-only
-cd firmware
-idf.py -p /dev/cu.usbmodem21301 flash
+npm run firmware:flash
 ```
 
 Equivalent raw ESP-IDF commands:
@@ -126,24 +201,14 @@ Equivalent raw ESP-IDF commands:
 cd firmware
 idf.py set-target esp32s3
 idf.py build
-idf.py flash monitor
+idf.py -p /dev/cu.usbmodem21301 flash monitor
 ```
 
-The firmware first connects to saved Wi-Fi. If no credentials are saved, it starts a Wi-Fi configuration hotspot named `StackChan-XXXX`; connect to that hotspot and open `http://192.168.4.1`.
-
-### Local-Only Firmware Build
-
-The firmware tree keeps only the local companion app and device runtime surface in `firmware/main`. ESP-IDF Component Manager resolves standard dependencies into `firmware/managed_components/`: ArduinoJson comes from the ESP Component Registry, while Mooncake, Mooncake Log, and Smooth UI Toolkit are Git dependencies. The retained embedded runtime subset is checked into `firmware/main/vendor/embedded_runtime/`, so firmware builds no longer clone a separate upstream project during compilation.
-
-CMake defines `STACKCHAN_LOCAL_DISABLE_LEGACY_CLOUD=1`, compiles out the camera explain HTTP path, links project-owned runtime compatibility code from `firmware/main/system/runtime_bridge/`, and keeps the robot expression/motion engine in `firmware/main/services/expression_motion/`. There is no legacy `firmware/main/hal` directory: the public facade is `firmware/main/system/device_runtime.h`, hardware drivers live beside their owning hardware or sensor module, and network transport shims remain under `firmware/main/services/local_companion/transport/`. The upstream cloud application, cloud MQTT/WebSocket protocol clients, OTA, 4G modem, ESP-NOW, and old StackChan app launcher sources are not part of the local runtime. Verify this boundary after every firmware build:
-
-```bash
-npm run firmware:check-local-only
-```
+If the device has no saved Wi-Fi credentials, it starts a `StackChan-XXXX` provisioning AP. Connect to it and open `http://192.168.4.1`.
 
 ## Configuration
 
-Common environment variables are listed in [.env.example](.env.example).
+Common settings live in [.env.example](.env.example).
 
 Important defaults:
 
@@ -152,28 +217,22 @@ Important defaults:
 - `STACKCHAN_PAIRING_TOKEN=dev-local-token`
 - `STACKCHAN_FACE_TRACKING=0`
 - `STACKCHAN_FACE_TRACKING_CAMERA_PRESET=fast`
+- `STACKCHAN_FACE_TRACKING_SPEED=420`
+- `STACKCHAN_FACE_TRACKING_DEADBAND=0.045`
 - `STACKCHAN_CODEX_STATUS=1`
 - `STACKCHAN_VOLCENGINE_TTS_ENABLED=0`
 
-Do not commit real API keys or pairing tokens.
-
-## WebUI
-
-The WebUI is served by the daemon and is designed to work well on both desktop and vertical mobile screens.
-
-Main panels:
-
-- **Overview**: device status, face tracking state, latest target, capabilities.
-- **Hardware**: battery, Wi-Fi, BLE, RTC, speaker, RGB, camera, servos, IMU, touch, and peripheral placeholders.
-- **Tuning**: camera presets, PID controls, tracking presets, completion TTS volume, completion TTS toggle, completion light toggle.
-- **Debug**: session id, firmware version, last event, counters, raw snapshot.
-- **Logs**: daemon ring-buffer logs with level/type/search filters.
-
-See [docs/web-ui.md](docs/web-ui.md) for API endpoints and UI details.
+Do not commit real pairing tokens or provider API keys.
 
 ## MCP Tools
 
-The desktop daemon exposes these tools in MCP mode:
+Run MCP mode with:
+
+```bash
+npm run mcp
+```
+
+Available tools:
 
 - `stackchan_status`
 - `stackchan_say`
@@ -184,34 +243,25 @@ The desktop daemon exposes these tools in MCP mode:
 - `stackchan_set_mode`
 - `stackchan_face_tracking`
 
-Run MCP mode with:
-
-```bash
-npm run mcp
-```
-
-See [docs/codex-mcp.md](docs/codex-mcp.md).
-
-## Local Protocol
-
-Firmware connects with a JSON handshake containing device id, firmware version, capabilities, audio params, and pairing token. After pairing, messages use JSON envelopes for `robot.command`, `robot.event`, `heartbeat`, and `error`.
-
-See [docs/protocol.md](docs/protocol.md).
-
 ## Testing
+
+Desktop and protocol:
 
 ```bash
 npm run typecheck
 npm test
-```
-
-Combined desktop/protocol check:
-
-```bash
 npm run check
 ```
 
-Firmware build:
+Targeted checks:
+
+```bash
+npm test -w @stackchan-local/protocol
+npm test -w @stackchan-local/desktop
+npm run typecheck -w @stackchan-local/desktop
+```
+
+Firmware:
 
 ```bash
 source ~/esp/esp-idf-v5.5.4/export.sh
@@ -219,35 +269,28 @@ npm run firmware:build
 npm run firmware:check-local-only
 ```
 
-Pre-publish hygiene check:
+Hardware acceptance after flashing:
 
-```bash
-npm run open-source:check
-```
+- `http://localhost:8788/`, `/status`, `/debug/snapshot`, and `/debug/logs` return 200.
+- Device shows online in the WebUI.
+- Module pages update for PMIC/battery, touch, head touch, IMU, magnetometer, RTC, mic, camera, RGB/io expander, servos, I2C scan, NFC, IR, LTR553, and INA226.
+- Present hardware reports valid non-NaN values and reacts to touch, motion, light, sound, and camera stimuli.
+- Missing or unsupported modules report `available:false` with a clear reason.
+- `/frame.jpg` or `/stream.mjpg` returns a valid JPEG stream when camera streaming is enabled.
+- Firmware serial logs and desktop logs have no unexplained `ERROR`, no persistent `WARN` spam, no reconnect loop, and no repeated sensor init timeout.
 
 ## Privacy And Safety
 
-- Face tracking is local detection only. It does not do identity recognition.
-- Camera frames stay on the LAN between hardware and daemon.
-- Microphone direction finding was intentionally removed; microphones remain for wake word and voice audio.
-- Cloud TTS is optional and disabled by default. If enabled, only completion text is sent to the configured TTS provider.
-- Pairing tokens and provider keys belong in `.env`, not in Git.
+- Camera frames stay on the LAN between the hardware and desktop daemon.
+- Face tracking is local position detection only, not identity recognition.
+- Expression recognition and expression-sync UI have been removed.
+- Cloud TTS is optional and disabled by default.
+- Pairing tokens and API keys belong in `.env`, not in Git.
 
 ## Project Status
 
-This is an experimental hardware/software project. The current target is macOS desktop plus M5Stack StackChan hardware. The architecture is already local-first, but firmware provisioning, release packaging, and cross-platform desktop support still need hardening.
-
-## Credits
-
-This project builds on:
-
-- M5Stack StackChan firmware concepts and hardware
-- retained ESP32 assistant runtime components
-- ESP-IDF and ESP32 managed components
-- MediaPipe Tasks Face Landmarker for local face tracking
-
-Third-party source, Git dependencies, and generated ESP-IDF dependencies keep their own licenses.
+This is an experimental local hardware/software project for macOS plus M5Stack StackChan on ESP32-S3. The current focus is hardware observability, stable local control, and a clean firmware layering model. Cross-platform desktop packaging and production-grade firmware release flow still need hardening.
 
 ## License
 
-MIT for the StackChan Local project code unless a subdirectory or managed dependency states otherwise.
+MIT for StackChan Local project code unless a subdirectory or managed dependency states otherwise.

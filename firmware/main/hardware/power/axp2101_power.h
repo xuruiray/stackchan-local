@@ -15,7 +15,7 @@ class StackChanPmic : public Axp2101 {
 public:
     StackChanPmic(i2c_master_bus_handle_t i2c_bus, uint8_t addr);
 
-    void SetBrightness(uint8_t brightness);
+    bool SetBrightness(uint8_t brightness);
     bool IsExternalPowerConnected();
 
 private:

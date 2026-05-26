@@ -1,4 +1,5 @@
 #include "Si12T.h"
+#include <hardware/bus/i2c_bus.h>
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
@@ -22,6 +23,7 @@ uint8_t si12t_point_type[3] = {SI12T_OUTPUT_NONE, SI12T_OUTPUT_NONE, SI12T_OUTPU
  */
 static esp_err_t si12t_i2c_write_reg(si12t_handle_t handle, uint8_t reg_addr, uint8_t value)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     uint8_t write_buf[2] = {reg_addr, value};
     return i2c_master_transmit(handle->i2c_dev, write_buf, sizeof(write_buf), I2C_TIMEOUT_MS);
 }
@@ -31,6 +33,7 @@ static esp_err_t si12t_i2c_write_reg(si12t_handle_t handle, uint8_t reg_addr, ui
  */
 static esp_err_t si12t_i2c_read_reg(si12t_handle_t handle, uint8_t reg_addr, uint8_t *value)
 {
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     esp_err_t ret = i2c_master_transmit_receive(handle->i2c_dev, &reg_addr, 1, value, 1, I2C_TIMEOUT_MS);
     ESP_LOGD(TAG, "Read reg 0x%02x, value: 0x%02x", reg_addr, *value);
     return ret;
@@ -72,6 +75,7 @@ esp_err_t si12t_init(const si12t_config_t *config, si12t_handle_t *handle)
         .scl_speed_hz    = 100000,  // 100kHz
     };
 
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     esp_err_t ret = i2c_master_bus_add_device(config->i2c_bus, &dev_cfg, &dev->i2c_dev);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add I2C device: %s", esp_err_to_name(ret));
@@ -110,6 +114,7 @@ esp_err_t si12t_delete(si12t_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
 
+    stackchan::hal::hardware::bus::I2cBusGuard guard;
     esp_err_t ret = i2c_master_bus_rm_device(handle->i2c_dev);
     free(handle);
     return ret;
