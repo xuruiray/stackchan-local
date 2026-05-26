@@ -11,15 +11,13 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-black">
 </p>
 
-StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 daemon、WebUI 和 ESP-IDF 固件。项目目标是让用户在桌面端快速验证所有硬件传感器和板载模块是否正常工作，并在此基础上体验少量本地应用，例如 Codex 状态提醒和人脸位置追踪。硬件通过局域网 WebSocket 连接 Mac，浏览器控制台、Codex 集成和可选的人脸检测服务运行在桌面端。
+StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 daemon、WebUI 和 ESP-IDF 固件。项目目标是让用户在桌面端快速验证所有硬件传感器和板载模块是否正常工作，并在此基础上体验少量本地应用，例如 Codex 状态提醒、硬件表情控制和人脸位置追踪。硬件通过局域网 WebSocket 连接 Mac，浏览器控制台、Codex 集成和可选的人脸检测服务运行在桌面端。
 
 当前固件架构明确分为三层：
 
 - `hardware`：板级配置、总线、芯片驱动和设备 IO。
 - `services`：显示、运动、传感器、电源、音频、网络、本地 companion 协议等硬件应用编排。
-- `system`：启动、生命周期、设置、诊断、运行时桥接和 ESP-IDF 平台适配。
-
-旧的 `firmware/main/vendor/embedded_runtime` 已经不再属于项目结构。必要的纯第三方芯片库放在 `firmware/main/third_party`，运行时行为由 `hardware`、`services`、`system` 三层接管。
+- `system`：启动、生命周期、设置、诊断和 ESP-IDF 平台适配。
 
 ## 视觉总览
 
@@ -38,7 +36,7 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 | 桌面端技术栈 | TypeScript daemon、React + Vite WebUI、本地 Python vision sidecar |
 | 通信方式 | 局域网 WebSocket `ws://<mac-ip>:8787/stackchan/local`，`8788` 提供 HTTP/SSE/MJPEG |
 | 控制模型 | 结构化安全命令；不提供 raw JSON 控制台 |
-| 视觉模型 | 只做本地人脸位置检测；不做身份识别和表情识别 |
+| 视觉和头像模型 | 本地人脸位置追踪、硬件表情 preset、可选 avatar JSON，不做身份识别 |
 | 硬件可观测性 | 每个模块独立页面、public snapshot、日志、I2C scan、stream metrics 和 unavailable reason |
 
 ## 目录
@@ -57,15 +55,15 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 ## 功能
 
 - 提供桌面控制台，快速检查 StackChan 的硬件传感器和模块是否已连接、可用且返回有效数据。
-- 在已验证硬件能力之上运行简单本地应用，包括 Codex 状态提醒、可选完成播报 TTS、RGB 灯光提醒和人脸位置追踪。
-- 让 StackChan 在本地运行，不依赖原始云端 server 或手机 App runtime。
+- 在已验证硬件能力之上运行简单本地应用，包括 Codex 状态提醒、硬件表情控制、可选完成播报 TTS、RGB 灯光提醒和人脸位置追踪。
+- 让 StackChan 通过局域网本地运行，由桌面端负责控制台和应用编排。
 - 把 Codex 状态同步到硬件的 idle、thinking、speaking 等模式。
 - 摄像头帧传到桌面端，由本地人脸位置检测驱动头部跟踪。
 - 在 `http://localhost:8788` 暴露组件化 React 控制台。
 - 实时展示电源、触摸、IMU、磁力计、摄像头、舵机、音频、RTC、NFC、IR、LTR553、INA226、Wi-Fi、BLE、RGB、IO expander 等硬件遥测。
 - 提供 MCP 工具，让 Codex 查询状态、说话、移动头部、拍照、设置模式和控制人脸追踪。
 
-人脸追踪只做位置跟踪，不做身份识别。表情识别相关运行时和 UI 已移除。
+人脸追踪只做本地位置检测，不做身份识别。
 
 ## 目录结构
 
@@ -87,7 +85,7 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 │   └── main/
 │       ├── hardware/    板级、总线、驱动和传感器模块
 │       ├── services/    显示、传感器、运动、音频、电源、网络、本地 companion
-│       ├── system/      启动、核心上下文、生命周期、运行时桥接、ESP-IDF 适配
+│       ├── system/      启动、核心上下文、生命周期、诊断、ESP-IDF 适配
 │       ├── third_party/ 纯第三方芯片库
 │       └── app/         Local Companion UI 入口
 ├── protocol/            共享 TypeScript 协议类型和 JSON schema 校验
@@ -217,19 +215,17 @@ firmware/main/
     lifecycle/                 reboot、power off、factory reset/runtime state
     power_policy/              idle power policy namespace
     platform/esp_idf/          ESP-IDF adapters
-    runtime_bridge/            窄兼容桥
-    legacy_runtime/            临时兼容 primitives
 
   third_party/                 纯第三方芯片库
 ```
 
-新增固件代码遵循这些规则：
+当前固件边界：
 
 - `hardware` driver 只接收 bus/config 依赖，暴露 `begin`、`available`、`read`、`write`、`control` 这类接口。
 - `hardware` 不依赖 LVGL app 对象、Local Companion services、desktop protocol 业务或 `Board::GetInstance()`。
 - `services` 负责组合驱动，发布应用行为、telemetry 和事件。
-- `system` 负责启动顺序、共享上下文、生命周期、设置、诊断和兼容边界。
-- 不再引入 `firmware/main/vendor/embedded_runtime`，新代码也不要扩大 runtime bridge 依赖。
+- `system` 负责启动顺序、共享上下文、生命周期、设置、诊断和 ESP-IDF 适配。
+- `third_party` 只保存纯第三方芯片库。
 
 ## WebUI
 
@@ -238,12 +234,12 @@ WebUI 由 desktop daemon 提供，地址是 `http://localhost:8788`。前端位�
 控制台是主要的硬件验证界面，分为三组：
 
 - **模块**：按芯片或硬件模块划分，包括 Power、INA226、Display、Screen Touch、Head Touch、IMU、Magnetometer、Camera、Servo、IO Expander、RGB LED、RTC、ALS/Proximity、NFC、IR、Audio、Wi-Fi/BLE。
-- **应用**：基于已验证硬件能力的简单应用流程，目前包括 Codex 播报/灯光提醒和人脸位置追踪。
+- **应用**：基于已验证硬件能力的简单应用流程，目前包括 Codex 播报/灯光提醒、硬件表情控制和人脸位置追踪。
 - **Debug**：系统计数器、raw public snapshot、daemon logs。
 
 摄像头页面区分两类流：
 
-- Raw preview：人脸识别前的原始摄像头流。
+- Raw preview：人脸检测前的原始摄像头流。
 - Face tracking：人脸位置识别后的 processed stream。
 
 ## 能力矩阵
@@ -256,7 +252,7 @@ WebUI 由 desktop daemon 提供，地址是 `http://localhost:8788`。前端位�
 | 执行器 | SCS servos、RGB LED、IO expander | 舵机姿态、限位、RGB 状态、expander pins | Move head、set RGB color/brightness、telemetry refresh |
 | 音频和时间 | ES7210、AW88298、RTC | Mic level、codec status、RTC time | 通过 MCP 播报/TTS、telemetry refresh |
 | 网络 | Wi-Fi、BLE provisioning、mDNS | Link state、SSID/IP、RSSI、reconnect counters | 通过 service 执行 provisioning 和 runtime network commands |
-| 应用 | Codex 播报/灯光提醒、人脸位置追踪 | app state、enabled flags、tracking target、latency | Toggle tracking、adjust FPS、companion mode commands |
+| 应用 | Codex 播报/灯光提醒、硬件表情控制、人脸位置追踪 | app state、enabled flags、expression capability、tracking target、latency | Send expression presets/avatar JSON、toggle tracking、adjust FPS、companion mode commands |
 | Debug | System、raw snapshot、logs | Heap、counters、command ACK、public JSON、daemon logs | 只读诊断 |
 
 ## 快速开始
@@ -411,7 +407,6 @@ npm run firmware:check-local-only
 
 - 摄像头帧只在硬件和 desktop daemon 所在局域网内传输。
 - 人脸追踪只做本地位置检测，不做身份识别。
-- 表情识别和表情同步 UI 已移除。
 - 云 TTS 默认关闭。
 - pairing token 和 API key 应放在 `.env`，不要提交到 Git。
 
