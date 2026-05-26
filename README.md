@@ -11,7 +11,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-black">
 </p>
 
-StackChan Local is a local-first desktop daemon and ESP-IDF firmware for M5Stack StackChan on ESP32-S3. The hardware connects to a Mac on the LAN over WebSocket, while Codex, the browser console, and optional local vision services run on the desktop.
+StackChan Local is a local-first desktop daemon, WebUI, and ESP-IDF firmware for M5Stack StackChan on ESP32-S3. Its goal is to let users quickly verify from a desktop that every hardware sensor and onboard module is working normally, then try a small set of local applications such as Codex status alerts and face-position tracking. The hardware connects to a Mac on the LAN over WebSocket, while the browser console, Codex integration, and optional local vision services run on the desktop.
 
 The current architecture has three explicit firmware layers:
 
@@ -32,6 +32,7 @@ The old `firmware/main/vendor/embedded_runtime` path is no longer part of the pr
 
 | Dimension | Current design |
 | --- | --- |
+| Project goal | Desktop-first hardware validation for all StackChan sensors and modules, plus simple local applications |
 | Hardware target | M5Stack StackChan / ESP32-S3 only |
 | Firmware stack | ESP-IDF 5.5.4 with `system`, `hardware`, and `services` layers |
 | Desktop stack | TypeScript daemon, React + Vite WebUI, local Python vision sidecar |
@@ -55,9 +56,10 @@ The old `firmware/main/vendor/embedded_runtime` path is no longer part of the pr
 
 ## What It Does
 
-- Runs StackChan as a local Codex companion without the original cloud server or mobile app runtime.
+- Provides a desktop console for quickly checking whether StackChan hardware sensors and modules are connected, available, and returning valid data.
+- Runs simple local applications on top of the verified hardware, including Codex status alerts, optional completion TTS, RGB light alerts, and face-position tracking.
+- Runs StackChan locally without the original cloud server or mobile app runtime.
 - Mirrors Codex activity into hardware states such as idle, thinking, and speaking.
-- Plays optional Codex completion TTS and RGB light alerts.
 - Streams camera frames to the desktop for local face-position tracking.
 - Exposes a componentized React console at `http://localhost:8788`.
 - Reports hardware telemetry for power, touch, IMU, magnetometer, camera, servos, audio, RTC, NFC, IR, LTR553, INA226, Wi-Fi, BLE, RGB, and IO expander state.
@@ -233,10 +235,10 @@ Rules for new firmware code:
 
 The WebUI is served by the desktop daemon at `http://localhost:8788`. It is a React + Vite app under `desktop/preview-ui/`.
 
-The console has three groups:
+The console is designed as the primary hardware validation surface. It has three groups:
 
 - **Modules**: one page per chip or hardware module: Power, INA226, Display, Screen Touch, Head Touch, IMU, Magnetometer, Camera, Servo, IO Expander, RGB LED, RTC, ALS/Proximity, NFC, IR, Audio, Wi-Fi/BLE.
-- **Applications**: Codex announcer/light alert and face-position tracking.
+- **Applications**: simple app flows built on verified hardware, currently Codex announcer/light alert and face-position tracking.
 - **Debug**: system counters, raw public snapshot, and daemon logs.
 
 Camera pages expose separate raw and processed streams:
@@ -415,7 +417,7 @@ Hardware acceptance after flashing:
 
 ## Project Status
 
-This is an experimental local hardware/software project for macOS plus M5Stack StackChan on ESP32-S3. The current focus is hardware observability, stable local control, and a clean firmware layering model. Cross-platform desktop packaging and production-grade firmware release flow still need hardening.
+This is an experimental local hardware/software project for macOS plus M5Stack StackChan on ESP32-S3. The current focus is fast desktop-side validation of hardware sensors and modules, stable local control, simple companion applications, and a clean firmware layering model. Cross-platform desktop packaging and production-grade firmware release flow still need hardening.
 
 ## License
 

@@ -11,7 +11,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-black">
 </p>
 
-StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 daemon 和 ESP-IDF 固件。硬件通过局域网 WebSocket 连接 Mac，Codex、浏览器控制台和可选的人脸检测服务运行在桌面端。
+StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 daemon、WebUI 和 ESP-IDF 固件。项目目标是让用户在桌面端快速验证所有硬件传感器和板载模块是否正常工作，并在此基础上体验少量本地应用，例如 Codex 状态提醒和人脸位置追踪。硬件通过局域网 WebSocket 连接 Mac，浏览器控制台、Codex 集成和可选的人脸检测服务运行在桌面端。
 
 当前固件架构明确分为三层：
 
@@ -32,6 +32,7 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 
 | 维度 | 当前设计 |
 | --- | --- |
+| 项目目标 | 桌面优先地验证 StackChan 全部传感器和硬件模块，并提供简单本地应用 |
 | 目标硬件 | 仅面向 M5Stack StackChan / ESP32-S3 |
 | 固件技术栈 | ESP-IDF 5.5.4，分为 `system`、`hardware`、`services` 三层 |
 | 桌面端技术栈 | TypeScript daemon、React + Vite WebUI、本地 Python vision sidecar |
@@ -55,9 +56,10 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 
 ## 功能
 
-- 让 StackChan 作为本地 Codex companion 运行，不依赖原始云端 server 或手机 App runtime。
+- 提供桌面控制台，快速检查 StackChan 的硬件传感器和模块是否已连接、可用且返回有效数据。
+- 在已验证硬件能力之上运行简单本地应用，包括 Codex 状态提醒、可选完成播报 TTS、RGB 灯光提醒和人脸位置追踪。
+- 让 StackChan 在本地运行，不依赖原始云端 server 或手机 App runtime。
 - 把 Codex 状态同步到硬件的 idle、thinking、speaking 等模式。
-- Codex 任务完成后可选 TTS 播报和 RGB 灯光提醒。
 - 摄像头帧传到桌面端，由本地人脸位置检测驱动头部跟踪。
 - 在 `http://localhost:8788` 暴露组件化 React 控制台。
 - 实时展示电源、触摸、IMU、磁力计、摄像头、舵机、音频、RTC、NFC、IR、LTR553、INA226、Wi-Fi、BLE、RGB、IO expander 等硬件遥测。
@@ -233,10 +235,10 @@ firmware/main/
 
 WebUI 由 desktop daemon 提供，地址是 `http://localhost:8788`。前端位于 `desktop/preview-ui/`，使用 React + Vite。
 
-控制台分为三组：
+控制台是主要的硬件验证界面，分为三组：
 
 - **模块**：按芯片或硬件模块划分，包括 Power、INA226、Display、Screen Touch、Head Touch、IMU、Magnetometer、Camera、Servo、IO Expander、RGB LED、RTC、ALS/Proximity、NFC、IR、Audio、Wi-Fi/BLE。
-- **应用**：Codex 播报/灯光提醒、人脸位置追踪。
+- **应用**：基于已验证硬件能力的简单应用流程，目前包括 Codex 播报/灯光提醒和人脸位置追踪。
 - **Debug**：系统计数器、raw public snapshot、daemon logs。
 
 摄像头页面区分两类流：
@@ -415,7 +417,7 @@ npm run firmware:check-local-only
 
 ## 项目状态
 
-这是一个面向 macOS + M5Stack StackChan / ESP32-S3 的实验性本地硬件/软件项目。当前重点是硬件可观测性、稳定本地控制和清晰固件分层。跨平台桌面打包和生产级固件发布流程仍需继续加固。
+这是一个面向 macOS + M5Stack StackChan / ESP32-S3 的实验性本地硬件/软件项目。当前重点是让用户在桌面端快速验证硬件传感器和模块、保持稳定本地控制、提供简单 companion 应用，并维护清晰的固件分层。跨平台桌面打包和生产级固件发布流程仍需继续加固。
 
 ## License
 
