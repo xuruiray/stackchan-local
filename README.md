@@ -11,15 +11,13 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-black">
 </p>
 
-StackChan Local is a local-first desktop daemon and ESP-IDF firmware for M5Stack StackChan on ESP32-S3. The hardware connects to a Mac on the LAN over WebSocket, while Codex, the browser console, and optional local vision services run on the desktop.
+StackChan Local is a local-first desktop daemon, WebUI, and ESP-IDF firmware for M5Stack StackChan on ESP32-S3. Its goal is to let users quickly verify from a desktop that every hardware sensor and onboard module is working normally, then try a small set of local applications such as Codex status alerts, hardware expression control, and face-position tracking. The hardware connects to a Mac on the LAN over WebSocket, while the browser console, Codex integration, and optional local vision services run on the desktop.
 
 The current architecture has three explicit firmware layers:
 
 - `hardware`: board profile, buses, chip drivers, and device-facing IO.
 - `services`: hardware application behavior such as display, motion, sensors, power, audio, network, and local companion protocol handling.
-- `system`: boot, lifecycle, settings, diagnostics, runtime bridge, and ESP-IDF platform adapters.
-
-The old `firmware/main/vendor/embedded_runtime` path is no longer part of the project. Passive third-party chip libraries live in `firmware/main/third_party`; runtime behavior is owned by `hardware`, `services`, and `system`.
+- `system`: boot, lifecycle, settings, diagnostics, and ESP-IDF platform adapters.
 
 ## Visual Overview
 
@@ -32,12 +30,13 @@ The old `firmware/main/vendor/embedded_runtime` path is no longer part of the pr
 
 | Dimension | Current design |
 | --- | --- |
+| Project goal | Desktop-first hardware validation for all StackChan sensors and modules, plus simple local applications |
 | Hardware target | M5Stack StackChan / ESP32-S3 only |
 | Firmware stack | ESP-IDF 5.5.4 with `system`, `hardware`, and `services` layers |
 | Desktop stack | TypeScript daemon, React + Vite WebUI, local Python vision sidecar |
 | Transport | LAN WebSocket at `ws://<mac-ip>:8787/stackchan/local` plus HTTP/SSE/MJPEG on `8788` |
 | Control model | Structured safe commands; no raw JSON command console |
-| Vision model | Local face-position detection only; no identity or expression recognition |
+| Vision and avatar model | Local face-position tracking, hardware expression presets, optional avatar JSON, and no identity recognition |
 | Hardware observability | Per-module pages, public snapshot, logs, I2C scan, stream metrics, and sensor availability reasons |
 
 ## Contents
@@ -55,15 +54,16 @@ The old `firmware/main/vendor/embedded_runtime` path is no longer part of the pr
 
 ## What It Does
 
-- Runs StackChan as a local Codex companion without the original cloud server or mobile app runtime.
+- Provides a desktop console for quickly checking whether StackChan hardware sensors and modules are connected, available, and returning valid data.
+- Runs simple local applications on top of the verified hardware, including Codex status alerts, hardware expression control, optional completion TTS, RGB light alerts, and face-position tracking.
+- Runs StackChan locally over LAN with desktop-side control and application orchestration.
 - Mirrors Codex activity into hardware states such as idle, thinking, and speaking.
-- Plays optional Codex completion TTS and RGB light alerts.
 - Streams camera frames to the desktop for local face-position tracking.
 - Exposes a componentized React console at `http://localhost:8788`.
 - Reports hardware telemetry for power, touch, IMU, magnetometer, camera, servos, audio, RTC, NFC, IR, LTR553, INA226, Wi-Fi, BLE, RGB, and IO expander state.
 - Provides MCP tools so Codex can query status, speak, move the head, capture images, set modes, and control face tracking.
 
-Face tracking is position tracking only. It does not perform identity recognition, and expression recognition UI/runtime has been removed.
+Face tracking uses local position detection only and does not perform identity recognition.
 
 ## Repository Layout
 
@@ -85,7 +85,7 @@ Face tracking is position tracking only. It does not perform identity recognitio
 │   └── main/
 │       ├── hardware/    Board profile, bus, driver, and sensor modules
 │       ├── services/    Display, sensors, motion, audio, power, network, local companion
-│       ├── system/      Boot, core context, lifecycle, runtime bridge, ESP-IDF adapters
+│       ├── system/      Boot, core context, lifecycle, diagnostics, ESP-IDF adapters
 │       ├── third_party/ Passive chip libraries
 │       └── app/         Local Companion UI entry
 ├── protocol/            Shared TypeScript protocol types and JSON schema validation
@@ -215,28 +215,26 @@ firmware/main/
     lifecycle/                 Reboot, power off, factory reset/runtime state
     power_policy/              Idle power policy namespace
     platform/esp_idf/          ESP-IDF adapters
-    runtime_bridge/            Narrow compatibility bridge
-    legacy_runtime/            Temporary compatibility primitives only
 
   third_party/                 Passive chip libraries only
 ```
 
-Rules for new firmware code:
+Current firmware boundaries:
 
 - `hardware` drivers take bus/config dependencies and expose `begin`, `available`, `read`, `write`, or `control` style APIs.
 - `hardware` must not depend on LVGL app objects, Local Companion services, desktop protocol code, or `Board::GetInstance()`.
 - `services` compose drivers and publish application-level behavior, telemetry, and events.
-- `system` owns boot order, shared context, lifecycle, settings, diagnostics, and compatibility boundaries.
-- Do not reintroduce `firmware/main/vendor/embedded_runtime` or expand runtime bridge usage for new code.
+- `system` owns boot order, shared context, lifecycle, settings, diagnostics, and ESP-IDF adapters.
+- `third_party` contains passive chip libraries only.
 
 ## WebUI
 
 The WebUI is served by the desktop daemon at `http://localhost:8788`. It is a React + Vite app under `desktop/preview-ui/`.
 
-The console has three groups:
+The console is designed as the primary hardware validation surface. It has three groups:
 
 - **Modules**: one page per chip or hardware module: Power, INA226, Display, Screen Touch, Head Touch, IMU, Magnetometer, Camera, Servo, IO Expander, RGB LED, RTC, ALS/Proximity, NFC, IR, Audio, Wi-Fi/BLE.
-- **Applications**: Codex announcer/light alert and face-position tracking.
+- **Applications**: simple app flows built on verified hardware, currently Codex announcer/light alert, hardware expression control, and face-position tracking.
 - **Debug**: system counters, raw public snapshot, and daemon logs.
 
 Camera pages expose separate raw and processed streams:
@@ -254,7 +252,7 @@ Camera pages expose separate raw and processed streams:
 | Actuators | SCS servos, RGB LED, IO expander | Servo pose, limits, RGB state, expander pins | Move head, set RGB color/brightness, telemetry refresh |
 | Audio and time | ES7210, AW88298, RTC | Mic level, codec status, RTC time | TTS/say through MCP, telemetry refresh |
 | Network | Wi-Fi, BLE provisioning, mDNS | Link state, SSID/IP, RSSI, reconnect counters | Provisioning and runtime network commands through services |
-| Applications | Codex announcer/light alert, face-position tracking | App state, enabled flags, tracking target and latency | Toggle tracking, adjust FPS, companion mode commands |
+| Applications | Codex announcer/light alert, hardware expression control, face-position tracking | App state, enabled flags, expression capability, tracking target and latency | Send expression presets/avatar JSON, toggle tracking, adjust FPS, companion mode commands |
 | Debug | System, raw snapshot, logs | Heap, counters, command ACKs, public JSON, daemon logs | Read-only diagnostics |
 
 ## Quick Start
@@ -409,13 +407,12 @@ Hardware acceptance after flashing:
 
 - Camera frames stay on the LAN between the hardware and desktop daemon.
 - Face tracking is local position detection only, not identity recognition.
-- Expression recognition and expression-sync UI have been removed.
 - Cloud TTS is optional and disabled by default.
 - Pairing tokens and API keys belong in `.env`, not in Git.
 
 ## Project Status
 
-This is an experimental local hardware/software project for macOS plus M5Stack StackChan on ESP32-S3. The current focus is hardware observability, stable local control, and a clean firmware layering model. Cross-platform desktop packaging and production-grade firmware release flow still need hardening.
+This is an experimental local hardware/software project for macOS plus M5Stack StackChan on ESP32-S3. The current focus is fast desktop-side validation of hardware sensors and modules, stable local control, simple companion applications, and a clean firmware layering model. Cross-platform desktop packaging and production-grade firmware release flow still need hardening.
 
 ## License
 
