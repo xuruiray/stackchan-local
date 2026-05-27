@@ -25,6 +25,12 @@ export type CompletionTtsSnapshot = {
   enabled: boolean;
   lightEnabled: boolean;
   volume: number;
+  provider: "volcengine" | "disabled" | "unconfigured";
+  configuredVoice: string;
+  activeVoice: string;
+  cloudEnabled: boolean;
+  cloudConfigured: boolean;
+  reason?: string;
 };
 
 export type PreviewSnapshot = Omit<VisionPreviewSnapshot, "frame"> & {

@@ -159,11 +159,12 @@ describe("CodexCompletionAnnouncer", () => {
     expect(react).not.toHaveBeenCalled();
   });
 
-  it("falls back to local say when cloud synthesis fails", async () => {
+  it("does not fall back to local say when cloud synthesis fails", async () => {
     const synthesize = vi.fn<TtsClient["synthesize"]>().mockRejectedValue(new Error("network down"));
+    const playAudio = vi.fn();
     const say = vi.fn().mockReturnValue({ sent: true, deviceId: "stackchan-001" });
     const controller = {
-      playAudio: vi.fn(),
+      playAudio,
       setMode: vi.fn(),
       react: vi.fn().mockResolvedValue({ sent: true, deviceId: "stackchan-001" }),
       say
@@ -177,6 +178,41 @@ describe("CodexCompletionAnnouncer", () => {
       taskSummary: "build firmware"
     });
 
-    await vi.waitFor(() => expect(say).toHaveBeenCalledWith("Codex done：build firmware。", { interrupt: true }));
+    await vi.waitFor(() => expect(synthesize).toHaveBeenCalledWith("Codex done：build firmware。"));
+    expect(playAudio).not.toHaveBeenCalled();
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("skips audio when cloud tts is disabled", async () => {
+    const synthesize = vi.fn<TtsClient["synthesize"]>();
+    const playAudio = vi.fn().mockReturnValue({ sent: true, deviceId: "stackchan-001" });
+    const say = vi.fn();
+    const controller = {
+      playAudio,
+      setMode: vi.fn(),
+      react: vi.fn().mockResolvedValue({ sent: true, deviceId: "stackchan-001" }),
+      say
+    } as unknown as RobotController;
+
+    const announcer = new CodexCompletionAnnouncer(controller, { synthesize }, logger, {
+      ...config,
+      volcengineTtsEnabled: false
+    });
+    announcer.setLightEnabled(false);
+    announcer.announce({
+      id: "session.jsonl:cloud-disabled",
+      reason: "codex task complete",
+      taskSummary: "cloud disabled"
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(synthesize).not.toHaveBeenCalled();
+    expect(playAudio).not.toHaveBeenCalled();
+    expect(say).not.toHaveBeenCalled();
+    expect(announcer.getRouteSnapshot()).toMatchObject({
+      provider: "unconfigured",
+      activeVoice: "-",
+      reason: "cloud tts disabled"
+    });
   });
 });

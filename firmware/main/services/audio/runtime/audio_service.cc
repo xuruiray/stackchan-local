@@ -37,6 +37,10 @@
 
 #define TAG "AudioService"
 
+namespace {
+constexpr uint32_t kOpusCodecTaskStackBytes = 12288;
+}
+
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
 }
@@ -130,40 +134,73 @@ void AudioService::Start() {
 
 #if CONFIG_USE_AUDIO_PROCESSOR
     /* Start the audio input task */
-    xTaskCreatePinnedToCore([](void* arg) {
+    if (xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
         vTaskDelete(NULL);
-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
+    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_input task");
+    }
 
     /* Start the audio output task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_output task");
+    }
 #else
     /* Start the audio input task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
         vTaskDelete(NULL);
-    }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
+    }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_input task");
+    }
 
     /* Start the audio output task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048, this, 4, &audio_output_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_output task");
+    }
 #endif
 
     /* Start the opus codec task */
-    xTaskCreate([](void* arg) {
+    if (xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
         vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+    }, "opus_codec", kOpusCodecTaskStackBytes, this, 2, &opus_codec_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create opus_codec task");
+    }
+}
+
+void AudioService::StartPlaybackOnly() {
+    service_stopped_ = false;
+    xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING | AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+
+    esp_timer_start_periodic(audio_power_timer_, 1000000);
+
+    if (xTaskCreate([](void* arg) {
+        AudioService* audio_service = (AudioService*)arg;
+        audio_service->AudioOutputTask();
+        vTaskDelete(NULL);
+    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_output task");
+    }
+
+    if (xTaskCreate([](void* arg) {
+        AudioService* audio_service = (AudioService*)arg;
+        audio_service->OpusCodecTask();
+        vTaskDelete(NULL);
+    }, "opus_codec", kOpusCodecTaskStackBytes, this, 2, &opus_codec_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create opus_codec task");
+    }
 }
 
 void AudioService::Stop() {

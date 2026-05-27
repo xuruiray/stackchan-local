@@ -53,7 +53,7 @@ AudioService* get_playback_audio_service()
 
     _local_audio_service = std::make_unique<AudioService>();
     _local_audio_service->Initialize(codec);
-    _local_audio_service->Start();
+    _local_audio_service->StartPlaybackOnly();
     ESP_LOGI(_tag, "local audio service initialized for companion playback");
     return _local_audio_service.get();
 }

@@ -347,7 +347,14 @@ describe("PreviewServer", () => {
         setVolume: (volume) => {
           ttsVolume = Math.min(100, Math.max(0, Math.round(volume)));
           return ttsVolume;
-        }
+        },
+        getRouteSnapshot: () => ({
+          provider: "volcengine",
+          configuredVoice: "zh_male_liangsangmengzai_uranus_bigtts",
+          activeVoice: "zh_male_liangsangmengzai_uranus_bigtts",
+          cloudEnabled: true,
+          cloudConfigured: true
+        })
       }
     });
     const port = await server.start();

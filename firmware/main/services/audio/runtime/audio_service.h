@@ -109,6 +109,7 @@ public:
 
     void Initialize(AudioCodec* codec);
     void Start();
+    void StartPlaybackOnly();
     void Stop();
     void EncodeWakeWord();
     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();

@@ -12,7 +12,15 @@ export interface CodexCompletionAnnouncement {
 interface PendingPlayback {
   text: string;
   timer: NodeJS.Timeout;
-  fallbackUsed: boolean;
+}
+
+export interface CompletionTtsRouteSnapshot {
+  provider: "volcengine" | "disabled" | "unconfigured";
+  configuredVoice: string;
+  activeVoice: string;
+  cloudEnabled: boolean;
+  cloudConfigured: boolean;
+  reason?: string;
 }
 
 export class CodexCompletionAnnouncer {
@@ -21,7 +29,6 @@ export class CodexCompletionAnnouncer {
   private lightFlashRun = 0;
   private inFlight = false;
   private lastStartedAt = 0;
-  private idleTimer?: NodeJS.Timeout;
   private readonly announcedIds: string[] = [];
   private readonly announcedIdSet = new Set<string>();
   private readonly pendingPlayback = new Map<string, PendingPlayback>();
@@ -37,7 +44,7 @@ export class CodexCompletionAnnouncer {
       if (message.event.kind !== "playback") {
         return;
       }
-        void this.handlePlaybackEvent(message.event.requestId, message.event.state, message.event.message);
+      void this.handlePlaybackEvent(message.event.requestId, message.event.state, message.event.message);
     });
   }
 
@@ -67,15 +74,21 @@ export class CodexCompletionAnnouncer {
     }
 
     if (!this.config.volcengineTtsEnabled) {
-      void this.fallbackToLocalSay(completion, "cloud tts disabled");
+      this.logger.info("codex completion tts skipped because cloud tts is disabled", {
+        type: "system",
+        reason: completion.reason,
+        completionId: completion.id,
+        configuredVoice: this.config.volcengineTtsVoiceId
+      });
       return;
     }
     if (!this.config.volcengineTtsApiKey) {
       this.logger.warn("codex completion tts skipped because api key is missing", {
         type: "system",
-        reason: completion.reason
+        reason: completion.reason,
+        completionId: completion.id,
+        configuredVoice: this.config.volcengineTtsVoiceId
       });
-      void this.fallbackToLocalSay(completion, "cloud tts api key missing");
       return;
     }
 
@@ -92,6 +105,37 @@ export class CodexCompletionAnnouncer {
 
   getVolume(): number {
     return this.config.volcengineTtsCompletionVolume;
+  }
+
+  getRouteSnapshot(): CompletionTtsRouteSnapshot {
+    const cloudConfigured = Boolean(this.config.volcengineTtsApiKey);
+    if (!this.enabled) {
+      return {
+        provider: "disabled",
+        configuredVoice: this.config.volcengineTtsVoiceId,
+        activeVoice: "-",
+        cloudEnabled: this.config.volcengineTtsEnabled,
+        cloudConfigured,
+        reason: "codex completion tts disabled"
+      };
+    }
+    if (this.config.volcengineTtsEnabled && cloudConfigured) {
+      return {
+        provider: "volcengine",
+        configuredVoice: this.config.volcengineTtsVoiceId,
+        activeVoice: this.config.volcengineTtsVoiceId,
+        cloudEnabled: true,
+        cloudConfigured: true
+      };
+    }
+    return {
+      provider: "unconfigured",
+      configuredVoice: this.config.volcengineTtsVoiceId,
+      activeVoice: "-",
+      cloudEnabled: this.config.volcengineTtsEnabled,
+      cloudConfigured,
+      reason: this.config.volcengineTtsEnabled ? "cloud tts api key missing" : "cloud tts disabled"
+    };
   }
 
   isEnabled(): boolean {
@@ -209,12 +253,23 @@ export class CodexCompletionAnnouncer {
         reason: completion.reason,
         taskSummaryLength: completion.taskSummary?.length,
         volume: this.config.volcengineTtsCompletionVolume,
-        requestId: speech.requestId
+        requestId: speech.requestId,
+        provider: "volcengine",
+        voice: this.config.volcengineTtsVoiceId
       });
       if (result.sent && (!result.ack || result.ack.status === "accepted")) {
         this.waitForPlayback(speech.requestId, text);
       } else {
-        await this.fallbackToLocalSay(completion, result.reason ?? result.ack?.message ?? "audio command was not sent");
+        this.logger.warn("codex completion tts audio command was not accepted", {
+          type: "command",
+          sent: result.sent,
+          deviceId: result.deviceId,
+          dispatchReason: result.reason,
+          ack: result.ack,
+          reason: completion.reason,
+          requestId: speech.requestId,
+          provider: "volcengine"
+        });
       }
     } catch (error) {
       this.logger.warn("codex completion tts failed", {
@@ -223,7 +278,6 @@ export class CodexCompletionAnnouncer {
         taskSummaryLength: completion.taskSummary?.length,
         error: error instanceof Error ? error.message : String(error)
       });
-      await this.fallbackToLocalSay(completion, error instanceof Error ? error.message : String(error));
     } finally {
       this.inFlight = false;
     }
@@ -245,7 +299,7 @@ export class CodexCompletionAnnouncer {
       void this.controller.setMode("idle", "codex completion tts timeout");
     }, timeoutMs);
     timer.unref?.();
-    this.pendingPlayback.set(requestId, { text, timer, fallbackUsed: false });
+    this.pendingPlayback.set(requestId, { text, timer });
   }
 
   private async handlePlaybackEvent(requestId: string, state: "started" | "finished" | "failed", message?: string): Promise<void> {
@@ -270,52 +324,7 @@ export class CodexCompletionAnnouncer {
       requestId,
       message
     });
-    if (!pending.fallbackUsed) {
-      await this.fallbackTextToLocalSay(pending.text, "playback failed", undefined, message ?? "device playback failed");
-    } else {
-      await this.controller.setMode("idle", "codex completion playback failed");
-    }
-  }
-
-  private async fallbackToLocalSay(
-    completion: Pick<CodexCompletionAnnouncement, "reason" | "taskSummary">,
-    detail: string
-  ): Promise<void> {
-    const text = buildCompletionText(this.config.volcengineTtsCompletionText, completion.taskSummary);
-    await this.fallbackTextToLocalSay(text, completion.reason, completion.taskSummary, detail);
-  }
-
-  private async fallbackTextToLocalSay(
-    text: string,
-    reason: string,
-    taskSummary: string | undefined,
-    detail: string
-  ): Promise<void> {
-    const result = await this.controller.say(text, { interrupt: true });
-    this.logger.info("codex completion used local say fallback", {
-      type: "command",
-      sent: result.sent,
-      deviceId: result.deviceId,
-      dispatchReason: result.reason,
-      reason,
-      taskSummaryLength: taskSummary?.length,
-      detail,
-      textLength: text.length
-    });
-    if (result.sent && (!result.ack || result.ack.status === "accepted")) {
-      this.scheduleIdle(estimateSpeechDurationMs(text));
-    }
-  }
-
-  private scheduleIdle(delayMs: number): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-    }
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = undefined;
-      void this.controller.setMode("idle", "codex completion tts done");
-    }, delayMs);
-    this.idleTimer.unref?.();
+    await this.controller.setMode("idle", "codex completion playback failed");
   }
 
   private hasAnnounced(id: string): boolean {

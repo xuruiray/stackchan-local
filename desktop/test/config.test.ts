@@ -36,6 +36,8 @@ describe("loadConfig", () => {
     expect(config.faceTrackingPitchKd).toBe(5);
     expect(config.faceTrackingIntegralLimit).toBe(0.25);
     expect(config.faceTrackingOutputLimitDeg).toBe(20);
+    expect(config.faceLandmarkerModel).toBe(path.join(projectRoot, "desktop/models/face_landmarker.task"));
+    expect(config.faceTrackingDetectorScript).toBe(path.join(projectRoot, "desktop/scripts/face_detector.py"));
   });
 
   it("loads local .env values without overriding explicit environment variables", () => {
@@ -47,7 +49,9 @@ describe("loadConfig", () => {
         "STACKCHAN_VOLCENGINE_TTS_ENABLED=1",
         `${"VOLCENGINE_TTS_API_KEY"}=from-dot-env`,
         "VOLCENGINE_TTS_VOICE_ID=voice-from-dot-env",
-        "STACKCHAN_CODEX_COMPLETION_TTS_VOLUME=91"
+        "STACKCHAN_CODEX_COMPLETION_TTS_VOLUME=91",
+        "STACKCHAN_FACE_LANDMARKER_MODEL=desktop/models/custom-face.task",
+        "STACKCHAN_FACE_TRACKING_DETECTOR=desktop/scripts/custom_detector.py"
       ].join("\n")
     );
 
@@ -62,5 +66,7 @@ describe("loadConfig", () => {
     expect(config.volcengineTtsApiKey).toBe("explicit-token");
     expect(config.volcengineTtsVoiceId).toBe("voice-from-dot-env");
     expect(config.volcengineTtsCompletionVolume).toBe(91);
+    expect(config.faceLandmarkerModel).toBe(path.join(projectRoot, "desktop/models/custom-face.task"));
+    expect(config.faceTrackingDetectorScript).toBe(path.join(projectRoot, "desktop/scripts/custom_detector.py"));
   });
 });

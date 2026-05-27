@@ -7,7 +7,7 @@ import { CommandStatus } from "../../components/CommandStatus";
 import { MetricGrid } from "../../components/MetricGrid";
 import { RawPanel } from "../../components/RawPanel";
 import { useCommand } from "../../hooks/useCommand";
-import { boolText, integerText } from "../../model/format";
+import { boolText, dash, integerText } from "../../model/format";
 import type { PreviewSnapshot } from "../../../../src/preview/public-types";
 
 export function CodexAnnouncerApp({
@@ -32,11 +32,7 @@ export function CodexAnnouncerApp({
     if (result.ok !== false && snapshot) {
       setSnapshot?.({
         ...snapshot,
-        completionTts: {
-          enabled: result.enabled,
-          lightEnabled: result.lightEnabled,
-          volume: result.volume
-        }
+        completionTts: result
       });
     }
     return result;
@@ -57,7 +53,13 @@ export function CodexAnnouncerApp({
           metrics={[
             { label: "Codex 播报", value: boolText(settings?.enabled), tone: settings?.enabled ? "ok" : "warn" },
             { label: "灯光提醒", value: boolText(settings?.lightEnabled), tone: settings?.lightEnabled ? "ok" : "warn" },
-            { label: "Volume", value: integerText(settings?.volume, " / 100") }
+            { label: "Volume", value: integerText(settings?.volume, " / 100") },
+            { label: "TTS provider", value: dash(settings?.provider), tone: settings?.provider === "volcengine" ? "ok" : "warn" },
+            { label: "Configured voice", value: dash(settings?.configuredVoice) },
+            { label: "Active voice", value: dash(settings?.activeVoice), tone: settings?.provider === "volcengine" ? "ok" : "warn" },
+            { label: "Cloud TTS", value: boolText(settings?.cloudEnabled), tone: settings?.cloudEnabled ? "ok" : "warn" },
+            { label: "Cloud key", value: boolText(settings?.cloudConfigured), tone: settings?.cloudConfigured ? "ok" : "warn" },
+            { label: "Reason", value: dash(settings?.reason) }
           ]}
         />
       </section>

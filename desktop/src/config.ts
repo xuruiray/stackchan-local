@@ -112,6 +112,11 @@ function parseTtsSampleRate(value: string | undefined): 16000 | 24000 {
   return value === "24000" ? 24000 : 16000;
 }
 
+function resolveProjectPath(projectRoot: string, configuredPath: string | undefined, fallbackPath: string): string {
+  const candidate = configuredPath || fallbackPath;
+  return path.isAbsolute(candidate) ? candidate : path.join(projectRoot, candidate);
+}
+
 function parseCameraPreset(value: string | undefined): FaceTrackingCameraPreset {
   const normalized = value?.trim().toLowerCase();
   if (normalized === "accurate" || normalized === "debug" || normalized === "fast") {
@@ -124,7 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
   const initialProjectRoot = env.STACKCHAN_PROJECT_ROOT ?? defaultProjectRoot(process.cwd());
   loadDotEnv(initialProjectRoot, env);
   const home = env.HOME ?? process.cwd();
-  const projectRoot = env.STACKCHAN_PROJECT_ROOT ?? initialProjectRoot;
+  const projectRoot = path.resolve(env.STACKCHAN_PROJECT_ROOT ?? initialProjectRoot);
   return {
     host: env.STACKCHAN_LOCAL_HOST ?? "0.0.0.0",
     port: parseInteger(env.STACKCHAN_LOCAL_PORT, 8787),
@@ -149,10 +154,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
     faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.25), 0, 2),
     faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 20), 1, 45),
     faceTrackingPython: env.STACKCHAN_FACE_TRACKING_PYTHON ?? defaultFaceTrackingPython(),
-    faceTrackingDetectorScript:
-      env.STACKCHAN_FACE_TRACKING_DETECTOR ?? `${projectRoot}/desktop/scripts/face_detector.py`,
-    faceLandmarkerModel:
-      env.STACKCHAN_FACE_LANDMARKER_MODEL ?? `${projectRoot}/desktop/models/face_landmarker.task`,
+    faceTrackingDetectorScript: resolveProjectPath(
+      projectRoot,
+      env.STACKCHAN_FACE_TRACKING_DETECTOR,
+      "desktop/scripts/face_detector.py"
+    ),
+    faceLandmarkerModel: resolveProjectPath(
+      projectRoot,
+      env.STACKCHAN_FACE_LANDMARKER_MODEL,
+      "desktop/models/face_landmarker.task"
+    ),
     faceTrackingMaxFaces: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_MAX_FACES, 1), 1, 4),
     faceTrackingMinDetectionConfidence: clampNumber(
       parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_DETECTION_CONFIDENCE, 0.18),

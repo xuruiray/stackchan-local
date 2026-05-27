@@ -40,6 +40,7 @@ export interface PreviewServerExtras {
     setLightEnabled(enabled: boolean): boolean;
     getVolume(): number;
     setVolume(volume: number): number;
+    getRouteSnapshot?(): Omit<CompletionTtsSnapshot, "enabled" | "lightEnabled" | "volume">;
   };
 }
 
@@ -510,6 +511,11 @@ export class PreviewServer {
           this.sendJson(response, { ok: false, error: "completion announcer disabled", ...this.completionTtsSnapshot() });
           return;
         }
+        const route = this.extras.completionAnnouncer.getRouteSnapshot?.();
+        if (!route || route.provider !== "volcengine") {
+          this.sendJson(response, { ok: false, error: "completion tts unavailable", ...this.completionTtsSnapshot() });
+          return;
+        }
         const id = `preview-test-${Date.now()}`;
         this.extras.completionAnnouncer.announce({
           id,
@@ -679,10 +685,17 @@ export class PreviewServer {
   }
 
   private completionTtsSnapshot(): CompletionTtsSnapshot {
+    const route = this.extras.completionAnnouncer?.getRouteSnapshot?.();
     return {
       enabled: this.extras.completionAnnouncer?.isEnabled() ?? false,
       lightEnabled: this.extras.completionAnnouncer?.isLightEnabled() ?? false,
-      volume: this.extras.completionAnnouncer?.getVolume() ?? 0
+      volume: this.extras.completionAnnouncer?.getVolume() ?? 0,
+      provider: route?.provider ?? "unconfigured",
+      configuredVoice: route?.configuredVoice ?? "-",
+      activeVoice: route?.activeVoice ?? "-",
+      cloudEnabled: route?.cloudEnabled ?? false,
+      cloudConfigured: route?.cloudConfigured ?? false,
+      reason: route?.reason
     };
   }
 

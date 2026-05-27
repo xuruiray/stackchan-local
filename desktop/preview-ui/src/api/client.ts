@@ -1,6 +1,7 @@
 import type {
   AvatarExpressionPayload,
   CommandApiResult,
+  CompletionTtsSnapshot,
   DebugSnapshot,
   PreviewSnapshot,
   RobotEmotion
@@ -86,8 +87,8 @@ export async function setCompletionTts(payload: {
   enabled?: boolean;
   lightEnabled?: boolean;
   volume?: number;
-}): Promise<CommandApiResult & { enabled: boolean; lightEnabled: boolean; volume: number }> {
-  return postJson<CommandApiResult & { enabled: boolean; lightEnabled: boolean; volume: number }>(
+}): Promise<CommandApiResult & CompletionTtsSnapshot> {
+  return postJson<CommandApiResult & CompletionTtsSnapshot>(
     "/api/completion-tts",
     payload
   );
