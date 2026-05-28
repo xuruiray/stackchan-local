@@ -33,8 +33,8 @@ class FakeVisionTracking {
         control: {
           mode: "pid",
           deadband: 0.045,
-          yaw: { kp: 42, ki: 0, kd: 8 },
-          pitch: { kp: 30, ki: 0, kd: 6 },
+          yaw: { kp: 42, ki: 0, kd: 0 },
+          pitch: { kp: 30, ki: 0, kd: 0 },
           integralLimit: 0.35,
           outputLimitDeg: 20,
           servoRange: {

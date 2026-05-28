@@ -195,6 +195,9 @@ const TRACK_TARGET_SIZE_ALPHA = 0.35;
 const TRACK_ACTIVE_ERROR_MIN = 0.012;
 const TRACK_ACTIVE_ERROR_DEADBAND_RATIO = 0.75;
 const TRACK_TARGET_STICKINESS_WEIGHT = 0.18;
+const TRACK_REACQUIRE_CONFIRM_FRAMES = 2;
+const TRACK_REACQUIRE_MAX_CENTER_DELTA = 0.18;
+const TRACK_LOST_SEARCH_SPEED = 220;
 const TRACK_TARGET_FILTER_CONFIG: OneEuroFilterOptions = {
   minCutoff: 1.2,
   beta: 0.045,
@@ -284,6 +287,8 @@ export class VisionTrackingService {
   private lastTarget?: NormalizedFaceBox;
   private smoothedTarget?: NormalizedFaceBox;
   private lastSentTrackTarget?: NormalizedFaceBox;
+  private reacquireCandidate?: NormalizedFaceBox;
+  private reacquireConfirmations = 0;
   private readonly targetFilterX = new OneEuroFilter(TRACK_TARGET_FILTER_CONFIG);
   private readonly targetFilterY = new OneEuroFilter(TRACK_TARGET_FILTER_CONFIG);
   private lastTrackingCompensationMs?: number;
@@ -885,6 +890,10 @@ export class VisionTrackingService {
     this.lastFaces = result.faces.map(positionOnlyFace);
     const selected = selectTrackingFace(this.lastFaces, this.smoothedTarget ?? this.lastTarget);
     if (selected) {
+      if (!this.confirmReacquiredTarget(selected)) {
+        this.emitPreviewUpdate();
+        return;
+      }
       const frame = this.lastFrame?.frameId === result.frameId ? this.lastFrame : undefined;
       const measurementTimestampMs = trackingMeasurementTimestampMs(frame);
       const stableTarget = this.stabilizeTrackingTarget(selected, measurementTimestampMs);
@@ -895,6 +904,7 @@ export class VisionTrackingService {
       this.lastFaceAt = new Date();
       this.lastTarget = stableTarget;
       this.lostCommandSent = false;
+      this.clearReacquireCandidate();
       this.sendTrackCommand({
         detected: true,
         centerX,
@@ -909,6 +919,7 @@ export class VisionTrackingService {
     }
 
     this.lastTarget = undefined;
+    this.clearReacquireCandidate();
     this.emitPreviewUpdate();
 
     if (!this.lastFaceAt || this.lostCommandSent) {
@@ -921,10 +932,31 @@ export class VisionTrackingService {
       this.sendTrackCommand({
         detected: false,
         reason: "face_lost",
-        speed: this.settings.speed,
+        speed: Math.min(this.settings.speed, TRACK_LOST_SEARCH_SPEED),
         control: this.settings.control
       });
     }
+  }
+
+  private confirmReacquiredTarget(target: NormalizedFaceBox): boolean {
+    if (!this.lostCommandSent) {
+      return true;
+    }
+
+    if (!this.reacquireCandidate || faceCenterDistance(target, this.reacquireCandidate) > TRACK_REACQUIRE_MAX_CENTER_DELTA) {
+      this.reacquireCandidate = target;
+      this.reacquireConfirmations = 1;
+      return false;
+    }
+
+    this.reacquireCandidate = target;
+    this.reacquireConfirmations += 1;
+    if (this.reacquireConfirmations < TRACK_REACQUIRE_CONFIRM_FRAMES) {
+      return false;
+    }
+
+    this.clearReacquireCandidate();
+    return true;
   }
 
   private stabilizeTrackingTarget(rawTarget: NormalizedFaceBox, timestampMs: number): NormalizedFaceBox {
@@ -1033,8 +1065,14 @@ export class VisionTrackingService {
     this.smoothedTarget = undefined;
     this.lastSentTrackTarget = undefined;
     this.lastTrackingCompensationMs = undefined;
+    this.clearReacquireCandidate();
     this.targetFilterX.reset();
     this.targetFilterY.reset();
+  }
+
+  private clearReacquireCandidate(): void {
+    this.reacquireCandidate = undefined;
+    this.reacquireConfirmations = 0;
   }
 
   private emitPreviewUpdate(): void {
@@ -1110,6 +1148,12 @@ function faceCenter(face: NormalizedFaceBox): { x: number; y: number } {
 function faceCenterError(face: NormalizedFaceBox): number {
   const center = faceCenter(face);
   return Math.hypot(center.x - 0.5, center.y - 0.5);
+}
+
+function faceCenterDistance(left: NormalizedFaceBox, right: NormalizedFaceBox): number {
+  const leftCenter = faceCenter(left);
+  const rightCenter = faceCenter(right);
+  return Math.hypot(leftCenter.x - rightCenter.x, leftCenter.y - rightCenter.y);
 }
 
 function faceWithCenter(face: NormalizedFaceBox, center: { x: number; y: number }): NormalizedFaceBox {
@@ -1208,12 +1252,12 @@ function settingsFromConfig(config: DesktopConfig): VisionTrackingSettings {
       yaw: {
         kp: clampNumber(config.faceTrackingYawKp, 0, 150),
         ki: clampNumber(config.faceTrackingYawKi, 0, 50),
-        kd: clampNumber(config.faceTrackingYawKd, 0, 80)
+        kd: 0
       },
       pitch: {
         kp: clampNumber(config.faceTrackingPitchKp, 0, 150),
         ki: clampNumber(config.faceTrackingPitchKi, 0, 50),
-        kd: clampNumber(config.faceTrackingPitchKd, 0, 80)
+        kd: 0
       },
       integralLimit: clampNumber(config.faceTrackingIntegralLimit, 0, 2),
       outputLimitDeg: clampNumber(config.faceTrackingOutputLimitDeg, 1, 45),
@@ -1255,7 +1299,7 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
       yaw: {
         kp: patch.control?.yaw?.kp === undefined ? current.control.yaw.kp : clampNumber(patch.control.yaw.kp, 0, 150),
         ki: patch.control?.yaw?.ki === undefined ? current.control.yaw.ki : clampNumber(patch.control.yaw.ki, 0, 50),
-        kd: patch.control?.yaw?.kd === undefined ? current.control.yaw.kd : clampNumber(patch.control.yaw.kd, 0, 80)
+        kd: 0
       },
       pitch: {
         kp:
@@ -1266,10 +1310,7 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
           patch.control?.pitch?.ki === undefined
             ? current.control.pitch.ki
             : clampNumber(patch.control.pitch.ki, 0, 50),
-        kd:
-          patch.control?.pitch?.kd === undefined
-            ? current.control.pitch.kd
-            : clampNumber(patch.control.pitch.kd, 0, 80)
+        kd: 0
       },
       integralLimit:
         patch.control?.integralLimit === undefined

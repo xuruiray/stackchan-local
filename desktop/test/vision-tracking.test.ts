@@ -29,10 +29,10 @@ const baseConfig: DesktopConfig = {
   faceTrackingDeadband: 0.018,
   faceTrackingYawKp: 44,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 6,
+  faceTrackingYawKd: 0,
   faceTrackingPitchKp: 32,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 5,
+  faceTrackingPitchKd: 0,
   faceTrackingIntegralLimit: 0.25,
   faceTrackingOutputLimitDeg: 20,
   faceTrackingPython: "python3",
@@ -181,6 +181,28 @@ function collectRobotCommands(ws: WebSocket, count: number, timeoutMs = 1000): P
   });
 }
 
+function waitForRobotCommandKind(ws: WebSocket, kind: string, timeoutMs = 1000): Promise<Record<string, unknown> | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(undefined);
+    }, timeoutMs);
+    const onMessage = (data: RawData) => {
+      const message = JSON.parse(data.toString());
+      if (message.type !== "robot.command" || message.command?.kind !== kind) {
+        return;
+      }
+      cleanup();
+      resolve(message.command);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+    };
+    ws.on("message", onMessage);
+  });
+}
+
 function sendFrame(
   ws: WebSocket,
   frameId: string,
@@ -289,8 +311,8 @@ describe("VisionTrackingService", () => {
     expect(trackFace.control).toEqual({
       mode: "pid",
       deadband: 0.018,
-      yaw: { kp: 44, ki: 0, kd: 6 },
-      pitch: { kp: 32, ki: 0, kd: 5 },
+      yaw: { kp: 44, ki: 0, kd: 0 },
+      pitch: { kp: 32, ki: 0, kd: 0 },
       integralLimit: 0.25,
       outputLimitDeg: 20,
       servoRange: {
@@ -668,8 +690,8 @@ describe("VisionTrackingService", () => {
     expect(trackFace.speed).toBe(560);
     expect(trackFace.control).toMatchObject({
       deadband: 0.03,
-      yaw: { kp: 52, ki: 0, kd: 12 },
-      pitch: { kp: 38, ki: 0, kd: 8 }
+      yaw: { kp: 52, ki: 0, kd: 0 },
+      pitch: { kp: 38, ki: 0, kd: 0 }
     });
     ws.close();
   });
@@ -697,6 +719,53 @@ describe("VisionTrackingService", () => {
     const lost = await nextCommand(ws, "trackFace");
     expect(lost.detected).toBe(false);
     expect(lost.reason).toBe("face_lost");
+    expect(lost.speed).toBe(220);
+    ws.close();
+  });
+
+  it("requires consecutive detections before reacquiring after face loss", async () => {
+    const logger = createLogger("error");
+    const registry = new DeviceRegistry(logger);
+    const controller = new RobotController(registry, logger);
+    const detector = new FakeFaceDetector([
+      [faceAtCenter(0.4, 0.5)],
+      [],
+      [faceAtCenter(0.72, 0.5)],
+      [faceAtCenter(0.73, 0.5)]
+    ]);
+    service = new VisionTrackingService(controller, registry, logger, baseConfig, detector, {
+      commandMaxHz: 20,
+      lostTimeoutMs: 10
+    });
+    server = new StackChanWebSocketServer(baseConfig, registry, logger);
+    const port = await server.start();
+    service.start();
+
+    const ws = await connectDevice(port);
+    service.setEnabled(true);
+    await nextCommand(ws, "cameraStream");
+
+    sendFrame(ws, "frame-1");
+    const found = await nextCommand(ws, "trackFace");
+    expect(found.detected).toBe(true);
+
+    await delay(125);
+    sendFrame(ws, "frame-2");
+    const lost = await nextCommand(ws, "trackFace");
+    expect(lost.detected).toBe(false);
+
+    await delay(125);
+    sendFrame(ws, "frame-3");
+    const firstReacquire = await waitForRobotCommandKind(ws, "trackFace", 160);
+    expect(firstReacquire).toBeUndefined();
+    expect(service.previewSnapshot().faces).toHaveLength(1);
+    expect(service.previewSnapshot().target).toBeUndefined();
+
+    await delay(125);
+    sendFrame(ws, "frame-4");
+    const reacquired = await nextCommand(ws, "trackFace");
+    expect(reacquired.detected).toBe(true);
+    expect(reacquired.centerX).toBeCloseTo(0.73, 2);
     ws.close();
   });
 

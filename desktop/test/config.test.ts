@@ -31,9 +31,9 @@ describe("loadConfig", () => {
     expect(config.faceTrackingSpeed).toBe(700);
     expect(config.faceTrackingDeadband).toBe(0.018);
     expect(config.faceTrackingYawKp).toBe(44);
-    expect(config.faceTrackingYawKd).toBe(6);
+    expect(config.faceTrackingYawKd).toBe(0);
     expect(config.faceTrackingPitchKp).toBe(32);
-    expect(config.faceTrackingPitchKd).toBe(5);
+    expect(config.faceTrackingPitchKd).toBe(0);
     expect(config.faceTrackingIntegralLimit).toBe(0.25);
     expect(config.faceTrackingOutputLimitDeg).toBe(20);
     expect(config.faceLandmarkerModel).toBe(path.join(projectRoot, "desktop/models/face_landmarker.task"));

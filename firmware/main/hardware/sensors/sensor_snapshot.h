@@ -47,8 +47,8 @@ struct LocalFaceTrackingTarget {
 
     struct Control {
         float deadband       = 0.045f;
-        PidAxis yaw          = {42.0f, 0.0f, 8.0f};
-        PidAxis pitch        = {30.0f, 0.0f, 6.0f};
+        PidAxis yaw          = {42.0f, 0.0f, 0.0f};
+        PidAxis pitch        = {30.0f, 0.0f, 0.0f};
         float integralLimit  = 0.35f;
         float outputLimitDeg = 20.0f;
         ServoRange servoRange;

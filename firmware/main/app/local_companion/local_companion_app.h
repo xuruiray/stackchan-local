@@ -52,8 +52,6 @@ private:
     uint32_t _offline_idle_shutdown_started = 0;
     float _face_tracking_integral_x = 0.0f;
     float _face_tracking_integral_y = 0.0f;
-    float _last_face_tracking_error_x = 0.0f;
-    float _last_face_tracking_error_y = 0.0f;
     LocalCompanionState _last_visual_state = LocalCompanionState::Idle;
     int _breath_modifier_id = -1;
     int _blink_modifier_id = -1;

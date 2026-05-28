@@ -29,7 +29,8 @@ constexpr uint32_t kFaceTrackingApplyIntervalMs = 80;
 constexpr uint32_t kOfflineIdleShutdownMs = 60000;
 constexpr int kFaceTrackingSearchYaw = 0;
 constexpr int kFaceTrackingSearchPitch = 260;
-constexpr int kFaceTrackingSearchSpeedMin = 420;
+constexpr int kFaceTrackingSearchSpeedMin = 120;
+constexpr int kFaceTrackingSearchSpeedMax = 220;
 
 float clamp_float(float value, float min_value, float max_value)
 {
@@ -437,7 +438,7 @@ void AppLocalCompanion::sync_face_tracking()
         const int pitch_max = std::max(target.control.servoRange.pitchMin, target.control.servoRange.pitchMax);
         const int search_yaw = std::max(yaw_min, std::min(yaw_max, kFaceTrackingSearchYaw));
         const int search_pitch = std::max(pitch_min, std::min(pitch_max, kFaceTrackingSearchPitch));
-        const int search_speed = std::max(kFaceTrackingSearchSpeedMin, std::min(1000, target.speed));
+        const int search_speed = std::max(kFaceTrackingSearchSpeedMin, std::min(kFaceTrackingSearchSpeedMax, target.speed));
         motion.moveWithSpeed(search_yaw, search_pitch, search_speed);
         _last_face_tracking_update = target.updatedAt;
         _last_face_tracking_apply = now;
@@ -460,8 +461,6 @@ void AppLocalCompanion::sync_face_tracking()
     if (filtered_error_x == 0.0f && filtered_error_y == 0.0f) {
         _face_tracking_integral_x *= 0.8f;
         _face_tracking_integral_y *= 0.8f;
-        _last_face_tracking_error_x = 0.0f;
-        _last_face_tracking_error_y = 0.0f;
         _last_face_tracking_update = target.updatedAt;
         return;
     }
@@ -473,16 +472,12 @@ void AppLocalCompanion::sync_face_tracking()
     _face_tracking_integral_x = clamp_float(_face_tracking_integral_x + filtered_error_x * dt, -integral_limit, integral_limit);
     _face_tracking_integral_y = clamp_float(_face_tracking_integral_y + filtered_error_y * dt, -integral_limit, integral_limit);
 
-    const float derivative_x = _face_tracking_pid_ready ? (filtered_error_x - _last_face_tracking_error_x) / dt : 0.0f;
-    const float derivative_y = _face_tracking_pid_ready ? (filtered_error_y - _last_face_tracking_error_y) / dt : 0.0f;
     const float output_limit_deg = clamp_float(target.control.outputLimitDeg, 1.0f, 45.0f);
     const float yaw_delta_deg = clamp_float(target.control.yaw.kp * filtered_error_x +
-                                                target.control.yaw.ki * _face_tracking_integral_x +
-                                                target.control.yaw.kd * derivative_x,
+                                                target.control.yaw.ki * _face_tracking_integral_x,
                                             -output_limit_deg, output_limit_deg);
     const float pitch_delta_deg = clamp_float(target.control.pitch.kp * filtered_error_y +
-                                                  target.control.pitch.ki * _face_tracking_integral_y +
-                                                  target.control.pitch.kd * derivative_y,
+                                                  target.control.pitch.ki * _face_tracking_integral_y,
                                               -output_limit_deg, output_limit_deg);
 
     auto& motion = GetStackChan().motion();
@@ -498,8 +493,6 @@ void AppLocalCompanion::sync_face_tracking()
     const int speed = std::max(0, std::min(1000, target.speed));
 
     motion.moveWithSpeed(next_yaw, next_pitch, speed);
-    _last_face_tracking_error_x = filtered_error_x;
-    _last_face_tracking_error_y = filtered_error_y;
     _last_face_tracking_pid_at = now;
     _face_tracking_pid_ready = true;
     _last_face_tracking_update = target.updatedAt;
