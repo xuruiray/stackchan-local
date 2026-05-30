@@ -124,6 +124,21 @@ const char* motion_event_to_string(ImuMotionEvent motion)
     }
 }
 
+const char* attitude_quality_to_string(ImuAttitudeQuality quality)
+{
+    switch (quality) {
+        case ImuAttitudeQuality::GyroAccel:
+            return "gyroAccel";
+        case ImuAttitudeQuality::GyroAccelMag:
+            return "gyroAccelMag";
+        case ImuAttitudeQuality::MagnetometerRejected:
+            return "magnetometerRejected";
+        case ImuAttitudeQuality::Unavailable:
+        default:
+            return "unavailable";
+    }
+}
+
 const char* head_touch_gesture_to_string(HeadPetGesture gesture)
 {
     switch (gesture) {

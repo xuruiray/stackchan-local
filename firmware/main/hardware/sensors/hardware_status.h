@@ -18,6 +18,13 @@ enum class ImuMotionEvent {
     PickUp,
 };
 
+enum class ImuAttitudeQuality {
+    Unavailable = 0,
+    GyroAccel,
+    GyroAccelMag,
+    MagnetometerRejected,
+};
+
 enum class LocalCompanionState {
     Idle = 0,
     Connecting,
@@ -81,6 +88,17 @@ struct LocalImuSnapshot {
     int16_t magnetometerRawY    = 0;
     int16_t magnetometerRawZ    = 0;
     float magnetometerHeadingDeg = 0.0f;
+    bool attitudeAvailable      = false;
+    float attitudeQw            = 1.0f;
+    float attitudeQx            = 0.0f;
+    float attitudeQy            = 0.0f;
+    float attitudeQz            = 0.0f;
+    float attitudePitchDeg      = 0.0f;
+    float attitudeRollDeg       = 0.0f;
+    float attitudeYawDeg        = 0.0f;
+    bool attitudeMagnetometerUsed = false;
+    ImuAttitudeQuality attitudeQuality = ImuAttitudeQuality::Unavailable;
+    float attitudeSampleHz      = 0.0f;
     ImuMotionEvent motion       = ImuMotionEvent::None;
     uint32_t updatedAt          = 0;
 };
@@ -116,36 +134,26 @@ struct LocalI2cScanStageSnapshot {
 
 struct LocalPeripheralProbeSnapshot {
     bool nfcAvailable = false;
-    uint8_t nfcAddress = 0x50;
-    std::string nfcDriver = "st25r3916-probe";
-    std::string nfcStatus;
     std::string nfcReason = "not_detected_i2c_0x50";
 
     bool powerMonitorAvailable = false;
-    uint8_t powerMonitorAddress = 0x41;
     float powerMonitorBusVoltage = 0.0f;
     float powerMonitorShuntVoltage = 0.0f;
     float powerMonitorCurrent = 0.0f;
     float powerMonitorPower = 0.0f;
-    std::string powerMonitorDriver = "ina226";
     std::string powerMonitorReason = "not_detected_i2c_0x41";
 
     bool irAvailable = false;
-    int irTxPin = 5;
-    int irRxPin = 10;
-    std::string irDriver = "gpio-ir-basic";
     std::string irReason;
 
     bool proximityAvailable = false;
     uint16_t proximityValue = 0;
     uint16_t proximityRaw = 0;
-    std::string proximityDriver = "ltr553";
     std::string proximityReason = "not_detected_i2c_0x23";
 
     bool ambientLightAvailable = false;
     float ambientLightLux = 0.0f;
     uint32_t ambientLightRaw = 0;
-    std::string ambientLightDriver = "ltr553";
     std::string ambientLightReason = "not_detected_i2c_0x23";
 
     bool magnetometerAvailable = false;
@@ -156,10 +164,33 @@ struct LocalPeripheralProbeSnapshot {
     int16_t magnetometerRawY = 0;
     int16_t magnetometerRawZ = 0;
     float magnetometerHeadingDeg = 0.0f;
-    std::string magnetometerDriver = "bmi270-aux-bmm150";
     std::string magnetometerReason = "waiting_for_bmi270_aux";
 
     std::vector<LocalI2cScanStageSnapshot> i2cScans;
+};
+
+struct LocalNfcEvent {
+    std::string action;
+    uint32_t uptimeMs = 0;
+    std::string uid;
+    std::string tech;
+    std::string atqa;
+    int sak = -1;
+    std::string reason;
+};
+
+struct LocalIrEvent {
+    std::string action;
+    uint32_t uptimeMs = 0;
+    std::string protocol;
+    std::string address;
+    std::string command;
+    std::string code;
+    uint16_t bits = 0;
+    bool repeat = false;
+    std::string requestId;
+    uint32_t carrierHz = 0;
+    std::string reason;
 };
 
 enum class MicTestStatus {

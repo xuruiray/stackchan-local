@@ -27,6 +27,20 @@ struct BMI270_Data {
     int16_t mag_raw_z;
 };
 
+struct BMM150_TrimData {
+    int8_t dig_x1 = 0;
+    int8_t dig_y1 = 0;
+    int8_t dig_x2 = 0;
+    int8_t dig_y2 = 0;
+    uint16_t dig_z1 = 0;
+    int16_t dig_z2 = 0;
+    int16_t dig_z3 = 0;
+    int16_t dig_z4 = 0;
+    uint8_t dig_xy1 = 0;
+    int8_t dig_xy2 = 0;
+    uint16_t dig_xyz1 = 0;
+};
+
 class BMI270 {
 public:
     static constexpr uint8_t DEFAULT_ADDRESS = BMI2_I2C_PRIM_ADDR;  // 0x68
@@ -59,6 +73,8 @@ private:
     struct bmi2_dev _bmi;
     uint8_t _addr;
     bool _initialized;
+    bool _bmm150_trim_ready = false;
+    BMM150_TrimData _bmm150_trim;
     BMI270_Data _data;
 
     static BMI2_INTF_RETURN_TYPE bmi2_i2c_read(uint8_t reg_addr, uint8_t* reg_data, uint32_t len, void* intf_ptr);
@@ -73,7 +89,10 @@ private:
     bool auxSetupMode(uint8_t i2c_addr);
     bool auxWriteRegister8(uint8_t reg_addr, uint8_t value);
     bool auxReadRegister8(uint8_t reg_addr, uint8_t& value);
+    bool auxReadRegisters(uint8_t reg_addr, uint8_t* reg_data, uint8_t len);
     bool setupBmm150Aux();
+    bool readBmm150TrimRegisters();
+    bool configureBmm150RegularPreset();
     void updateBmm150();
 
     float lsb_to_mps2(int16_t val, float g_range, uint8_t bit_width);

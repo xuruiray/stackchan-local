@@ -20,13 +20,10 @@
 
 static const char* _tag = "RUNTIME_BRIDGE";
 
-// Keep the original NVS namespace and keys for persisted power settings. The
-// compatibility detail stays here so application code does not carry legacy
-// runtime naming.
-static constexpr std::string_view kCompatPowerConfigNvsNs                     = "xiaozhi";
-static constexpr std::string_view kPowerConfigIdleShutdownTimeKey             = "idle_sec";
-static constexpr std::string_view kPowerConfigAllowShutdownWhenChargingKey    = "ext_pwr";
-static constexpr std::string_view kPowerConfigIdleRandomMovementKey           = "idle_lv";
+static constexpr std::string_view kPowerConfigNvsNs                           = "stackchan_power";
+static constexpr std::string_view kPowerConfigIdleShutdownTimeKey             = "shutdown_sec";
+static constexpr std::string_view kPowerConfigAllowShutdownWhenChargingKey    = "allow_ext_pwr";
+static constexpr std::string_view kPowerConfigIdleRandomMovementKey           = "idle_level";
 
 namespace embedded_runtime_bridge {
 
@@ -125,7 +122,7 @@ RuntimePowerConfig get_runtime_power_config()
 {
     RuntimePowerConfig config;
 
-    Settings settings(kCompatPowerConfigNvsNs.data(), false);
+    Settings settings(kPowerConfigNvsNs.data(), false);
     config.idleShutdownTimeSeconds = settings.GetInt(kPowerConfigIdleShutdownTimeKey.data(),
                                                      static_cast<int>(config.idleShutdownTimeSeconds));
     config.allowShutdownWhenCharging =
@@ -138,7 +135,7 @@ RuntimePowerConfig get_runtime_power_config()
 
 void set_runtime_power_config(const RuntimePowerConfig& config)
 {
-    Settings settings(kCompatPowerConfigNvsNs.data(), true);
+    Settings settings(kPowerConfigNvsNs.data(), true);
     settings.SetInt(kPowerConfigIdleShutdownTimeKey.data(), config.idleShutdownTimeSeconds);
     settings.SetBool(kPowerConfigAllowShutdownWhenChargingKey.data(), config.allowShutdownWhenCharging);
     settings.SetInt(kPowerConfigIdleRandomMovementKey.data(), config.idleRandomMovementLevel);

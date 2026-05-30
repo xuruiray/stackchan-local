@@ -226,7 +226,7 @@ private:
 
     void connect_wifi(const char* ssid, const char* password)
     {
-        // Save to NVS (compatible with Xiaozhi) and connect
+        // Save Wi-Fi auth and connect.
         _wifi_station->AddAuth(ssid, password);
     }
 

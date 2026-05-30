@@ -16,6 +16,8 @@ namespace {
 constexpr uint8_t ST25R3916_REG_IC_IDENTITY = 0x3F;
 constexpr uint8_t ST25R3916_OP_READ_REGISTER = 0x40;
 constexpr uint8_t ST25R3916_VALID_IDENTIFY_TYPE = 0x05;
+constexpr uint32_t kHealthCheckIntervalMs = 1000;
+constexpr uint32_t kErrorEventMinIntervalMs = 5000;
 
 bool read_st25r3916_identity(i2c_master_bus_handle_t bus, uint8_t address, uint8_t& value, std::string& reason)
 {
@@ -56,20 +58,16 @@ bool read_st25r3916_identity(i2c_master_bus_handle_t bus, uint8_t address, uint8
 
 void NfcProbe::init(LocalPeripheralProbeSnapshot& snapshot)
 {
-    snapshot.nfcDriver = "st25r3916-probe";
-    snapshot.nfcAddress = kAddress;
     snapshot.nfcReason = "not_detected_i2c_0x50";
 
     if (!bus_) {
         snapshot.nfcAvailable = false;
-        snapshot.nfcStatus.clear();
         snapshot.nfcReason = "i2c_bus_unavailable";
         return;
     }
 
     if (!probe_i2c_with_retry(bus_, kAddress, 3, 40)) {
         snapshot.nfcAvailable = false;
-        snapshot.nfcStatus.clear();
         snapshot.nfcReason = "not_detected_i2c_0x50_after_retry";
         return;
     }
@@ -78,12 +76,38 @@ void NfcProbe::init(LocalPeripheralProbeSnapshot& snapshot)
     std::string reason;
     snapshot.nfcAvailable = read_st25r3916_identity(bus_, kAddress, identity, reason);
     if (snapshot.nfcAvailable) {
-        snapshot.nfcStatus = "chip_detected";
         snapshot.nfcReason.clear();
     } else {
-        snapshot.nfcStatus.clear();
         snapshot.nfcReason = reason.empty() ? "not_detected_i2c_0x50" : reason;
     }
+}
+
+bool NfcProbe::pollEvent(LocalNfcEvent& event, LocalPeripheralProbeSnapshot& snapshot, uint32_t now)
+{
+    event = LocalNfcEvent();
+    if (!snapshot.nfcAvailable || static_cast<int32_t>(now - next_health_check_ms_) < 0) {
+        return false;
+    }
+    next_health_check_ms_ = now + kHealthCheckIntervalMs;
+
+    uint8_t identity = 0;
+    std::string reason;
+    if (read_st25r3916_identity(bus_, kAddress, identity, reason)) {
+        snapshot.nfcReason.clear();
+        return false;
+    }
+
+    snapshot.nfcAvailable = false;
+    snapshot.nfcReason = reason.empty() ? "identity_read_failed_i2c_0x50" : reason;
+    if (static_cast<int32_t>(now - last_error_event_ms_) < static_cast<int32_t>(kErrorEventMinIntervalMs)) {
+        return false;
+    }
+
+    last_error_event_ms_ = now;
+    event.action = "readError";
+    event.uptimeMs = now;
+    event.reason = snapshot.nfcReason;
+    return true;
 }
 
 }  // namespace stackchan::hal::sensors

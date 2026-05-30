@@ -127,8 +127,7 @@ export async function captureImage(): Promise<CommandApiResult> {
 }
 
 export async function telemetryConfig(payload: {
-  sensorSnapshotHz?: 0 | 0.5 | 1 | 2;
-  imuHz?: 0 | 1 | 2 | 4 | 10;
+  hardwareStatusHz?: 0 | 0.5 | 1 | 2;
   includeI2cScan?: boolean;
   reason?: string;
 }): Promise<CommandApiResult> {

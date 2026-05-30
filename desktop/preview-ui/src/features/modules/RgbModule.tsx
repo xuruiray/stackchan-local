@@ -6,7 +6,7 @@ import { CommandPanel } from "../../components/CommandPanel";
 import { CommandStatus } from "../../components/CommandStatus";
 import { ModulePage } from "../../components/ModulePage";
 import { useCommand } from "../../hooks/useCommand";
-import { boolText, dash, integerText, ratioPercent } from "../../model/format";
+import { boolText } from "../../model/format";
 import { deviceUpdated, ModuleProps, p } from "./module-utils";
 
 export function RgbModule({ snapshot }: ModuleProps): JSX.Element {
@@ -23,11 +23,7 @@ export function RgbModule({ snapshot }: ModuleProps): JSX.Element {
       value={rgb}
       updated={deviceUpdated(snapshot)}
       metrics={[
-        { label: "Enabled", value: boolText(rgb?.enabled) },
-        { label: "Count", value: integerText(rgb?.count) },
-        { label: "Color", value: dash(rgb?.color) },
-        { label: "Brightness", value: ratioPercent(rgb?.brightness) },
-        { label: "Driver", value: dash(rgb?.driver) }
+        { label: "Enabled", value: boolText(rgb?.enabled) }
       ]}
     >
       <CommandPanel>

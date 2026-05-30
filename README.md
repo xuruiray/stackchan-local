@@ -165,7 +165,7 @@ sequenceDiagram
 - Boot the M5Stack StackChan board profile and initialize hardware drivers.
 - Compose drivers into services for display, motion, sensors, power, audio, network, and local companion transport.
 - Connect to the desktop daemon using mDNS or saved fallback WebSocket URL.
-- Send heartbeat, state, sensor snapshots, touch, IMU, battery, Wi-Fi, camera, and audio telemetry.
+- Send heartbeat, state, hardware status, touch, IMU, battery, Wi-Fi, camera, and audio telemetry.
 - Execute commands for mode, audio playback, camera stream, RGB, servo motion, face tracking, and telemetry configuration.
 - Keep local avatar rendering, blinking, idle behavior, and power policy on-device.
 

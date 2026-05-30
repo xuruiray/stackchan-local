@@ -165,7 +165,7 @@ sequenceDiagram
 - 启动 M5Stack StackChan board profile 并初始化硬件驱动。
 - 把驱动组合成 display、motion、sensors、power、audio、network、local companion transport 等服务。
 - 通过 mDNS 或 NVS fallback URL 连接桌面 daemon。
-- 发送 heartbeat、state、sensor snapshot、touch、IMU、battery、Wi-Fi、camera、audio telemetry。
+- 发送 heartbeat、state、hardware status、touch、IMU、battery、Wi-Fi、camera、audio telemetry。
 - 执行 mode、audio playback、camera stream、RGB、servo motion、face tracking、telemetry configuration 等命令。
 - 在设备端保持 avatar 渲染、眨眼、idle 行为和电源策略。
 

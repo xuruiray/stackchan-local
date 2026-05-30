@@ -5,7 +5,7 @@
  */
 #pragma once
 
-#include <hardware/sensors/sensor_snapshot.h>
+#include <hardware/sensors/hardware_status.h>
 
 #include <driver/i2c_master.h>
 

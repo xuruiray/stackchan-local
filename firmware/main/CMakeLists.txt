@@ -4,8 +4,8 @@ set(RUNTIME_ASSET_SCRIPTS_DIR "${RUNTIME_ASSETS_DIR}/scripts")
 file(MAKE_DIRECTORY "${GENERATED_INCLUDE_DIR}")
 
 # StackChan Local owns only the desktop-companion firmware surface. Core app,
-# system, hardware, sensors, services, and runtime compatibility files are
-# listed explicitly so directory ownership stays visible in review.
+# system, hardware, sensors, services, and runtime bridge files are listed
+# explicitly so directory ownership stays visible in review.
 set(STACK_CHAN_SOURCES
     "main.cpp"
     "app/local_companion/local_companion_app.cpp"
@@ -303,6 +303,7 @@ idf_component_register(SRCS ${SOURCES}
                         esp_driver_i2c
                         esp_driver_i2s
                         esp_driver_jpeg
+                        esp_driver_rmt
                         esp_driver_ppa
                         esp_app_format
                         app_update
@@ -403,7 +404,8 @@ function(build_default_assets_bin)
     add_custom_target(generated_default_assets ALL
         DEPENDS ${GENERATED_ASSETS_BIN}
     )
-    
+    add_dependencies(${COMPONENT_LIB} generated_default_assets)
+
     # Set the generated file path in parent scope
     set(GENERATED_ASSETS_LOCAL_FILE ${GENERATED_ASSETS_BIN} PARENT_SCOPE)
     

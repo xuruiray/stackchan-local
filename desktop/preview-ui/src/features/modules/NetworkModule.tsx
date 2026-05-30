@@ -1,10 +1,9 @@
 import { ModulePage } from "../../components/ModulePage";
-import { availabilityText, boolText, dash, integerText } from "../../model/format";
-import { activeDevice } from "../../model/snapshot";
+import { boolText, dash, integerText } from "../../model/format";
 import { deviceUpdated, ModuleProps, net } from "./module-utils";
 
 export function NetworkModule({ snapshot }: ModuleProps): JSX.Element {
-  const wifi = net(snapshot).wifi ?? activeDevice(snapshot)?.sensors.wifi;
+  const wifi = net(snapshot).wifi;
   const ble = net(snapshot).ble;
   return (
     <ModulePage
@@ -16,9 +15,7 @@ export function NetworkModule({ snapshot }: ModuleProps): JSX.Element {
         { label: "Wi-Fi", value: dash(wifi?.status) },
         { label: "SSID", value: dash(wifi?.ssid) },
         { label: "RSSI", value: integerText(wifi?.rssi, " dBm") },
-        { label: "BLE", value: availabilityText(ble) },
-        { label: "BLE connected", value: boolText(ble?.connected) },
-        { label: "Provisioning", value: boolText(ble?.provisioning) }
+        { label: "BLE connected", value: boolText(ble?.connected) }
       ]}
     />
   );

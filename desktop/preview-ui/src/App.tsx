@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { StatusDot } from "./components/StatusDot";
 import { usePreviewSnapshot } from "./hooks/usePreviewSnapshot";
 import { ageText, dash, integerText, ratioPercent } from "./model/format";
-import { activeDevice } from "./model/snapshot";
+import { activeDevice, network, power } from "./model/snapshot";
 import { canonicalPageId, pageGroups, pages, type PageKind } from "./model/moduleRegistry";
 
 export function App(): JSX.Element {
@@ -83,8 +83,8 @@ export function App(): JSX.Element {
             <Summary label="SSE" value={connected ? "live" : "lost"} tone={connected ? "ok" : "warn"} />
             <Summary label="FPS" value={integerText(snapshot?.status.fps)} />
             <Summary label="Faces" value={integerText(snapshot?.faces.length)} />
-            <Summary label="Battery" value={integerText(device?.sensors.sensorSnapshot?.power?.batteryLevel, "%")} />
-            <Summary label="Wi-Fi" value={dash(device?.sensors.sensorSnapshot?.network?.wifi?.status ?? device?.sensors.wifi?.status)} />
+            <Summary label="Battery" value={integerText(power(snapshot).batteryLevel, "%")} />
+            <Summary label="Wi-Fi" value={dash(network(snapshot).wifi?.status)} />
             <Summary label="Drops" value={ratioPercent(dropRate)} tone={dropRate > 0.08 ? "warn" : "muted"} />
             <Summary label="Updated" value={ageText(device?.lastSeenAt)} />
           </div>

@@ -182,7 +182,7 @@ class FakeDeviceRegistry {
         deviceId: "stackchan-test",
         sessionId: "session-test",
         firmwareVersion: "local-test",
-        capabilities: ["camera", "rgb", "mic", "nfc", "ir", "proximity", "ambientLight", "magnetometer"],
+        capabilities: ["camera", "rgb", "mic", "nfc", "ir", "proximity", "ambientLight", "magnetometer", "bmi270"],
         audioParams: { format: "opus", sampleRate: 16000, channels: 1, frameDurationMs: 30 },
         status: "online",
         mode: "idle",
@@ -190,29 +190,74 @@ class FakeDeviceRegistry {
         lastSeenAt: this.lastSeenAt,
         audioFramesReceived: 0,
         sensors: {
-          sensorSnapshot: {
-            kind: "sensorSnapshot",
+          bmi270: {
+            kind: "bmi270",
+            motion: "none",
+            x: 0.1,
+            y: -0.2,
+            z: 9.7,
+            gyroX: 0.01,
+            gyroY: -0.02,
+            gyroZ: 0.03,
+            attitude: {
+              available: true,
+              quaternion: { w: 0.99, x: 0.01, y: -0.02, z: 0.03 },
+              pitchDeg: -1.2,
+              rollDeg: 2.4,
+              yawDeg: 91.5,
+              quality: "gyroAccelMag",
+              magnetometerUsed: true,
+              sampleHz: 100
+            },
+            magnetometer: { available: true, x: 0.1, y: -0.2, z: 0.3, rawX: 12, rawY: -24, rawZ: 36 },
+            updatedAt: this.lastSeenAt,
+            receivedAt: this.lastSeenAt,
+            eventId: "evt-bmi270"
+          },
+          proximity: {
+            kind: "proximity",
+            available: true,
+            value: 42,
+            raw: 42,
+            updatedAt: this.lastSeenAt,
+            receivedAt: this.lastSeenAt,
+            eventId: "evt-proximity"
+          },
+          ambientLight: {
+            kind: "ambientLight",
+            available: true,
+            lux: 18.5,
+            raw: 320,
+            updatedAt: this.lastSeenAt,
+            receivedAt: this.lastSeenAt,
+            eventId: "evt-ambient-light"
+          },
+          hardwareStatus: {
+            kind: "hardwareStatus",
             uptimeMs: 12_000,
             updatedAt: this.lastSeenAt,
+            power: {
+              batteryLevel: 82,
+              charging: false,
+              speakerVolume: 80
+            },
+            network: {
+              wifi: {
+                status: "connected",
+                rssi: -54,
+                ssid: "local-lab"
+              },
+              ble: {
+                connected: false
+              }
+            },
             peripherals: {
-              rgb: { available: true, count: 12, enabled: true, color: "#43D5B0", brightness: 0.8, driver: "neon-light" },
-              nfc: { available: false, driver: "st25r3916-probe", address: 0x50, reason: "not_detected_i2c_0x50" },
-              powerMonitor: { available: true, driver: "ina226", address: 0x41, busVoltage: 3.9, current: 0.11, power: 0.43 },
-              ir: { available: true, driver: "gpio-ir-basic", txPin: 5, rxPin: 10 },
-              proximity: { available: true, value: 42, raw: 42, driver: "ltr553" },
-              ambientLight: { available: true, lux: 18.5, raw: 320, driver: "ltr553" },
-              magnetometer: { available: true, x: 0.1, y: -0.2, z: 0.3, rawX: 12, rawY: -24, rawZ: 36, driver: "bmi270-aux-bmm150" },
+              rgb: { available: true, enabled: true },
+              nfc: { available: false, reason: "not_detected_i2c_0x50" },
+              powerMonitor: { available: true, busVoltage: 3.9, current: 0.11, power: 0.43 },
+              ir: { available: true },
               mic: {
-                available: true,
-                channels: 2,
-                mode: "mono_opus",
-                localization: "abandoned",
-                level: 0.42,
-                rms: 0.08,
-                peak: 0.31,
-                dbfs: -21.4,
-                updatedAt: 12_000,
-                driver: "es7210-level-meter"
+                available: true
               }
             }
           }
@@ -221,15 +266,54 @@ class FakeDeviceRegistry {
     ];
   }
 
-  emitBattery(level: number): void {
-    this.lastSeenAt = new Date("2026-05-18T12:00:01.000Z").toISOString();
+  emitHardwareStatusBattery(level: number, timestamp = new Date("2026-05-18T12:00:01.000Z").toISOString()): void {
+    this.lastSeenAt = timestamp;
     for (const listener of this.listeners) {
       listener({
         type: "robot.event",
-        eventId: `battery-${level}`,
+        eventId: `hardware-status-${level}`,
         deviceId: "stackchan-test",
-        timestamp: this.lastSeenAt,
-        event: { kind: "battery", level, charging: false }
+        timestamp,
+        event: {
+          kind: "hardwareStatus",
+          uptimeMs: 13_000,
+          power: {
+            batteryLevel: level,
+            charging: false
+          }
+        }
+      });
+    }
+  }
+
+  emitBmi270(timestamp = new Date("2026-05-18T12:00:01.100Z").toISOString()): void {
+    this.lastSeenAt = timestamp;
+    for (const listener of this.listeners) {
+      listener({
+        type: "robot.event",
+        eventId: `bmi270-${timestamp}`,
+        deviceId: "stackchan-test",
+        timestamp,
+        event: {
+          kind: "bmi270",
+          motion: "none",
+          x: 0.2,
+          y: -0.1,
+          z: 9.8,
+          gyroX: 0.02,
+          gyroY: -0.01,
+          gyroZ: 0.04,
+          attitude: {
+            available: true,
+            quaternion: { w: 0.99, x: 0.01, y: -0.02, z: 0.03 },
+            pitchDeg: -1.1,
+            rollDeg: 2.2,
+            yawDeg: 90.5,
+            quality: "gyroAccelMag",
+            magnetometerUsed: true,
+            sampleHz: 100
+          }
+        }
       });
     }
   }
@@ -263,8 +347,7 @@ describe("PreviewServer", () => {
     const moveCommands: Array<{ yaw: number; pitch: number; speed?: number }> = [];
     const cameraStreamCommands: Array<{ enabled: boolean; fps?: number; width?: number; height?: number; quality?: number; format?: "jpeg" }> = [];
     const telemetryCommands: Array<{
-      sensorSnapshotHz?: 0 | 0.5 | 1 | 2;
-      imuHz?: 0 | 1 | 2 | 4 | 10;
+      hardwareStatusHz?: 0 | 0.5 | 1 | 2;
       includeI2cScan?: boolean;
       reason?: string;
     }> = [];
@@ -570,10 +653,10 @@ describe("PreviewServer", () => {
     const telemetry = (await fetch(`${baseUrl}/api/hardware/telemetry`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sensorSnapshotHz: 1, imuHz: 4, includeI2cScan: true, reason: "test" })
+      body: JSON.stringify({ hardwareStatusHz: 1, includeI2cScan: true, reason: "test" })
     }).then((response) => response.json())) as { ok: boolean };
     expect(telemetry.ok).toBe(true);
-    expect(telemetryCommands).toEqual([{ sensorSnapshotHz: 1, imuHz: 4, includeI2cScan: true, reason: "test" }]);
+    expect(telemetryCommands).toEqual([{ hardwareStatusHz: 1, includeI2cScan: true, reason: "test" }]);
 
     const tuned = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",
@@ -630,7 +713,7 @@ describe("PreviewServer", () => {
     const decoder = new TextDecoder();
     let body = "";
     body += decoder.decode((await reader.read()).value);
-    registry.emitBattery(87);
+    registry.emitHardwareStatusBattery(87);
 
     const deadline = Date.now() + 2000;
     while (!body.includes('"lastSeenAt":"2026-05-18T12:00:01.000Z"') && Date.now() < deadline) {
@@ -641,5 +724,49 @@ describe("PreviewServer", () => {
     reader.cancel().catch(() => {});
 
     expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:01.000Z"');
+  });
+
+  it("lets high-rate device events preempt a pending low-rate snapshot broadcast", async () => {
+    const fakeVision = new FakeVisionTracking();
+    const registry = new FakeDeviceRegistry();
+    server = new PreviewServer(
+      { host: "127.0.0.1", port: 0 },
+      fakeVision as unknown as VisionTrackingService,
+      createLogger("error"),
+      { registry: registry as unknown as DeviceRegistry }
+    );
+    const port = await server.start();
+    const response = await fetch(`http://127.0.0.1:${port}/events`);
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let body = decoder.decode((await reader.read()).value);
+
+    registry.emitHardwareStatusBattery(86, "2026-05-18T12:00:01.000Z");
+    const firstDeadline = Date.now() + 1000;
+    while (!body.includes('"lastSeenAt":"2026-05-18T12:00:01.000Z"') && Date.now() < firstDeadline) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value);
+    }
+    expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:01.000Z"');
+
+    registry.emitHardwareStatusBattery(87, "2026-05-18T12:00:02.000Z");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const startedAt = Date.now();
+    registry.emitBmi270("2026-05-18T12:00:02.100Z");
+
+    const deadline = Date.now() + 1000;
+    while (!body.includes('"lastSeenAt":"2026-05-18T12:00:02.100Z"') && Date.now() < deadline) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value);
+    }
+    reader.cancel().catch(() => {});
+
+    expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:02.100Z"');
+    expect(Date.now() - startedAt).toBeLessThan(250);
   });
 });

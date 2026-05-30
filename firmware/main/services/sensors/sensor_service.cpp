@@ -19,7 +19,7 @@
 #include <mutex>
 #include <string_view>
 
-static const std::string_view _tag = "SensorSnapshot";
+static const std::string_view _tag = "HardwareStatus";
 
 namespace {
 
@@ -39,8 +39,10 @@ LocalPeripheralProbeSnapshot snapshot;
 std::unique_ptr<Ltr553> ltr553;
 std::unique_ptr<Ina226> ina226;
 std::unique_ptr<NfcProbe> nfc_probe;
+std::unique_ptr<IrGpio> ir_gpio;
 uint32_t next_peripheral_retry_ms = 0;
 uint32_t next_peripheral_retry_scan_ms = 0;
+uint32_t next_ltr553_retry_ms = 0;
 
 void append_address_if_missing(std::vector<uint8_t>& addresses, uint8_t address)
 {
@@ -128,7 +130,8 @@ void DeviceRuntime::peripheral_probe_init()
         std::lock_guard<std::mutex> lock(snapshot_mutex);
         snapshot = LocalPeripheralProbeSnapshot();
 
-        IrGpio().init(snapshot);
+        ir_gpio = std::make_unique<IrGpio>();
+        ir_gpio->init(snapshot);
 
         ltr553 = std::make_unique<Ltr553>(i2c_bus);
         ltr553->init(snapshot);
@@ -141,6 +144,7 @@ void DeviceRuntime::peripheral_probe_init()
 
         set_peripheral_module_statuses(snapshot);
         next_peripheral_retry_ms = millis() + 2000;
+        next_ltr553_retry_ms = millis() + 2000;
         next_peripheral_retry_scan_ms = millis() + 10000;
     }
     recordI2cDiagnosticScan("peripheral_probe_done");
@@ -175,6 +179,50 @@ LocalPeripheralProbeSnapshot DeviceRuntime::getLocalPeripheralProbeSnapshot()
 
     std::lock_guard<std::mutex> lock(snapshot_mutex);
     return snapshot;
+}
+
+LocalPeripheralProbeSnapshot DeviceRuntime::getLocalLtr553Snapshot()
+{
+    const uint32_t now = millis();
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        LocalPeripheralProbeSnapshot current = snapshot;
+        if ((!current.proximityAvailable || !current.ambientLightAvailable) &&
+            static_cast<int32_t>(now - next_ltr553_retry_ms) >= 0 && ltr553) {
+            next_ltr553_retry_ms = now + kPeripheralRetryIntervalMs;
+            ltr553->init(current);
+        }
+        if (ltr553) {
+            ltr553->refresh(current);
+        }
+        set_peripheral_module_statuses(current);
+        snapshot = current;
+        return snapshot;
+    }
+}
+
+bool DeviceRuntime::pollLocalNfcEvent(LocalNfcEvent& event)
+{
+    const uint32_t now = millis();
+    std::lock_guard<std::mutex> lock(snapshot_mutex);
+    if (!nfc_probe) {
+        return false;
+    }
+
+    const bool has_event = nfc_probe->pollEvent(event, snapshot, now);
+    set_peripheral_module_statuses(snapshot);
+    return has_event;
+}
+
+bool DeviceRuntime::pollLocalIrEvent(LocalIrEvent& event)
+{
+    const uint32_t now = millis();
+    std::lock_guard<std::mutex> lock(snapshot_mutex);
+    if (!ir_gpio) {
+        return false;
+    }
+
+    return ir_gpio->pollEvent(event, now);
 }
 
 void DeviceRuntime::recordI2cDiagnosticScan(std::string_view stage)

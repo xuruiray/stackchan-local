@@ -617,8 +617,7 @@ describe("VisionTrackingService", () => {
       quality: 16
     });
     expect(telemetryConfig).toMatchObject({
-      sensorSnapshotHz: 0.5,
-      imuHz: 4,
+      hardwareStatusHz: 0.5,
       includeI2cScan: false
     });
     expect(service.status().adaptive.active).toBe(true);

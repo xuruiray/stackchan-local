@@ -1,11 +1,11 @@
 import { ModulePage } from "../../components/ModulePage";
 import { MetricGrid } from "../../components/MetricGrid";
 import { availabilityText, integerText, numberText } from "../../model/format";
-import { deviceUpdated, ModuleProps, p } from "./module-utils";
+import { als, deviceUpdated, ModuleProps, prox } from "./module-utils";
 
 export function Ltr553Module({ snapshot }: ModuleProps): JSX.Element {
-  const proximity = p(snapshot).proximity;
-  const ambientLight = p(snapshot).ambientLight;
+  const proximity = prox(snapshot);
+  const ambientLight = als(snapshot);
   return (
     <ModulePage
       title="ALS / Proximity"

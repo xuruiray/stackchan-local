@@ -30,7 +30,16 @@ export interface DeviceSession {
   ws: WebSocket;
 }
 
-export type SensorEventKind = "battery" | "wifi" | "imu" | "touch" | "wakeWord" | "state" | "sensorSnapshot";
+export type SensorEventKind =
+  | "bmi270"
+  | "proximity"
+  | "ambientLight"
+  | "nfc"
+  | "ir"
+  | "touch"
+  | "wakeWord"
+  | "state"
+  | "hardwareStatus";
 
 export type DeviceSensorState = Partial<{
   [K in SensorEventKind]: Extract<RobotEventMessage["event"], { kind: K }> & {
@@ -313,14 +322,20 @@ export class DeviceRegistry {
     const receivedAt = new Date().toISOString();
     const eventMeta = { eventId: message.eventId, updatedAt, receivedAt };
     switch (message.event.kind) {
-      case "battery":
-        session.sensors.battery = { ...message.event, ...eventMeta };
+      case "bmi270":
+        session.sensors.bmi270 = { ...message.event, ...eventMeta };
         break;
-      case "wifi":
-        session.sensors.wifi = { ...message.event, ...eventMeta };
+      case "proximity":
+        session.sensors.proximity = { ...message.event, ...eventMeta };
         break;
-      case "imu":
-        session.sensors.imu = { ...message.event, ...eventMeta };
+      case "ambientLight":
+        session.sensors.ambientLight = { ...message.event, ...eventMeta };
+        break;
+      case "nfc":
+        session.sensors.nfc = { ...message.event, ...eventMeta };
+        break;
+      case "ir":
+        session.sensors.ir = { ...message.event, ...eventMeta };
         break;
       case "touch":
         session.sensors.touch = { ...message.event, ...eventMeta };
@@ -331,8 +346,8 @@ export class DeviceRegistry {
       case "state":
         session.sensors.state = { ...message.event, ...eventMeta };
         break;
-      case "sensorSnapshot":
-        session.sensors.sensorSnapshot = { ...message.event, ...eventMeta };
+      case "hardwareStatus":
+        session.sensors.hardwareStatus = { ...message.event, ...eventMeta };
         break;
       default:
         break;

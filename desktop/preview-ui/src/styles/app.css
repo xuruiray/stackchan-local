@@ -381,6 +381,25 @@ nav {
   background: #371a1a;
 }
 
+.icon-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  border-color: #59646c;
+  color: var(--text);
+  background: var(--surface-3);
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -631,6 +650,12 @@ input[type="color"] {
 .imu-3d-heading span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.imu-3d-heading-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .imu-3d-layout {

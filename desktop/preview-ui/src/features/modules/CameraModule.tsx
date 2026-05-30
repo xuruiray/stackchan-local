@@ -9,7 +9,7 @@ import { CommandStatus } from "../../components/CommandStatus";
 import { ModulePage } from "../../components/ModulePage";
 import { useCommand } from "../../hooks/useCommand";
 import { defaultCameraSettings } from "../../model/cameraProfiles";
-import { boolText, dash, integerText, latencyText } from "../../model/format";
+import { boolText, dash, integerText } from "../../model/format";
 import { deviceUpdated, ModuleProps, p } from "./module-utils";
 import type { PreviewSnapshot } from "../../../../src/preview/public-types";
 
@@ -25,16 +25,12 @@ export function CameraModule({
   const activeSelection = useMemo(
     () =>
       cameraSelectionFromValue({
-        width: rawPreviewCamera?.width ?? sourceCamera?.width ?? camera?.requestedWidth ?? control?.width,
-        height: rawPreviewCamera?.height ?? sourceCamera?.height ?? camera?.requestedHeight ?? control?.height,
-        fps: rawPreviewCamera?.fps ?? sourceCamera?.fps ?? camera?.fps ?? control?.fps,
-        quality: rawPreviewCamera?.quality ?? sourceCamera?.quality ?? camera?.quality ?? control?.quality
+        width: rawPreviewCamera?.width ?? sourceCamera?.width ?? control?.width,
+        height: rawPreviewCamera?.height ?? sourceCamera?.height ?? control?.height,
+        fps: rawPreviewCamera?.fps ?? sourceCamera?.fps ?? control?.fps,
+        quality: rawPreviewCamera?.quality ?? sourceCamera?.quality ?? control?.quality
       }),
     [
-      camera?.fps,
-      camera?.quality,
-      camera?.requestedHeight,
-      camera?.requestedWidth,
       control?.fps,
       control?.height,
       control?.quality,
@@ -80,17 +76,9 @@ export function CameraModule({
       metrics={[
         { label: "Streaming", value: boolText(camera?.streaming) },
         { label: "Source", value: dash(sourceCamera?.owner) },
-        { label: "Requested", value: `${dash(camera?.requestedWidth ?? control?.width)} x ${dash(camera?.requestedHeight ?? control?.height)}` },
-        { label: "Actual", value: `${dash(camera?.actualWidth ?? camera?.width)} x ${dash(camera?.actualHeight ?? camera?.height)}` },
-        { label: "FPS", value: integerText(camera?.fps ?? control?.fps) },
-        { label: "Quality", value: integerText(camera?.quality ?? control?.quality) },
-        { label: "Transport", value: dash(camera?.transport) },
-        { label: "Frame interval", value: latencyText(camera?.lastFrameIntervalMs) },
-        { label: "Capture", value: latencyText(camera?.lastCaptureMs) },
-        { label: "Encode", value: latencyText(camera?.lastEncodeMs) },
-        { label: "Send", value: latencyText(camera?.lastSendMs) },
-        { label: "JPEG", value: integerText(camera?.lastJpegBytes, " B") },
-        { label: "Fallback", value: dash(camera?.fallbackReason) }
+        { label: "Requested", value: `${dash(rawPreviewCamera?.width ?? sourceCamera?.width ?? control?.width)} x ${dash(rawPreviewCamera?.height ?? sourceCamera?.height ?? control?.height)}` },
+        { label: "FPS", value: integerText(rawPreviewCamera?.fps ?? sourceCamera?.fps ?? control?.fps) },
+        { label: "Quality", value: integerText(rawPreviewCamera?.quality ?? sourceCamera?.quality ?? control?.quality) }
       ]}
     >
       <CameraPreview snapshot={snapshot} streamKind="raw" showTrackingOverlay={false} />

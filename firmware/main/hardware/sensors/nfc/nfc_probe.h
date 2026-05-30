@@ -5,7 +5,7 @@
  */
 #pragma once
 
-#include <hardware/sensors/sensor_snapshot.h>
+#include <hardware/sensors/hardware_status.h>
 
 #include <driver/i2c_master.h>
 
@@ -20,9 +20,12 @@ public:
     }
 
     void init(LocalPeripheralProbeSnapshot& snapshot);
+    bool pollEvent(LocalNfcEvent& event, LocalPeripheralProbeSnapshot& snapshot, uint32_t now);
 
 private:
     i2c_master_bus_handle_t bus_ = nullptr;
+    uint32_t next_health_check_ms_ = 0;
+    uint32_t last_error_event_ms_ = 0;
 };
 
 }  // namespace stackchan::hal::sensors

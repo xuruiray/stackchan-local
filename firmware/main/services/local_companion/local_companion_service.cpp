@@ -159,7 +159,8 @@ struct CameraTelemetryCopy {
 static constexpr size_t kMaxAudioBytes = 262144;
 static constexpr size_t kMaxAudioChunkBase64Bytes = 8192;
 static constexpr size_t kMaxAudioChunks = 128;
-static constexpr uint32_t kImuCacheIntervalMs = 250;
+static constexpr uint32_t kBmi270EventIntervalMs = 100;
+static constexpr uint32_t kLtr553EventIntervalMs = 100;
 static constexpr uint32_t kHeadTouchCacheIntervalMs = 250;
 static constexpr uint32_t kPowerCacheIntervalMs = 1000;
 static constexpr uint32_t kNetworkCacheIntervalMs = 1000;
@@ -336,14 +337,14 @@ private:
     uint32_t _last_heartbeat_time    = 0;
     uint32_t _heartbeat_interval_ms  = kDefaultHeartbeatIntervalMs;
     uint32_t _last_camera_frame_time = 0;
-    uint32_t _last_battery_event_time = 0;
-    uint32_t _last_wifi_event_time = 0;
-    uint32_t _last_imu_event_time = 0;
-    uint32_t _last_sensor_snapshot_event_time = 0;
-    uint32_t _sensor_snapshot_interval_ms = 1000;
-    uint32_t _imu_event_interval_ms = 250;
+    uint32_t _last_bmi270_event_time = 0;
+    uint32_t _last_proximity_event_time = 0;
+    uint32_t _last_ambient_light_event_time = 0;
+    uint32_t _last_hardware_status_event_time = 0;
+    uint32_t _hardware_status_interval_ms = 1000;
     uint32_t _last_screen_touch_event_time = 0;
     uint32_t _next_imu_cache_time = 0;
+    uint32_t _next_ltr553_cache_time = 0;
     uint32_t _next_head_touch_cache_time = 0;
     uint32_t _next_power_cache_time = 0;
     uint32_t _next_network_cache_time = 0;
@@ -599,7 +600,7 @@ private:
             if (websocket_connected()) {
                 send_sensor_events_if_needed(now);
             } else {
-                refresh_sensor_snapshot_cache_if_needed(now);
+                refresh_hardware_status_cache_if_needed(now);
             }
             vTaskDelay(delay_ticks(kSensorTaskTickIntervalMs));
         }
@@ -867,36 +868,29 @@ private:
 
     void handle_telemetry_config(ArduinoJson::JsonObject command)
     {
-        uint32_t sensor_snapshot_interval_ms = 0;
-        uint32_t imu_event_interval_ms = 0;
+        uint32_t hardware_status_interval_ms = 0;
         bool include_i2c_scan = true;
         uint8_t adaptive_level = 0;
         {
             std::lock_guard<std::mutex> lock(_telemetry_mutex);
-            if (!command["sensorSnapshotHz"].isNull()) {
-                const float hz = command["sensorSnapshotHz"] | 1.0f;
-                _sensor_snapshot_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
-            }
-
-            if (!command["imuHz"].isNull()) {
-                const float hz = command["imuHz"] | 4.0f;
-                _imu_event_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
+            if (!command["hardwareStatusHz"].isNull()) {
+                const float hz = command["hardwareStatusHz"] | 1.0f;
+                _hardware_status_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
             }
 
             if (!command["includeI2cScan"].isNull()) {
                 _include_i2c_scan = command["includeI2cScan"] | true;
             }
 
-            _adaptive_level =
-                (_sensor_snapshot_interval_ms > 1000 || _imu_event_interval_ms > 250 || !_include_i2c_scan) ? 1 : 0;
+            _adaptive_level = (_hardware_status_interval_ms > 1000 || !_include_i2c_scan) ? 1 : 0;
             _sensor_cache_initialized = false;
-            sensor_snapshot_interval_ms = _sensor_snapshot_interval_ms;
-            imu_event_interval_ms = _imu_event_interval_ms;
+            hardware_status_interval_ms = _hardware_status_interval_ms;
             include_i2c_scan = _include_i2c_scan;
             adaptive_level = _adaptive_level;
         }
-        mclog::tagInfo(_tag, "telemetry config snapshot={}ms imu={}ms i2cScan={} adaptiveLevel={}",
-                       sensor_snapshot_interval_ms, imu_event_interval_ms, include_i2c_scan ? "yes" : "no",
+        mclog::tagInfo(_tag, "telemetry config hardwareStatus={}ms bmi270={}ms ltr553={}ms i2cScan={} adaptiveLevel={}",
+                       hardware_status_interval_ms, kBmi270EventIntervalMs, kLtr553EventIntervalMs,
+                       include_i2c_scan ? "yes" : "no",
                        static_cast<int>(adaptive_level));
     }
 
@@ -1332,37 +1326,37 @@ private:
 
     void send_sensor_events_if_needed(uint32_t now)
     {
-        refresh_sensor_snapshot_cache_if_needed(now);
+        refresh_hardware_status_cache_if_needed(now);
         send_pending_head_touch();
         send_screen_touch_if_needed(now);
+        send_nfc_event_if_available();
+        send_ir_event_if_available();
 
-        uint32_t imu_event_interval_ms = 0;
-        uint32_t sensor_snapshot_interval_ms = 0;
+        uint32_t hardware_status_interval_ms = 0;
         {
             std::lock_guard<std::mutex> lock(_telemetry_mutex);
-            imu_event_interval_ms = _imu_event_interval_ms;
-            sensor_snapshot_interval_ms = _sensor_snapshot_interval_ms;
+            hardware_status_interval_ms = _hardware_status_interval_ms;
         }
 
-        if (imu_event_interval_ms > 0 && now - _last_imu_event_time >= imu_event_interval_ms) {
-            send_imu_event();
-            _last_imu_event_time = now;
+        if (now - _last_bmi270_event_time >= kBmi270EventIntervalMs) {
+            send_bmi270_event();
+            _last_bmi270_event_time = now;
         }
 
-        if (now - _last_battery_event_time >= 1000) {
-            send_battery_event();
-            _last_battery_event_time = now;
+        if (now - _last_proximity_event_time >= kLtr553EventIntervalMs) {
+            send_proximity_event(now);
+            _last_proximity_event_time = now;
         }
 
-        if (now - _last_wifi_event_time >= 1000) {
-            send_wifi_event();
-            _last_wifi_event_time = now;
+        if (now - _last_ambient_light_event_time >= kLtr553EventIntervalMs) {
+            send_ambient_light_event(now);
+            _last_ambient_light_event_time = now;
         }
 
-        if (sensor_snapshot_interval_ms > 0 &&
-            now - _last_sensor_snapshot_event_time >= sensor_snapshot_interval_ms) {
-            send_sensor_snapshot_event(now);
-            _last_sensor_snapshot_event_time = now;
+        if (hardware_status_interval_ms > 0 &&
+            now - _last_hardware_status_event_time >= hardware_status_interval_ms) {
+            send_hardware_status_event(now);
+            _last_hardware_status_event_time = now;
         }
     }
 
@@ -1371,6 +1365,7 @@ private:
         std::lock_guard<std::mutex> lock(_telemetry_mutex);
         _sensor_cache_initialized = false;
         _next_imu_cache_time = now;
+        _next_ltr553_cache_time = now;
         _next_head_touch_cache_time = now;
         _next_power_cache_time = now;
         _next_network_cache_time = now;
@@ -1379,12 +1374,7 @@ private:
         _next_peripheral_cache_time = now;
     }
 
-    uint32_t active_imu_cache_interval_ms() const
-    {
-        return _imu_event_interval_ms > 0 ? _imu_event_interval_ms : kImuCacheIntervalMs;
-    }
-
-    void refresh_sensor_snapshot_cache_if_needed(uint32_t now)
+    void refresh_hardware_status_cache_if_needed(uint32_t now)
     {
         std::lock_guard<std::mutex> lock(_telemetry_mutex);
         if (!_sensor_cache_initialized) {
@@ -1397,7 +1387,8 @@ private:
             refresh_peripheral_cache();
             _sensor_cache_initialized = true;
 
-            _next_imu_cache_time = now + active_imu_cache_interval_ms();
+            _next_imu_cache_time = now + kBmi270EventIntervalMs;
+            _next_ltr553_cache_time = now + kLtr553EventIntervalMs;
             _next_head_touch_cache_time = now + kHeadTouchCacheIntervalMs;
             _next_power_cache_time = now + kPowerCacheIntervalMs;
             _next_network_cache_time = now + kNetworkCacheIntervalMs + 100;
@@ -1409,7 +1400,11 @@ private:
 
         if (time_due(now, _next_imu_cache_time)) {
             refresh_imu_cache();
-            _next_imu_cache_time = now + active_imu_cache_interval_ms();
+            _next_imu_cache_time = now + kBmi270EventIntervalMs;
+        }
+        if (time_due(now, _next_ltr553_cache_time)) {
+            refresh_ltr553_cache();
+            _next_ltr553_cache_time = now + kLtr553EventIntervalMs;
         }
         if (time_due(now, _next_head_touch_cache_time)) {
             refresh_head_touch_cache();
@@ -1495,6 +1490,11 @@ private:
         _peripheral_cache = GetDeviceRuntime().getLocalPeripheralProbeSnapshot();
     }
 
+    void refresh_ltr553_cache()
+    {
+        _peripheral_cache = GetDeviceRuntime().getLocalLtr553Snapshot();
+    }
+
     SensorTelemetryCacheCopy copy_sensor_cache()
     {
         std::lock_guard<std::mutex> lock(_telemetry_mutex);
@@ -1540,36 +1540,7 @@ private:
         prepare_robot_event(doc, kind, next_outgoing_seq());
     }
 
-    void send_battery_event()
-    {
-        const auto cache = copy_sensor_cache();
-        ArduinoJson::JsonDocument doc;
-        prepare_event_doc(doc, "battery");
-        doc["event"]["level"]    = cache.power.batteryLevel;
-        doc["event"]["charging"] = cache.power.charging;
-        send_json(doc);
-    }
-
-    void send_wifi_event()
-    {
-        const auto cache = copy_sensor_cache();
-        ArduinoJson::JsonDocument doc;
-        prepare_event_doc(doc, "wifi");
-        if (cache.network.wifiStatus == "connected") {
-            doc["event"]["status"] = "connected";
-            doc["event"]["rssi"]   = cache.network.rssi;
-            if (!cache.network.ssid.empty()) {
-                doc["event"]["ssid"] = cache.network.ssid;
-            }
-        } else if (cache.network.wifiStatus == "connecting") {
-            doc["event"]["status"] = "connecting";
-        } else {
-            doc["event"]["status"] = "disconnected";
-        }
-        send_json(doc);
-    }
-
-    void send_imu_event()
+    void send_bmi270_event()
     {
         const auto cache = copy_sensor_cache();
         const auto& imu = cache.imu;
@@ -1578,7 +1549,7 @@ private:
         }
 
         ArduinoJson::JsonDocument doc;
-        prepare_event_doc(doc, "imu");
+        prepare_event_doc(doc, "bmi270");
         doc["event"]["motion"] = motion_event_to_string(imu.motion);
         doc["event"]["x"]      = imu.x;
         doc["event"]["y"]      = imu.y;
@@ -1587,93 +1558,186 @@ private:
         doc["event"]["gyroY"]  = imu.gyroY;
         doc["event"]["gyroZ"]  = imu.gyroZ;
         doc["event"]["uptimeMs"] = imu.updatedAt;
+        auto attitude = doc["event"]["attitude"].to<ArduinoJson::JsonObject>();
+        attitude["available"] = imu.attitudeAvailable;
+        attitude["quality"] = attitude_quality_to_string(imu.attitudeQuality);
+        attitude["magnetometerUsed"] = imu.attitudeMagnetometerUsed;
+        attitude["sampleHz"] = imu.attitudeSampleHz;
+        if (imu.attitudeAvailable) {
+            auto quaternion = attitude["quaternion"].to<ArduinoJson::JsonObject>();
+            quaternion["w"] = imu.attitudeQw;
+            quaternion["x"] = imu.attitudeQx;
+            quaternion["y"] = imu.attitudeQy;
+            quaternion["z"] = imu.attitudeQz;
+            attitude["pitchDeg"] = imu.attitudePitchDeg;
+            attitude["rollDeg"] = imu.attitudeRollDeg;
+            attitude["yawDeg"] = imu.attitudeYawDeg;
+        }
+
+        const auto& peripherals = cache.peripherals;
+        const bool mag_available = imu.magnetometerAvailable || peripherals.magnetometerAvailable;
+        doc["event"]["magnetometer"]["available"] = mag_available;
+        if (imu.magnetometerAvailable) {
+            doc["event"]["magnetometer"]["x"] = imu.magnetometerX;
+            doc["event"]["magnetometer"]["y"] = imu.magnetometerY;
+            doc["event"]["magnetometer"]["z"] = imu.magnetometerZ;
+            doc["event"]["magnetometer"]["rawX"] = imu.magnetometerRawX;
+            doc["event"]["magnetometer"]["rawY"] = imu.magnetometerRawY;
+            doc["event"]["magnetometer"]["rawZ"] = imu.magnetometerRawZ;
+            doc["event"]["magnetometer"]["headingDeg"] = imu.magnetometerHeadingDeg;
+        } else if (peripherals.magnetometerAvailable) {
+            doc["event"]["magnetometer"]["x"] = peripherals.magnetometerX;
+            doc["event"]["magnetometer"]["y"] = peripherals.magnetometerY;
+            doc["event"]["magnetometer"]["z"] = peripherals.magnetometerZ;
+            doc["event"]["magnetometer"]["rawX"] = peripherals.magnetometerRawX;
+            doc["event"]["magnetometer"]["rawY"] = peripherals.magnetometerRawY;
+            doc["event"]["magnetometer"]["rawZ"] = peripherals.magnetometerRawZ;
+            doc["event"]["magnetometer"]["headingDeg"] = peripherals.magnetometerHeadingDeg;
+        } else if (!peripherals.magnetometerReason.empty()) {
+            doc["event"]["magnetometer"]["reason"] = peripherals.magnetometerReason.c_str();
+        }
         send_json(doc);
     }
 
-    void send_sensor_snapshot_event(uint32_t now)
+    void send_proximity_event(uint32_t now)
+    {
+        const auto cache = copy_sensor_cache();
+        const auto& peripherals = cache.peripherals;
+
+        ArduinoJson::JsonDocument doc;
+        prepare_event_doc(doc, "proximity");
+        doc["event"]["available"] = peripherals.proximityAvailable;
+        doc["event"]["uptimeMs"] = now;
+        if (peripherals.proximityAvailable) {
+            doc["event"]["value"] = peripherals.proximityValue;
+            doc["event"]["raw"] = peripherals.proximityRaw;
+        } else if (!peripherals.proximityReason.empty()) {
+            doc["event"]["reason"] = peripherals.proximityReason.c_str();
+        }
+        send_json(doc);
+    }
+
+    void send_ambient_light_event(uint32_t now)
+    {
+        const auto cache = copy_sensor_cache();
+        const auto& peripherals = cache.peripherals;
+
+        ArduinoJson::JsonDocument doc;
+        prepare_event_doc(doc, "ambientLight");
+        doc["event"]["available"] = peripherals.ambientLightAvailable;
+        doc["event"]["uptimeMs"] = now;
+        if (peripherals.ambientLightAvailable) {
+            doc["event"]["lux"] = peripherals.ambientLightLux;
+            doc["event"]["raw"] = peripherals.ambientLightRaw;
+        } else if (!peripherals.ambientLightReason.empty()) {
+            doc["event"]["reason"] = peripherals.ambientLightReason.c_str();
+        }
+        send_json(doc);
+    }
+
+    void send_nfc_event_if_available()
+    {
+        LocalNfcEvent event;
+        if (!GetDeviceRuntime().pollLocalNfcEvent(event) || event.action.empty()) {
+            return;
+        }
+
+        ArduinoJson::JsonDocument doc;
+        prepare_event_doc(doc, "nfc");
+        doc["event"]["action"] = event.action.c_str();
+        doc["event"]["uptimeMs"] = event.uptimeMs;
+        if (!event.uid.empty()) {
+            doc["event"]["uid"] = event.uid.c_str();
+        }
+        if (!event.tech.empty()) {
+            doc["event"]["tech"] = event.tech.c_str();
+        }
+        if (!event.atqa.empty()) {
+            doc["event"]["atqa"] = event.atqa.c_str();
+        }
+        if (event.sak >= 0) {
+            doc["event"]["sak"] = event.sak;
+        }
+        if (!event.reason.empty()) {
+            doc["event"]["reason"] = event.reason.c_str();
+        }
+        send_json(doc);
+    }
+
+    void send_ir_event_if_available()
+    {
+        LocalIrEvent event;
+        if (!GetDeviceRuntime().pollLocalIrEvent(event) || event.action.empty()) {
+            return;
+        }
+
+        ArduinoJson::JsonDocument doc;
+        prepare_event_doc(doc, "ir");
+        doc["event"]["action"] = event.action.c_str();
+        doc["event"]["uptimeMs"] = event.uptimeMs;
+        if (!event.protocol.empty()) {
+            doc["event"]["protocol"] = event.protocol.c_str();
+        }
+        if (!event.address.empty()) {
+            doc["event"]["address"] = event.address.c_str();
+        }
+        if (!event.command.empty()) {
+            doc["event"]["command"] = event.command.c_str();
+        }
+        if (!event.code.empty()) {
+            doc["event"]["code"] = event.code.c_str();
+        }
+        if (event.bits > 0) {
+            doc["event"]["bits"] = event.bits;
+        }
+        if (event.action == "received") {
+            doc["event"]["repeat"] = event.repeat;
+        }
+        if (!event.requestId.empty()) {
+            doc["event"]["requestId"] = event.requestId.c_str();
+        }
+        if (event.carrierHz > 0) {
+            doc["event"]["carrierHz"] = event.carrierHz;
+        }
+        if (!event.reason.empty()) {
+            doc["event"]["reason"] = event.reason.c_str();
+        }
+        send_json(doc);
+    }
+
+    void send_hardware_status_event(uint32_t now)
     {
         auto camera = stackchan::hal::hardware::GetHardwareRegistry().camera();
         const auto cache = copy_sensor_cache();
         const auto camera_state = copy_camera_telemetry(camera);
-        const auto touch = embedded_runtime_bridge::get_touch_point();
         const auto& head_touch = cache.headTouch;
-        const auto& imu = cache.imu;
         const auto& mic = cache.mic;
         const auto& peripherals = cache.peripherals;
 
         ArduinoJson::JsonDocument doc;
-        prepare_event_doc(doc, "sensorSnapshot");
+        prepare_event_doc(doc, "hardwareStatus");
         doc["event"]["uptimeMs"] = now;
 
+        doc["event"]["power"]["backlight"] = cache.power.backlight;
         doc["event"]["power"]["batteryLevel"] = cache.power.batteryLevel;
         doc["event"]["power"]["charging"] = cache.power.charging;
-        doc["event"]["power"]["backlight"] = cache.power.backlight;
         doc["event"]["power"]["speakerVolume"] = cache.power.speakerVolume;
-        doc["event"]["power"]["servoPower"] = cache.servo.servoPower;
 
+        doc["event"]["network"]["wifi"]["status"] = cache.network.wifiStatus.c_str();
         if (cache.network.wifiStatus == "connected") {
-            doc["event"]["network"]["wifi"]["status"] = "connected";
             doc["event"]["network"]["wifi"]["rssi"] = cache.network.rssi;
             if (!cache.network.ssid.empty()) {
-                doc["event"]["network"]["wifi"]["ssid"] = cache.network.ssid;
+                doc["event"]["network"]["wifi"]["ssid"] = cache.network.ssid.c_str();
             }
-        } else if (cache.network.wifiStatus == "connecting") {
-            doc["event"]["network"]["wifi"]["status"] = "connecting";
-        } else {
-            doc["event"]["network"]["wifi"]["status"] = "disconnected";
         }
-        doc["event"]["network"]["ble"]["available"] = true;
         doc["event"]["network"]["ble"]["connected"] = cache.network.bleConnected;
-        doc["event"]["network"]["ble"]["provisioning"] = true;
 
-        doc["event"]["motion"]["imu"]["available"] = imu.available;
-        if (imu.available) {
-            doc["event"]["motion"]["imu"]["motion"] = motion_event_to_string(imu.motion);
-            doc["event"]["motion"]["imu"]["x"] = imu.x;
-            doc["event"]["motion"]["imu"]["y"] = imu.y;
-            doc["event"]["motion"]["imu"]["z"] = imu.z;
-            doc["event"]["motion"]["imu"]["gyroX"] = imu.gyroX;
-            doc["event"]["motion"]["imu"]["gyroY"] = imu.gyroY;
-            doc["event"]["motion"]["imu"]["gyroZ"] = imu.gyroZ;
-            doc["event"]["motion"]["imu"]["uptimeMs"] = imu.updatedAt;
-        } else {
-            doc["event"]["motion"]["imu"]["reason"] = "driver_unavailable";
-        }
-
-        doc["event"]["motion"]["servos"]["available"] = true;
         doc["event"]["motion"]["servos"]["power"] = cache.servo.servoPower;
-        doc["event"]["motion"]["servos"]["yaw"]["angle"] = cache.servo.yawAngle;
-        doc["event"]["motion"]["servos"]["yaw"]["moving"] = cache.servo.yawMoving;
-        doc["event"]["motion"]["servos"]["yaw"]["torque"] = cache.servo.yawTorque;
-        doc["event"]["motion"]["servos"]["pitch"]["angle"] = cache.servo.pitchAngle;
-        doc["event"]["motion"]["servos"]["pitch"]["moving"] = cache.servo.pitchMoving;
-        doc["event"]["motion"]["servos"]["pitch"]["torque"] = cache.servo.pitchTorque;
 
-        doc["event"]["interaction"]["screenTouch"]["available"] = true;
-        doc["event"]["interaction"]["screenTouch"]["pressed"] = touch.num > 0;
-        doc["event"]["interaction"]["screenTouch"]["points"] = std::max(0, std::min(5, touch.num));
-        if (touch.num > 0) {
-            doc["event"]["interaction"]["screenTouch"]["x"] = std::max(0, std::min(320, touch.x));
-            doc["event"]["interaction"]["screenTouch"]["y"] = std::max(0, std::min(240, touch.y));
-        }
-
-        doc["event"]["interaction"]["headTouch"]["available"] = head_touch.available;
-        doc["event"]["interaction"]["headTouch"]["pressed"] = head_touch.pressed;
-        if (head_touch.gesture != HeadPetGesture::None) {
-            doc["event"]["interaction"]["headTouch"]["gesture"] = head_touch_gesture_to_string(head_touch.gesture);
-        }
-        auto zones = doc["event"]["interaction"]["headTouch"]["zones"].to<ArduinoJson::JsonArray>();
-        for (size_t i = 0; i < head_touch.intensity.size(); i++) {
-            if (head_touch.intensity[i] > 0) {
-                zones.add(static_cast<int>(i));
-            }
-        }
+        doc["event"]["peripherals"]["headTouch"]["available"] = head_touch.available;
         if (!head_touch.available) {
-            doc["event"]["interaction"]["headTouch"]["reason"] = "driver_unavailable";
+            doc["event"]["peripherals"]["headTouch"]["reason"] = "driver_unavailable";
         }
-
-        doc["event"]["interaction"]["wakeWord"]["available"] = true;
-        doc["event"]["interaction"]["wakeWord"]["text"] = "Hi, Stack Chan";
 
         const bool io_expander_available = cache.servo.ioExpanderAvailable;
         doc["event"]["peripherals"]["ioExpander"]["available"] = io_expander_available;
@@ -1683,43 +1747,13 @@ private:
 
         doc["event"]["peripherals"]["camera"]["available"] = camera != nullptr;
         doc["event"]["peripherals"]["camera"]["streaming"] = camera_state.streaming;
-        doc["event"]["peripherals"]["camera"]["requestedWidth"] = camera_state.requestedWidth;
-        doc["event"]["peripherals"]["camera"]["requestedHeight"] = camera_state.requestedHeight;
-        doc["event"]["peripherals"]["camera"]["quality"] = camera_state.jpegQuality;
-        doc["event"]["peripherals"]["camera"]["transport"] =
-            camera_state.binaryFrameEnabled ? "binary" : "jsonBase64";
         doc["event"]["peripherals"]["camera"]["adaptiveLevel"] = cache.adaptiveLevel;
-        doc["event"]["peripherals"]["camera"]["lastCaptureMs"] = camera_state.lastCaptureMs;
-        doc["event"]["peripherals"]["camera"]["lastEncodeMs"] = camera_state.lastEncodeMs;
-        doc["event"]["peripherals"]["camera"]["lastSendMs"] = camera_state.lastSendMs;
-        doc["event"]["peripherals"]["camera"]["lastTotalMs"] = camera_state.lastTotalMs;
-        doc["event"]["peripherals"]["camera"]["lastFrameIntervalMs"] = camera_state.lastFrameIntervalMs;
-        doc["event"]["peripherals"]["camera"]["lastJpegBytes"] = camera_state.lastJpegBytes;
-        if (camera) {
-            if (camera_state.actualWidth > 0) {
-                doc["event"]["peripherals"]["camera"]["width"] = camera_state.actualWidth;
-                doc["event"]["peripherals"]["camera"]["actualWidth"] = camera_state.actualWidth;
-            }
-            if (camera_state.actualHeight > 0) {
-                doc["event"]["peripherals"]["camera"]["height"] = camera_state.actualHeight;
-                doc["event"]["peripherals"]["camera"]["actualHeight"] = camera_state.actualHeight;
-            }
-            doc["event"]["peripherals"]["camera"]["fps"] =
-                camera_state.intervalMs > 0 ? (1000.0f / static_cast<float>(camera_state.intervalMs)) : 0.0f;
-            if (!camera_state.fallbackReason.empty()) {
-                doc["event"]["peripherals"]["camera"]["fallbackReason"] = camera_state.fallbackReason.c_str();
-            }
-        } else {
+        if (!camera) {
             doc["event"]["peripherals"]["camera"]["reason"] = "driver_unavailable";
-            doc["event"]["peripherals"]["camera"]["fallbackReason"] = "driver_unavailable";
         }
 
         doc["event"]["peripherals"]["rgb"]["available"] = io_expander_available;
-        doc["event"]["peripherals"]["rgb"]["count"] = io_expander_available ? 12 : 0;
         doc["event"]["peripherals"]["rgb"]["enabled"] = _rgb_control_enabled;
-        doc["event"]["peripherals"]["rgb"]["color"] = _rgb_control_color.c_str();
-        doc["event"]["peripherals"]["rgb"]["brightness"] = _rgb_control_brightness;
-        doc["event"]["peripherals"]["rgb"]["driver"] = "neon-light";
         if (!io_expander_available) {
             doc["event"]["peripherals"]["rgb"]["reason"] = "io_expander_unavailable";
         }
@@ -1733,18 +1767,11 @@ private:
         }
 
         doc["event"]["peripherals"]["nfc"]["available"] = peripherals.nfcAvailable;
-        doc["event"]["peripherals"]["nfc"]["driver"] = peripherals.nfcDriver.c_str();
-        doc["event"]["peripherals"]["nfc"]["address"] = peripherals.nfcAddress;
-        if (!peripherals.nfcStatus.empty()) {
-            doc["event"]["peripherals"]["nfc"]["status"] = peripherals.nfcStatus.c_str();
-        }
         if (!peripherals.nfcAvailable && !peripherals.nfcReason.empty()) {
             doc["event"]["peripherals"]["nfc"]["reason"] = peripherals.nfcReason.c_str();
         }
 
         doc["event"]["peripherals"]["powerMonitor"]["available"] = peripherals.powerMonitorAvailable;
-        doc["event"]["peripherals"]["powerMonitor"]["driver"] = peripherals.powerMonitorDriver.c_str();
-        doc["event"]["peripherals"]["powerMonitor"]["address"] = peripherals.powerMonitorAddress;
         if (peripherals.powerMonitorAvailable) {
             doc["event"]["peripherals"]["powerMonitor"]["busVoltage"] = peripherals.powerMonitorBusVoltage;
             doc["event"]["peripherals"]["powerMonitor"]["shuntVoltage"] = peripherals.powerMonitorShuntVoltage;
@@ -1755,52 +1782,8 @@ private:
         }
 
         doc["event"]["peripherals"]["ir"]["available"] = peripherals.irAvailable;
-        doc["event"]["peripherals"]["ir"]["driver"] = peripherals.irDriver.c_str();
-        doc["event"]["peripherals"]["ir"]["txPin"] = peripherals.irTxPin;
-        doc["event"]["peripherals"]["ir"]["rxPin"] = peripherals.irRxPin;
         if (!peripherals.irAvailable && !peripherals.irReason.empty()) {
             doc["event"]["peripherals"]["ir"]["reason"] = peripherals.irReason.c_str();
-        }
-
-        doc["event"]["peripherals"]["proximity"]["available"] = peripherals.proximityAvailable;
-        doc["event"]["peripherals"]["proximity"]["driver"] = peripherals.proximityDriver.c_str();
-        if (peripherals.proximityAvailable) {
-            doc["event"]["peripherals"]["proximity"]["value"] = peripherals.proximityValue;
-            doc["event"]["peripherals"]["proximity"]["raw"] = peripherals.proximityRaw;
-        } else if (!peripherals.proximityReason.empty()) {
-            doc["event"]["peripherals"]["proximity"]["reason"] = peripherals.proximityReason.c_str();
-        }
-
-        doc["event"]["peripherals"]["ambientLight"]["available"] = peripherals.ambientLightAvailable;
-        doc["event"]["peripherals"]["ambientLight"]["driver"] = peripherals.ambientLightDriver.c_str();
-        if (peripherals.ambientLightAvailable) {
-            doc["event"]["peripherals"]["ambientLight"]["lux"] = peripherals.ambientLightLux;
-            doc["event"]["peripherals"]["ambientLight"]["raw"] = peripherals.ambientLightRaw;
-        } else if (!peripherals.ambientLightReason.empty()) {
-            doc["event"]["peripherals"]["ambientLight"]["reason"] = peripherals.ambientLightReason.c_str();
-        }
-
-        const bool mag_available = imu.magnetometerAvailable || peripherals.magnetometerAvailable;
-        doc["event"]["peripherals"]["magnetometer"]["available"] = mag_available;
-        doc["event"]["peripherals"]["magnetometer"]["driver"] = imu.magnetometerAvailable ? "bmi270-aux-bmm150" : peripherals.magnetometerDriver.c_str();
-        if (imu.magnetometerAvailable) {
-            doc["event"]["peripherals"]["magnetometer"]["x"] = imu.magnetometerX;
-            doc["event"]["peripherals"]["magnetometer"]["y"] = imu.magnetometerY;
-            doc["event"]["peripherals"]["magnetometer"]["z"] = imu.magnetometerZ;
-            doc["event"]["peripherals"]["magnetometer"]["rawX"] = imu.magnetometerRawX;
-            doc["event"]["peripherals"]["magnetometer"]["rawY"] = imu.magnetometerRawY;
-            doc["event"]["peripherals"]["magnetometer"]["rawZ"] = imu.magnetometerRawZ;
-            doc["event"]["peripherals"]["magnetometer"]["headingDeg"] = imu.magnetometerHeadingDeg;
-        } else if (peripherals.magnetometerAvailable) {
-            doc["event"]["peripherals"]["magnetometer"]["x"] = peripherals.magnetometerX;
-            doc["event"]["peripherals"]["magnetometer"]["y"] = peripherals.magnetometerY;
-            doc["event"]["peripherals"]["magnetometer"]["z"] = peripherals.magnetometerZ;
-            doc["event"]["peripherals"]["magnetometer"]["rawX"] = peripherals.magnetometerRawX;
-            doc["event"]["peripherals"]["magnetometer"]["rawY"] = peripherals.magnetometerRawY;
-            doc["event"]["peripherals"]["magnetometer"]["rawZ"] = peripherals.magnetometerRawZ;
-            doc["event"]["peripherals"]["magnetometer"]["headingDeg"] = peripherals.magnetometerHeadingDeg;
-        } else if (!peripherals.magnetometerReason.empty()) {
-            doc["event"]["peripherals"]["magnetometer"]["reason"] = peripherals.magnetometerReason.c_str();
         }
 
         if (cache.includeI2cScan) {
@@ -1823,22 +1806,7 @@ private:
         }
 
         doc["event"]["peripherals"]["mic"]["available"] = mic.available;
-        if (mic.channels > 0) {
-            doc["event"]["peripherals"]["mic"]["channels"] = mic.channels;
-        }
-        doc["event"]["peripherals"]["mic"]["mode"] = "mono_opus";
-        doc["event"]["peripherals"]["mic"]["localization"] = "abandoned";
-        doc["event"]["peripherals"]["mic"]["driver"] = "es7210-level-meter";
-        if (mic.available) {
-            doc["event"]["peripherals"]["mic"]["level"] = mic.level;
-            doc["event"]["peripherals"]["mic"]["rms"] = mic.rms;
-            doc["event"]["peripherals"]["mic"]["peak"] = mic.peak;
-            doc["event"]["peripherals"]["mic"]["dbfs"] = mic.dbfs;
-            doc["event"]["peripherals"]["mic"]["updatedAt"] = mic.updatedAt;
-            if (!mic.reason.empty()) {
-                doc["event"]["peripherals"]["mic"]["reason"] = mic.reason.c_str();
-            }
-        } else if (!mic.reason.empty()) {
+        if (!mic.reason.empty()) {
             doc["event"]["peripherals"]["mic"]["reason"] = mic.reason.c_str();
         }
 
@@ -1986,7 +1954,7 @@ private:
         capabilities.add("face");
         capabilities.add("rgb");
         capabilities.add("touch");
-        capabilities.add("imu");
+        capabilities.add("bmi270");
         capabilities.add("battery");
         capabilities.add("wifi");
         capabilities.add("ble");
