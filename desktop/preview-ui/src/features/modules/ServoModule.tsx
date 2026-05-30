@@ -6,7 +6,7 @@ import { CommandPanel } from "../../components/CommandPanel";
 import { CommandStatus } from "../../components/CommandStatus";
 import { ModulePage } from "../../components/ModulePage";
 import { useCommand } from "../../hooks/useCommand";
-import { boolText, numberText } from "../../model/format";
+import { boolText } from "../../model/format";
 import { deviceUpdated, ModuleProps, mot } from "./module-utils";
 
 export function ServoModule({ snapshot }: ModuleProps): JSX.Element {
@@ -21,13 +21,7 @@ export function ServoModule({ snapshot }: ModuleProps): JSX.Element {
       value={servos}
       updated={deviceUpdated(snapshot)}
       metrics={[
-        { label: "Power", value: boolText(servos?.power) },
-        { label: "Yaw angle", value: numberText(servos?.yaw?.angle, 1) },
-        { label: "Yaw moving", value: boolText(servos?.yaw?.moving) },
-        { label: "Yaw torque", value: boolText(servos?.yaw?.torque) },
-        { label: "Pitch angle", value: numberText(servos?.pitch?.angle, 1) },
-        { label: "Pitch moving", value: boolText(servos?.pitch?.moving) },
-        { label: "Pitch torque", value: boolText(servos?.pitch?.torque) }
+        { label: "Power", value: boolText(servos?.power) }
       ]}
     >
       <CommandPanel>

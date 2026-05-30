@@ -16,7 +16,7 @@
 #include <vector>
 #include <lvgl_image.h>
 #include <string_view>
-#include <hardware/sensors/sensor_snapshot.h>
+#include <hardware/sensors/hardware_status.h>
 
 /**
  * @brief
@@ -203,7 +203,10 @@ public:
     LocalMicLevelSnapshot getMicLevelSnapshot();
     void releaseMicLevelInput();
     void clearupMicTest();
+    LocalPeripheralProbeSnapshot getLocalLtr553Snapshot();
     LocalPeripheralProbeSnapshot getLocalPeripheralProbeSnapshot();
+    bool pollLocalNfcEvent(LocalNfcEvent& event);
+    bool pollLocalIrEvent(LocalIrEvent& event);
 
 private:
     void board_init();

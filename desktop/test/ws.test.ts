@@ -321,7 +321,7 @@ describe("StackChanWebSocketServer", () => {
         deviceId: "stackchan-test",
         firmwareVersion: "local-test",
         pairingToken: "test-token",
-        capabilities: ["audio", "face", "motion", "battery", "wifi", "imu", "touch", "servos", "rtc", "mic"],
+        capabilities: ["audio", "face", "motion", "battery", "wifi", "bmi270", "touch", "servos", "rtc", "mic", "nfc", "ir"],
         audioParams: {
           format: "opus",
           sampleRate: 16000,
@@ -334,32 +334,44 @@ describe("StackChanWebSocketServer", () => {
 
     const timestamp = new Date().toISOString();
     for (const event of [
-      { kind: "battery", level: 64, charging: false },
-      { kind: "wifi", status: "connected", rssi: -52, ssid: "desk" },
-      { kind: "imu", motion: "none", x: 0.1, y: -0.2, z: 9.7 },
+      {
+        kind: "bmi270",
+        motion: "none",
+        x: 0.1,
+        y: -0.2,
+        z: 9.7,
+        magnetometer: { available: true, x: 0.1, y: -0.2, z: 0.3 }
+      },
+      { kind: "proximity", available: true, value: 42, raw: 42 },
+      { kind: "ambientLight", available: true, lux: 18.5, raw: 320 },
+      { kind: "nfc", action: "tagDetected", uptimeMs: 100_100, uid: "04A1B2C3D4", tech: "iso14443a" },
+      { kind: "ir", action: "received", uptimeMs: 100_200, protocol: "nec", address: "00FF", command: "18", repeat: false },
       { kind: "touch", gesture: "press", surface: "screen", pressed: true, x: 120, y: 88, points: 1 },
       {
-        kind: "sensorSnapshot",
+        kind: "hardwareStatus",
         uptimeMs: 99_000,
         power: {
           batteryLevel: 64,
           charging: false,
           backlight: 70,
-          speakerVolume: 80,
-          servoPower: true
+          speakerVolume: 80
+        },
+        network: {
+          wifi: {
+            status: "connected",
+            rssi: -52,
+            ssid: "desk"
+          }
         },
         motion: {
           servos: {
-            available: true,
-            yaw: { angle: 3.4, moving: false, torque: true },
-            pitch: { angle: 28.1, moving: true, torque: true },
             power: true
           }
         },
         peripherals: {
           ioExpander: { available: true },
-          nfc: { available: false, driver: "st25r3916-probe", address: 0x50, reason: "not_detected_i2c_0x50" },
-          powerMonitor: { available: true, driver: "ina226", address: 0x41, busVoltage: 3.9, current: 0.11, power: 0.43 },
+          nfc: { available: false, reason: "not_detected_i2c_0x50" },
+          powerMonitor: { available: true, busVoltage: 3.9, current: 0.11, power: 0.43 },
           i2cScan: [
             {
               stage: "after_py32_vm_en",
@@ -368,8 +380,8 @@ describe("StackChanWebSocketServer", () => {
               targets: { ltr553: false, ina226: false, nfc: false }
             }
           ],
-          ir: { available: true, driver: "gpio-ir-basic", txPin: 5, rxPin: 10 },
-          mic: { available: true, channels: 2, mode: "mono_opus", localization: "abandoned", level: 0.4, dbfs: -22, driver: "es7210-level-meter" }
+          ir: { available: true },
+          mic: { available: true }
         }
       }
     ]) {
@@ -386,17 +398,22 @@ describe("StackChanWebSocketServer", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30));
     const [snapshot] = registry.listSnapshots();
-    expect(snapshot.sensors.battery?.level).toBe(64);
-    expect(snapshot.sensors.wifi?.rssi).toBe(-52);
-    expect(snapshot.sensors.imu?.z).toBe(9.7);
+    expect(snapshot.sensors.bmi270?.z).toBe(9.7);
+    expect(snapshot.sensors.bmi270?.magnetometer?.x).toBe(0.1);
+    expect(snapshot.sensors.proximity?.value).toBe(42);
+    expect(snapshot.sensors.ambientLight?.lux).toBe(18.5);
+    expect(snapshot.sensors.nfc?.uid).toBe("04A1B2C3D4");
+    expect(snapshot.sensors.ir?.protocol).toBe("nec");
     expect(snapshot.sensors.touch?.surface).toBe("screen");
-    expect(snapshot.sensors.sensorSnapshot?.power?.speakerVolume).toBe(80);
-    expect(snapshot.sensors.sensorSnapshot?.peripherals?.ioExpander?.available).toBe(true);
-    expect(snapshot.sensors.sensorSnapshot?.motion?.servos?.yaw?.angle).toBe(3.4);
-    expect(snapshot.sensors.sensorSnapshot?.peripherals?.nfc?.reason).toBe("not_detected_i2c_0x50");
-    expect(snapshot.sensors.sensorSnapshot?.peripherals?.powerMonitor?.busVoltage).toBe(3.9);
-    expect(snapshot.sensors.sensorSnapshot?.peripherals?.i2cScan?.[0]?.stage).toBe("after_py32_vm_en");
-    expect(snapshot.sensors.sensorSnapshot?.peripherals?.mic?.level).toBe(0.4);
+    expect(snapshot.sensors.hardwareStatus?.power?.batteryLevel).toBe(64);
+    expect(snapshot.sensors.hardwareStatus?.network?.wifi?.rssi).toBe(-52);
+    expect(snapshot.sensors.hardwareStatus?.power?.speakerVolume).toBe(80);
+    expect(snapshot.sensors.hardwareStatus?.peripherals?.ioExpander?.available).toBe(true);
+    expect(snapshot.sensors.hardwareStatus?.motion?.servos?.power).toBe(true);
+    expect(snapshot.sensors.hardwareStatus?.peripherals?.nfc?.reason).toBe("not_detected_i2c_0x50");
+    expect(snapshot.sensors.hardwareStatus?.peripherals?.powerMonitor?.busVoltage).toBe(3.9);
+    expect(snapshot.sensors.hardwareStatus?.peripherals?.i2cScan?.[0]?.stage).toBe("after_py32_vm_en");
+    expect(snapshot.sensors.hardwareStatus?.peripherals?.mic?.available).toBe(true);
     ws.close();
   });
 

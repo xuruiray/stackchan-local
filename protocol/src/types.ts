@@ -5,7 +5,7 @@ export const DEVICE_CAPABILITIES = [
   "face",
   "rgb",
   "touch",
-  "imu",
+  "bmi270",
   "battery",
   "wifi",
   "ble",
@@ -253,8 +253,7 @@ export type SetRgbCommand = {
 
 export type TelemetryConfigCommand = {
   kind: "telemetryConfig";
-  sensorSnapshotHz?: 0 | 0.5 | 1 | 2;
-  imuHz?: 0 | 1 | 2 | 4 | 10;
+  hardwareStatusHz?: 0 | 0.5 | 1 | 2;
   includeI2cScan?: boolean;
   reason?: string;
 };
@@ -310,7 +309,7 @@ export type RobotEvent =
       points?: number;
     }
   | {
-      kind: "imu";
+      kind: "bmi270";
       motion: "shake" | "tilt" | "none";
       x?: number;
       y?: number;
@@ -319,9 +318,58 @@ export type RobotEvent =
       gyroY?: number;
       gyroZ?: number;
       uptimeMs?: number;
+      magnetometer?: {
+        available: boolean;
+        x?: number;
+        y?: number;
+        z?: number;
+        rawX?: number;
+        rawY?: number;
+        rawZ?: number;
+        headingDeg?: number;
+        reason?: string;
+      };
     }
-  | { kind: "battery"; level: number; charging: boolean }
-  | { kind: "wifi"; status: "disconnected" | "connecting" | "connected"; rssi?: number; ssid?: string }
+  | {
+      kind: "proximity";
+      available: boolean;
+      value?: number;
+      raw?: number;
+      uptimeMs?: number;
+      reason?: string;
+    }
+  | {
+      kind: "ambientLight";
+      available: boolean;
+      lux?: number;
+      raw?: number;
+      uptimeMs?: number;
+      reason?: string;
+    }
+  | {
+      kind: "nfc";
+      action: "tagDetected" | "tagChanged" | "tagRemoved" | "readError";
+      uptimeMs: number;
+      uid?: string;
+      tech?: "iso14443a" | "iso14443b" | "felica" | "iso15693" | "unknown";
+      atqa?: string;
+      sak?: number;
+      reason?: string;
+    }
+  | {
+      kind: "ir";
+      action: "received" | "receiveError" | "transmitStarted" | "transmitCompleted" | "transmitFailed";
+      uptimeMs: number;
+      protocol?: "nec" | "sony" | "rc5" | "rc6" | "raw" | "unknown";
+      address?: string;
+      command?: string;
+      code?: string;
+      bits?: number;
+      repeat?: boolean;
+      requestId?: string;
+      carrierHz?: number;
+      reason?: string;
+    }
   | { kind: "wakeWord"; text: string }
   | { kind: "state"; mode: RobotMode; detail?: string }
   | { kind: "image"; requestId: string; mimeType: "image/jpeg"; dataBase64: string }
@@ -361,14 +409,13 @@ export type RobotEvent =
       trace?: ProtocolTrace;
     }
   | {
-      kind: "sensorSnapshot";
+      kind: "hardwareStatus";
       uptimeMs: number;
       power?: {
         batteryLevel?: number;
         charging?: boolean;
         backlight?: number;
         speakerVolume?: number;
-        servoPower?: boolean;
       };
       network?: {
         wifi?: {
@@ -377,64 +424,21 @@ export type RobotEvent =
           ssid?: string;
         };
         ble?: {
-          available: boolean;
           connected?: boolean;
-          provisioning?: boolean;
           reason?: string;
         };
       };
       motion?: {
-        imu?: {
-          available: boolean;
-          motion?: "shake" | "tilt" | "none";
-          x?: number;
-          y?: number;
-          z?: number;
-          gyroX?: number;
-          gyroY?: number;
-          gyroZ?: number;
-          uptimeMs?: number;
-          reason?: string;
-        };
         servos?: {
-          available: boolean;
-          yaw?: {
-            angle?: number;
-            moving?: boolean;
-            torque?: boolean;
-          };
-          pitch?: {
-            angle?: number;
-            moving?: boolean;
-            torque?: boolean;
-          };
           power?: boolean;
           reason?: string;
         };
       };
-      interaction?: {
-        screenTouch?: {
-          available: boolean;
-          pressed?: boolean;
-          x?: number;
-          y?: number;
-          points?: number;
-          reason?: string;
-        };
+      peripherals?: {
         headTouch?: {
           available: boolean;
-          gesture?: "tap" | "doubleTap" | "longPress" | "pet" | "press" | "release" | "swipeForward" | "swipeBackward";
-          pressed?: boolean;
-          zones?: number[];
           reason?: string;
         };
-        wakeWord?: {
-          available: boolean;
-          text?: string;
-          reason?: string;
-        };
-      };
-      peripherals?: {
         ioExpander?: {
           available: boolean;
           reason?: string;
@@ -442,32 +446,12 @@ export type RobotEvent =
         camera?: {
           available: boolean;
           streaming?: boolean;
-          width?: number;
-          height?: number;
-          fps?: number;
-          requestedWidth?: number;
-          requestedHeight?: number;
-          actualWidth?: number;
-          actualHeight?: number;
-          quality?: number;
-          transport?: "jsonBase64" | "binary";
           adaptiveLevel?: number;
-          lastCaptureMs?: number;
-          lastEncodeMs?: number;
-          lastSendMs?: number;
-          lastTotalMs?: number;
-          lastFrameIntervalMs?: number;
-          lastJpegBytes?: number;
-          fallbackReason?: string;
           reason?: string;
         };
         rgb?: {
           available: boolean;
-          count?: number;
           enabled?: boolean;
-          color?: string;
-          brightness?: number;
-          driver?: string;
           reason?: string;
         };
         rtc?: {
@@ -478,15 +462,10 @@ export type RobotEvent =
         };
         nfc?: {
           available: boolean;
-          driver?: string;
-          address?: number;
-          status?: "chip_detected" | "ready" | "card_detected" | "inactive";
           reason?: string;
         };
         powerMonitor?: {
           available: boolean;
-          driver?: string;
-          address?: number;
           busVoltage?: number;
           shuntVoltage?: number;
           current?: number;
@@ -495,48 +474,10 @@ export type RobotEvent =
         };
         ir?: {
           available: boolean;
-          driver?: string;
-          txPin?: number;
-          rxPin?: number;
-          reason?: string;
-        };
-        proximity?: {
-          available: boolean;
-          value?: number;
-          raw?: number;
-          driver?: string;
-          reason?: string;
-        };
-        ambientLight?: {
-          available: boolean;
-          lux?: number;
-          raw?: number;
-          driver?: string;
-          reason?: string;
-        };
-        magnetometer?: {
-          available: boolean;
-          x?: number;
-          y?: number;
-          z?: number;
-          rawX?: number;
-          rawY?: number;
-          rawZ?: number;
-          headingDeg?: number;
-          driver?: string;
           reason?: string;
         };
         mic?: {
           available: boolean;
-          channels?: number;
-          mode?: "mono_opus" | "unknown";
-          localization?: "abandoned" | "unsupported";
-          level?: number;
-          rms?: number;
-          peak?: number;
-          dbfs?: number;
-          updatedAt?: number;
-          driver?: string;
           reason?: string;
         };
         i2cScan?: Array<{

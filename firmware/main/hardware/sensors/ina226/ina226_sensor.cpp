@@ -34,8 +34,6 @@ void Ina226::init(LocalPeripheralProbeSnapshot& snapshot)
         dev_ = nullptr;
     }
 
-    snapshot.powerMonitorDriver = "ina226";
-    snapshot.powerMonitorAddress = kAddress;
     snapshot.powerMonitorReason = "not_detected_i2c_0x41";
 
     if (!bus_) {

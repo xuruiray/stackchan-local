@@ -840,8 +840,7 @@ export class VisionTrackingService {
     this.ensureCameraStream(true);
     void this.controller.telemetryConfig(
       {
-        sensorSnapshotHz: level > 0 ? 0.5 : 2,
-        imuHz: level > 0 ? 4 : 10,
+        hardwareStatusHz: level > 0 ? 0.5 : 2,
         includeI2cScan: level === 0,
         reason
       },
@@ -864,8 +863,7 @@ export class VisionTrackingService {
     if (wasAdaptive) {
       void this.controller.telemetryConfig(
         {
-          sensorSnapshotHz: 2,
-          imuHz: 10,
+          hardwareStatusHz: 2,
           includeI2cScan: true,
           reason
         },
@@ -877,8 +875,7 @@ export class VisionTrackingService {
   private configureTelemetryForTracking(enabled: boolean, reason: string): void {
     void this.controller.telemetryConfig(
       {
-        sensorSnapshotHz: enabled ? 1 : 2,
-        imuHz: enabled ? 4 : 10,
+        hardwareStatusHz: enabled ? 1 : 2,
         includeI2cScan: !enabled,
         reason
       },

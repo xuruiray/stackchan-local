@@ -1,9 +1,9 @@
 import { ModulePage } from "../../components/ModulePage";
 import { availabilityText, percentText } from "../../model/format";
-import { deviceUpdated, ModuleProps, p, pow } from "./module-utils";
+import { deviceUpdated, inter, ModuleProps, pow } from "./module-utils";
 
 export function DisplayModule({ snapshot }: ModuleProps): JSX.Element {
-  const display = { available: true, driver: "ili9342", backlight: pow(snapshot).backlight };
+  const display = { available: true, backlight: pow(snapshot).backlight };
   return (
     <ModulePage
       title="Display"
@@ -13,7 +13,7 @@ export function DisplayModule({ snapshot }: ModuleProps): JSX.Element {
       metrics={[
         { label: "Panel", value: availabilityText(display) },
         { label: "Backlight", value: percentText(pow(snapshot).backlight) },
-        { label: "Touch binding", value: availabilityText(p(snapshot).screenTouch) }
+        { label: "Touch binding", value: availabilityText(inter(snapshot).screenTouch) }
       ]}
     />
   );

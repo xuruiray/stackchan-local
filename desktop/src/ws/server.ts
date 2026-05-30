@@ -6,6 +6,7 @@ import {
   type ErrorMessage,
   type HandshakeMessage,
   type LocalProtocolMessage,
+  ProtocolValidationError,
   type ProtocolValidator,
   type RobotEventMessage
 } from "@stackchan-local/protocol";
@@ -243,6 +244,12 @@ export class StackChanWebSocketServer {
     try {
       message = this.validator.parseMessage(parsed);
     } catch (error) {
+      this.logger.warn("invalid device message", {
+        type: "device",
+        deviceId: session.deviceId,
+        sessionId: session.sessionId,
+        ...describeProtocolParseFailure(parsed, error)
+      });
       this.sendError(session.ws, "invalid_message", error instanceof Error ? error.message : "invalid protocol message", true);
       return;
     }
@@ -362,4 +369,29 @@ export class StackChanWebSocketServer {
       return undefined;
     }
   }
+}
+
+function describeProtocolParseFailure(value: unknown, error: unknown): Record<string, unknown> {
+  const summary: Record<string, unknown> = {};
+  if (value && typeof value === "object") {
+    const message = value as Record<string, unknown>;
+    summary.messageType = message.type;
+    summary.eventKind =
+      message.event && typeof message.event === "object" ? (message.event as Record<string, unknown>).kind : undefined;
+    summary.eventKeys =
+      message.event && typeof message.event === "object" ? Object.keys(message.event as Record<string, unknown>) : undefined;
+  }
+  if (error instanceof ProtocolValidationError) {
+    summary.validationErrors =
+      error.errors?.slice(0, 12).map((item) => ({
+        instancePath: item.instancePath,
+        schemaPath: item.schemaPath,
+        keyword: item.keyword,
+        message: item.message,
+        params: item.params
+      })) ?? [];
+    return summary;
+  }
+  summary.error = error instanceof Error ? error.message : String(error);
+  return summary;
 }

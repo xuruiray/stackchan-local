@@ -440,18 +440,15 @@ export class PreviewServer {
         const body = await readBody(request);
         const parsed = body
           ? (JSON.parse(body) as {
-              sensorSnapshotHz?: unknown;
-              imuHz?: unknown;
+              hardwareStatusHz?: unknown;
               includeI2cScan?: unknown;
               reason?: unknown;
             })
           : {};
-        const sensorSnapshotHz = sanitizeEnumNumber(parsed.sensorSnapshotHz, [0, 0.5, 1, 2] as const);
-        const imuHz = sanitizeEnumNumber(parsed.imuHz, [0, 1, 2, 4, 10] as const);
+        const hardwareStatusHz = sanitizeEnumNumber(parsed.hardwareStatusHz, [0, 0.5, 1, 2] as const);
         const result = await this.extras.robotController.telemetryConfig(
           {
-            sensorSnapshotHz,
-            imuHz,
+            hardwareStatusHz,
             includeI2cScan: typeof parsed.includeI2cScan === "boolean" ? parsed.includeI2cScan : undefined,
             reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 120) : "preview-ui"
           },

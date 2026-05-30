@@ -1,9 +1,9 @@
 import { ModulePage } from "../../components/ModulePage";
-import { availabilityText, dash, numberText } from "../../model/format";
-import { deviceUpdated, ModuleProps, p } from "./module-utils";
+import { availabilityText, numberText } from "../../model/format";
+import { deviceUpdated, mag, ModuleProps } from "./module-utils";
 
 export function MagnetometerModule({ snapshot }: ModuleProps): JSX.Element {
-  const magnetometer = p(snapshot).magnetometer;
+  const magnetometer = mag(snapshot);
   return (
     <ModulePage
       title="Magnetometer"
@@ -12,7 +12,6 @@ export function MagnetometerModule({ snapshot }: ModuleProps): JSX.Element {
       updated={deviceUpdated(snapshot)}
       metrics={[
         { label: "Status", value: availabilityText(magnetometer) },
-        { label: "Driver", value: dash(magnetometer?.driver) },
         { label: "X", value: numberText(magnetometer?.x, 2) },
         { label: "Y", value: numberText(magnetometer?.y, 2) },
         { label: "Z", value: numberText(magnetometer?.z, 2) },

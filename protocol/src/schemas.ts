@@ -31,7 +31,7 @@ export const handshakeSchema = {
           "face",
           "rgb",
           "touch",
-          "imu",
+          "bmi270",
           "battery",
           "wifi",
           "ble",
@@ -380,8 +380,7 @@ export const robotCommandSchema = {
           required: ["kind"],
           properties: {
             kind: { const: "telemetryConfig" },
-            sensorSnapshotHz: { enum: [0, 0.5, 1, 2] },
-            imuHz: { enum: [0, 1, 2, 4, 10] },
+            hardwareStatusHz: { enum: [0, 0.5, 1, 2] },
             includeI2cScan: { type: "boolean" },
             reason: { type: "string" }
           }
@@ -428,22 +427,93 @@ const availabilitySchema = {
   }
 } as const;
 
-const servoTelemetrySchema = {
+const magnetometerTelemetrySchema = {
   type: "object",
   additionalProperties: false,
+  required: ["available"],
   properties: {
-    angle: { type: "number", minimum: -180, maximum: 180 },
-    moving: { type: "boolean" },
-    torque: { type: "boolean" }
+    available: { type: "boolean" },
+    x: { type: "number" },
+    y: { type: "number" },
+    z: { type: "number" },
+    rawX: { type: "number" },
+    rawY: { type: "number" },
+    rawZ: { type: "number" },
+    headingDeg: { type: "number", minimum: 0, maximum: 360 },
+    reason: { type: "string" }
   }
 } as const;
 
-const sensorSnapshotSchema = {
+const proximityTelemetrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "available"],
+  properties: {
+    kind: { const: "proximity" },
+    available: { type: "boolean" },
+    value: { type: "number", minimum: 0 },
+    raw: { type: "number", minimum: 0 },
+    uptimeMs: { type: "integer", minimum: 0 },
+    reason: { type: "string" }
+  }
+} as const;
+
+const ambientLightTelemetrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "available"],
+  properties: {
+    kind: { const: "ambientLight" },
+    available: { type: "boolean" },
+    lux: { type: "number", minimum: 0 },
+    raw: { type: "number", minimum: 0 },
+    uptimeMs: { type: "integer", minimum: 0 },
+    reason: { type: "string" }
+  }
+} as const;
+
+const nfcEventSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "action", "uptimeMs"],
+  properties: {
+    kind: { const: "nfc" },
+    action: { enum: ["tagDetected", "tagChanged", "tagRemoved", "readError"] },
+    uptimeMs: { type: "integer", minimum: 0 },
+    uid: { type: "string", pattern: "^[0-9A-F]+$", minLength: 2, maxLength: 20 },
+    tech: { enum: ["iso14443a", "iso14443b", "felica", "iso15693", "unknown"] },
+    atqa: { type: "string", pattern: "^[0-9A-F]{4}$" },
+    sak: { type: "integer", minimum: 0, maximum: 255 },
+    reason: { type: "string" }
+  }
+} as const;
+
+const irEventSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "action", "uptimeMs"],
+  properties: {
+    kind: { const: "ir" },
+    action: { enum: ["received", "receiveError", "transmitStarted", "transmitCompleted", "transmitFailed"] },
+    uptimeMs: { type: "integer", minimum: 0 },
+    protocol: { enum: ["nec", "sony", "rc5", "rc6", "raw", "unknown"] },
+    address: { type: "string", pattern: "^[0-9A-F]+$", minLength: 1, maxLength: 8 },
+    command: { type: "string", pattern: "^[0-9A-F]+$", minLength: 1, maxLength: 8 },
+    code: { type: "string", pattern: "^[0-9A-F]+$", minLength: 1, maxLength: 16 },
+    bits: { type: "integer", minimum: 1, maximum: 128 },
+    repeat: { type: "boolean" },
+    requestId: { type: "string", minLength: 1 },
+    carrierHz: { type: "integer", minimum: 1000, maximum: 100000 },
+    reason: { type: "string" }
+  }
+} as const;
+
+const hardwareStatusSchema = {
   type: "object",
   additionalProperties: false,
   required: ["kind", "uptimeMs"],
   properties: {
-    kind: { const: "sensorSnapshot" },
+    kind: { const: "hardwareStatus" },
     uptimeMs: { type: "integer", minimum: 0 },
     power: {
       type: "object",
@@ -452,8 +522,7 @@ const sensorSnapshotSchema = {
         batteryLevel: { type: "number", minimum: 0, maximum: 100 },
         charging: { type: "boolean" },
         backlight: { type: "integer", minimum: 0, maximum: 100 },
-        speakerVolume: { type: "integer", minimum: 0, maximum: 100 },
-        servoPower: { type: "boolean" }
+        speakerVolume: { type: "integer", minimum: 0, maximum: 100 }
       }
     },
     network: {
@@ -473,11 +542,8 @@ const sensorSnapshotSchema = {
         ble: {
           type: "object",
           additionalProperties: false,
-          required: ["available"],
           properties: {
-            available: { type: "boolean" },
             connected: { type: "boolean" },
-            provisioning: { type: "boolean" },
             reason: { type: "string" }
           }
         }
@@ -487,77 +553,11 @@ const sensorSnapshotSchema = {
       type: "object",
       additionalProperties: false,
       properties: {
-        imu: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            motion: { enum: ["shake", "tilt", "none"] },
-            x: { type: "number" },
-            y: { type: "number" },
-            z: { type: "number" },
-            gyroX: { type: "number" },
-            gyroY: { type: "number" },
-            gyroZ: { type: "number" },
-            uptimeMs: { type: "integer", minimum: 0 },
-            reason: { type: "string" }
-          }
-        },
         servos: {
           type: "object",
           additionalProperties: false,
-          required: ["available"],
           properties: {
-            available: { type: "boolean" },
-            yaw: servoTelemetrySchema,
-            pitch: servoTelemetrySchema,
             power: { type: "boolean" },
-            reason: { type: "string" }
-          }
-        }
-      }
-    },
-    interaction: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        screenTouch: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            pressed: { type: "boolean" },
-            x: { type: "number", minimum: 0, maximum: 320 },
-            y: { type: "number", minimum: 0, maximum: 240 },
-            points: { type: "integer", minimum: 0, maximum: 5 },
-            reason: { type: "string" }
-          }
-        },
-        headTouch: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            gesture: { enum: ["tap", "doubleTap", "longPress", "pet", "press", "release", "swipeForward", "swipeBackward"] },
-            pressed: { type: "boolean" },
-            zones: {
-              type: "array",
-              maxItems: 3,
-              items: { type: "integer", minimum: 0, maximum: 2 }
-            },
-            reason: { type: "string" }
-          }
-        },
-        wakeWord: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            text: { type: "string" },
             reason: { type: "string" }
           }
         }
@@ -567,6 +567,15 @@ const sensorSnapshotSchema = {
       type: "object",
       additionalProperties: false,
       properties: {
+        headTouch: {
+          type: "object",
+          additionalProperties: false,
+          required: ["available"],
+          properties: {
+            available: { type: "boolean" },
+            reason: { type: "string" }
+          }
+        },
         ioExpander: availabilitySchema,
         camera: {
           type: "object",
@@ -575,23 +584,7 @@ const sensorSnapshotSchema = {
           properties: {
             available: { type: "boolean" },
             streaming: { type: "boolean" },
-            width: { type: "integer", minimum: 1 },
-            height: { type: "integer", minimum: 1 },
-            fps: { type: "number", minimum: 0, maximum: 30 },
-            requestedWidth: { type: "integer", minimum: 1 },
-            requestedHeight: { type: "integer", minimum: 1 },
-            actualWidth: { type: "integer", minimum: 1 },
-            actualHeight: { type: "integer", minimum: 1 },
-            quality: { type: "integer", minimum: 1, maximum: 100 },
-            transport: { enum: ["jsonBase64", "binary"] },
             adaptiveLevel: { type: "integer", minimum: 0, maximum: 5 },
-            lastCaptureMs: { type: "integer", minimum: 0 },
-            lastEncodeMs: { type: "integer", minimum: 0 },
-            lastSendMs: { type: "integer", minimum: 0 },
-            lastTotalMs: { type: "integer", minimum: 0 },
-            lastFrameIntervalMs: { type: "integer", minimum: 0 },
-            lastJpegBytes: { type: "integer", minimum: 0 },
-            fallbackReason: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -601,11 +594,7 @@ const sensorSnapshotSchema = {
           required: ["available"],
           properties: {
             available: { type: "boolean" },
-            count: { type: "integer", minimum: 0, maximum: 64 },
             enabled: { type: "boolean" },
-            color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
-            brightness: { type: "number", minimum: 0, maximum: 1 },
-            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -626,9 +615,6 @@ const sensorSnapshotSchema = {
           required: ["available"],
           properties: {
             available: { type: "boolean" },
-            driver: { type: "string" },
-            address: { type: "integer", minimum: 0, maximum: 127 },
-            status: { enum: ["chip_detected", "ready", "card_detected", "inactive"] },
             reason: { type: "string" }
           }
         },
@@ -638,8 +624,6 @@ const sensorSnapshotSchema = {
           required: ["available"],
           properties: {
             available: { type: "boolean" },
-            driver: { type: "string" },
-            address: { type: "integer", minimum: 0, maximum: 127 },
             busVoltage: { type: "number", minimum: -0.1, maximum: 40 },
             shuntVoltage: { type: "number", minimum: -0.2, maximum: 0.2 },
             current: { type: "number", minimum: -20, maximum: 20 },
@@ -653,50 +637,6 @@ const sensorSnapshotSchema = {
           required: ["available"],
           properties: {
             available: { type: "boolean" },
-            driver: { type: "string" },
-            txPin: { type: "integer", minimum: 0, maximum: 48 },
-            rxPin: { type: "integer", minimum: 0, maximum: 48 },
-            reason: { type: "string" }
-          }
-        },
-        proximity: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            value: { type: "number", minimum: 0 },
-            raw: { type: "number", minimum: 0 },
-            driver: { type: "string" },
-            reason: { type: "string" }
-          }
-        },
-        ambientLight: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            lux: { type: "number", minimum: 0 },
-            raw: { type: "number", minimum: 0 },
-            driver: { type: "string" },
-            reason: { type: "string" }
-          }
-        },
-        magnetometer: {
-          type: "object",
-          additionalProperties: false,
-          required: ["available"],
-          properties: {
-            available: { type: "boolean" },
-            x: { type: "number" },
-            y: { type: "number" },
-            z: { type: "number" },
-            rawX: { type: "number" },
-            rawY: { type: "number" },
-            rawZ: { type: "number" },
-            headingDeg: { type: "number", minimum: 0, maximum: 360 },
-            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -706,15 +646,6 @@ const sensorSnapshotSchema = {
           required: ["available"],
           properties: {
             available: { type: "boolean" },
-            channels: { type: "integer", minimum: 1, maximum: 2 },
-            mode: { enum: ["mono_opus", "unknown"] },
-            localization: { enum: ["abandoned", "unsupported"] },
-            level: { type: "number", minimum: 0, maximum: 1 },
-            rms: { type: "number", minimum: 0, maximum: 1 },
-            peak: { type: "number", minimum: 0, maximum: 1 },
-            dbfs: { type: "number", minimum: -120, maximum: 0 },
-            updatedAt: { type: "integer", minimum: 0 },
-            driver: { type: "string" },
             reason: { type: "string" }
           }
         },
@@ -783,7 +714,7 @@ export const robotEventSchema = {
           additionalProperties: false,
           required: ["kind", "motion"],
           properties: {
-            kind: { const: "imu" },
+            kind: { const: "bmi270" },
             motion: { enum: ["shake", "tilt", "none"] },
             x: { type: "number" },
             y: { type: "number" },
@@ -791,30 +722,14 @@ export const robotEventSchema = {
             gyroX: { type: "number" },
             gyroY: { type: "number" },
             gyroZ: { type: "number" },
-            uptimeMs: { type: "integer", minimum: 0 }
+            uptimeMs: { type: "integer", minimum: 0 },
+            magnetometer: magnetometerTelemetrySchema
           }
         },
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind", "level", "charging"],
-          properties: {
-            kind: { const: "battery" },
-            level: { type: "number", minimum: 0, maximum: 100 },
-            charging: { type: "boolean" }
-          }
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind", "status"],
-          properties: {
-            kind: { const: "wifi" },
-            status: { enum: ["disconnected", "connecting", "connected"] },
-            rssi: { type: "number" },
-            ssid: { type: "string" }
-          }
-        },
+        proximityTelemetrySchema,
+        ambientLightTelemetrySchema,
+        nfcEventSchema,
+        irEventSchema,
         {
           type: "object",
           additionalProperties: false,
@@ -936,7 +851,7 @@ export const robotEventSchema = {
             trace: protocolTraceSchema
           }
         },
-        sensorSnapshotSchema
+        hardwareStatusSchema
       ]
     }
   }
@@ -985,10 +900,15 @@ export const protocolSchemas = {
   normalizedFaceBoxSchema,
   faceServoRangeSchema,
   faceTrackingControlSchema,
+  magnetometerTelemetrySchema,
+  proximityTelemetrySchema,
+  ambientLightTelemetrySchema,
+  nfcEventSchema,
+  irEventSchema,
   handshakeSchema,
   daemonHelloSchema,
   robotCommandSchema,
-  sensorSnapshotSchema,
+  hardwareStatusSchema,
   robotEventSchema,
   heartbeatSchema,
   errorSchema,

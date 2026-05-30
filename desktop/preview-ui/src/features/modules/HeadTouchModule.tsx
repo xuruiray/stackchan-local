@@ -1,5 +1,5 @@
 import { ModulePage } from "../../components/ModulePage";
-import { boolText, dash, joinValues } from "../../model/format";
+import { boolText, dash } from "../../model/format";
 import { deviceUpdated, inter, ModuleProps } from "./module-utils";
 
 export function HeadTouchModule({ snapshot }: ModuleProps): JSX.Element {
@@ -12,8 +12,7 @@ export function HeadTouchModule({ snapshot }: ModuleProps): JSX.Element {
       updated={deviceUpdated(snapshot)}
       metrics={[
         { label: "Pressed", value: boolText(touch?.pressed) },
-        { label: "Gesture", value: dash(touch?.gesture) },
-        { label: "Zones", value: Array.isArray(touch?.zones) ? joinValues(touch.zones.map(String)) : "-" }
+        { label: "Gesture", value: dash(touch?.gesture) }
       ]}
     />
   );

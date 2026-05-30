@@ -41,10 +41,6 @@ export function latencyText(value: unknown): string {
   return value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(2)} s`;
 }
 
-export function hexAddress(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value) ? `0x${value.toString(16).padStart(2, "0")}` : "-";
-}
-
 export function joinValues(values: Array<string | undefined | null | false>): string {
   const parts = values.filter(Boolean);
   return parts.length ? parts.join(" / ") : "-";
@@ -52,12 +48,12 @@ export function joinValues(values: Array<string | undefined | null | false>): st
 
 export function availabilityText(value: unknown): string {
   if (!value || typeof value !== "object") return "-";
-  const item = value as { available?: boolean; reason?: string; driver?: string; address?: number };
+  const item = value as { available?: boolean; reason?: string };
   if (item.available === false) {
-    return joinValues(["unavailable", item.reason, item.driver, hexAddress(item.address) !== "-" && hexAddress(item.address)]);
+    return joinValues(["unavailable", item.reason]);
   }
   if (item.available === true) {
-    return joinValues(["available", item.driver, hexAddress(item.address) !== "-" && hexAddress(item.address)]);
+    return "available";
   }
   return "-";
 }

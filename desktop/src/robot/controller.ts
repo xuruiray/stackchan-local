@@ -232,7 +232,7 @@ export class RobotController {
   }
 
   telemetryConfig(
-    options: { sensorSnapshotHz?: 0 | 0.5 | 1 | 2; imuHz?: 0 | 1 | 2 | 4 | 10; includeI2cScan?: boolean; reason?: string },
+    options: { hardwareStatusHz?: 0 | 0.5 | 1 | 2; includeI2cScan?: boolean; reason?: string },
     dispatchOptions?: DispatchOptions
   ): Promise<RobotActionResult> {
     return this.dispatch({ kind: "telemetryConfig", ...options }, dispatchOptions);
@@ -456,8 +456,7 @@ function summarizeCommand(command: RobotCommand): Record<string, unknown> {
       };
     case "telemetryConfig":
       return {
-        sensorSnapshotHz: command.sensorSnapshotHz,
-        imuHz: command.imuHz,
+        hardwareStatusHz: command.hardwareStatusHz,
         includeI2cScan: command.includeI2cScan,
         reason: command.reason
       };

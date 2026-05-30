@@ -5,28 +5,62 @@ export function activeDevice(snapshot: PreviewSnapshot | null | undefined): Devi
   return snapshot?.devices?.find((device) => device.status === "online") ?? snapshot?.devices?.[0];
 }
 
-export function sensorSnapshot(snapshot: PreviewSnapshot | null | undefined) {
-  return activeDevice(snapshot)?.sensors.sensorSnapshot;
+export function hardwareStatus(snapshot: PreviewSnapshot | null | undefined) {
+  return activeDevice(snapshot)?.sensors.hardwareStatus;
+}
+
+export function bmi270(snapshot: PreviewSnapshot | null | undefined) {
+  return activeDevice(snapshot)?.sensors.bmi270;
+}
+
+export function proximity(snapshot: PreviewSnapshot | null | undefined) {
+  return activeDevice(snapshot)?.sensors.proximity;
+}
+
+export function ambientLight(snapshot: PreviewSnapshot | null | undefined) {
+  return activeDevice(snapshot)?.sensors.ambientLight;
+}
+
+export function nfcEvent(snapshot: PreviewSnapshot | null | undefined) {
+  return activeDevice(snapshot)?.sensors.nfc;
+}
+
+export function irEvent(snapshot: PreviewSnapshot | null | undefined) {
+  return activeDevice(snapshot)?.sensors.ir;
+}
+
+export function magnetometer(snapshot: PreviewSnapshot | null | undefined) {
+  return bmi270(snapshot)?.magnetometer;
 }
 
 export function peripherals(snapshot: PreviewSnapshot | null | undefined) {
-  return sensorSnapshot(snapshot)?.peripherals ?? {};
+  return hardwareStatus(snapshot)?.peripherals ?? {};
 }
 
 export function power(snapshot: PreviewSnapshot | null | undefined) {
-  return sensorSnapshot(snapshot)?.power ?? {};
+  return hardwareStatus(snapshot)?.power ?? {};
 }
 
 export function motion(snapshot: PreviewSnapshot | null | undefined) {
-  return sensorSnapshot(snapshot)?.motion ?? {};
+  const device = activeDevice(snapshot);
+  return {
+    ...(hardwareStatus(snapshot)?.motion ?? {}),
+    ...(device?.sensors.bmi270 ? { bmi270: device.sensors.bmi270 } : {})
+  };
 }
 
 export function interaction(snapshot: PreviewSnapshot | null | undefined) {
-  return sensorSnapshot(snapshot)?.interaction ?? {};
+  const touch = activeDevice(snapshot)?.sensors.touch;
+  const headTouchTelemetry = hardwareStatus(snapshot)?.peripherals?.headTouch;
+  const headTouchEvent = touch?.surface === "head" ? touch : undefined;
+  return {
+    screenTouch: touch?.surface === "screen" ? touch : undefined,
+    headTouch: headTouchTelemetry || headTouchEvent ? { ...(headTouchTelemetry ?? {}), ...(headTouchEvent ?? {}) } : undefined
+  };
 }
 
 export function network(snapshot: PreviewSnapshot | null | undefined) {
-  return sensorSnapshot(snapshot)?.network ?? {};
+  return hardwareStatus(snapshot)?.network ?? {};
 }
 
 export function availabilityOf(value: unknown): "available" | "unavailable" | "unknown" {

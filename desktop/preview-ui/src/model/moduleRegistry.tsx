@@ -5,7 +5,6 @@ import {
   Bluetooth,
   Camera,
   Cpu,
-  Gauge,
   Hand,
   Lightbulb,
   Logs,
@@ -34,7 +33,6 @@ import { CameraModule } from "../features/modules/CameraModule";
 import { DisplayModule } from "../features/modules/DisplayModule";
 import { HeadTouchModule } from "../features/modules/HeadTouchModule";
 import { ImuModule } from "../features/modules/ImuModule";
-import { Ina226Module } from "../features/modules/Ina226Module";
 import { IOExpanderModule } from "../features/modules/IOExpanderModule";
 import { IrModule } from "../features/modules/IrModule";
 import { Ltr553Module } from "../features/modules/Ltr553Module";
@@ -50,7 +48,18 @@ import { LogsDebug } from "../features/debug/LogsDebug";
 import { RawSnapshotDebug } from "../features/debug/RawSnapshotDebug";
 import { SystemDebug } from "../features/debug/SystemDebug";
 import type { PreviewSnapshot } from "../../../src/preview/public-types";
-import { availabilityOf, interaction, motion, network, peripherals, power } from "./snapshot";
+import {
+  ambientLight,
+  availabilityOf,
+  bmi270,
+  interaction,
+  magnetometer,
+  motion,
+  network,
+  peripherals,
+  power,
+  proximity
+} from "./snapshot";
 
 export type PageKind = "module" | "app" | "debug";
 
@@ -70,28 +79,27 @@ export type PageDefinition = {
 };
 
 export const pages: PageDefinition[] = [
-  modulePage("power", "Power", "AXP2101", Battery, PowerModule, (s) => (power(s).batteryLevel !== undefined ? "available" : "unknown")),
-  modulePage("ina226", "INA226", "Power monitor", Gauge, Ina226Module, (s) => availabilityOf(peripherals(s).powerMonitor)),
+  modulePage("power", "Power", "AXP2101 + INA226", Battery, PowerModule, (s) =>
+    power(s).batteryLevel !== undefined || peripherals(s).powerMonitor?.available === true ? "available" : "unknown"
+  ),
   modulePage("display", "Display", "ILI9342", Monitor, DisplayModule, () => "available"),
   modulePage("screen-touch", "Screen Touch", "FT6336", Hand, ScreenTouchModule, (s) => availabilityOf(interaction(s).screenTouch)),
   modulePage("head-touch", "Head Touch", "SI12T", Activity, HeadTouchModule, (s) => availabilityOf(interaction(s).headTouch)),
-  modulePage("imu", "IMU", "BMI270", Rotate3D, ImuModule, (s) => availabilityOf(motion(s).imu)),
-  modulePage("magnetometer", "Magnetometer", "BMM150", Magnet, MagnetometerModule, (s) =>
-    availabilityOf(peripherals(s).magnetometer)
-  ),
+  modulePage("imu", "IMU", "BMI270", Rotate3D, ImuModule, (s) => availabilityOf(bmi270(s))),
+  modulePage("magnetometer", "Magnetometer", "BMM150", Magnet, MagnetometerModule, (s) => availabilityOf(magnetometer(s))),
   modulePage("camera", "Camera", "GC0308", Camera, CameraModule, (s) => availabilityOf(peripherals(s).camera)),
   modulePage("servo", "Servo", "SCS bus", Move3D, ServoModule, (s) => availabilityOf(motion(s).servos)),
   modulePage("io-expander", "IO Expander", "AW9523 / PY32", Cpu, IOExpanderModule, (s) => availabilityOf(peripherals(s).ioExpander)),
   modulePage("rgb", "RGB LED", "body strip", Lightbulb, RgbModule, (s) => availabilityOf(peripherals(s).rgb)),
   modulePage("rtc", "RTC", "PCF8563", Settings2, RtcModule, (s) => availabilityOf(peripherals(s).rtc)),
   modulePage("ltr553", "ALS / Proximity", "LTR553", ScanLine, Ltr553Module, (s) =>
-    availabilityOf(peripherals(s).proximity ?? peripherals(s).ambientLight)
+    availabilityOf(proximity(s) ?? ambientLight(s))
   ),
   modulePage("nfc", "NFC", "probe", Radio, NfcModule, (s) => availabilityOf(peripherals(s).nfc)),
   modulePage("ir", "IR", "TX/RX", Zap, IrModule, (s) => availabilityOf(peripherals(s).ir)),
   modulePage("audio", "Audio", "ES7210 / AW88298", Mic, AudioModule, (s) => availabilityOf(peripherals(s).mic)),
   modulePage("network", "Wi-Fi / BLE", "ESP32-S3", Wifi, NetworkModule, (s) =>
-    network(s).wifi?.status === "connected" ? "available" : availabilityOf(network(s).ble)
+    network(s).wifi?.status === "connected" || network(s).ble?.connected ? "available" : "unknown"
   ),
   appPage("codex-announcer", "Codex 播报", "TTS + light alert", Volume2, CodexAnnouncerApp, (s) =>
     s?.completionTts?.enabled ? "available" : "warning"
@@ -148,6 +156,9 @@ function debugPage(
 }
 
 export function canonicalPageId(id: string): string {
+  if (id === "ina226") {
+    return "power";
+  }
   if (id === "io") {
     return "io-expander";
   }

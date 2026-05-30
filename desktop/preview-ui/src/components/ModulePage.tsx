@@ -44,7 +44,7 @@ export function ModulePage({
         <div className="button-row">
           <Button
             disabled={command.pending}
-            onClick={() => void command.run(() => telemetryConfig({ sensorSnapshotHz: 2, imuHz: 10, reason: "preview-ui" }))}
+            onClick={() => void command.run(() => telemetryConfig({ hardwareStatusHz: 2, reason: "preview-ui" }))}
           >
             Refresh telemetry
           </Button>
@@ -52,7 +52,7 @@ export function ModulePage({
             disabled={command.pending}
             onClick={() =>
               void command.run(() =>
-                telemetryConfig({ sensorSnapshotHz: 1, imuHz: 10, includeI2cScan: true, reason: "preview-ui i2c scan" })
+                telemetryConfig({ hardwareStatusHz: 1, includeI2cScan: true, reason: "preview-ui i2c scan" })
               )
             }
           >

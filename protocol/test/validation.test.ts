@@ -105,8 +105,7 @@ describe("protocol validation", () => {
         commandId: "cmd-telemetry",
         command: {
           kind: "telemetryConfig",
-          sensorSnapshotHz: 0.5,
-          imuHz: 2,
+          hardwareStatusHz: 0.5,
           includeI2cScan: false,
           reason: "adaptive backpressure"
         }
@@ -475,7 +474,7 @@ describe("protocol validation", () => {
         pressed: true
       },
       {
-        kind: "imu",
+        kind: "bmi270",
         motion: "none",
         x: -0.12,
         y: 0.05,
@@ -483,18 +482,49 @@ describe("protocol validation", () => {
         gyroX: 0.4,
         gyroY: -1.1,
         gyroZ: 2.6,
+        uptimeMs: 123456,
+        magnetometer: {
+          available: true,
+          x: 0.1,
+          y: -0.2,
+          z: 0.3,
+          rawX: 12,
+          rawY: -24,
+          rawZ: 36,
+          headingDeg: 296.6
+        }
+      },
+      {
+        kind: "proximity",
+        available: true,
+        value: 42,
+        raw: 42,
         uptimeMs: 123456
       },
       {
-        kind: "battery",
-        level: 82,
-        charging: true
+        kind: "ambientLight",
+        available: true,
+        lux: 18.5,
+        raw: 320,
+        uptimeMs: 123456
       },
       {
-        kind: "wifi",
-        status: "connected",
-        rssi: -54,
-        ssid: "local-lab"
+        kind: "nfc",
+        action: "tagDetected",
+        uptimeMs: 123456,
+        uid: "04A1B2C3D4",
+        tech: "iso14443a",
+        atqa: "0044",
+        sak: 8
+      },
+      {
+        kind: "ir",
+        action: "received",
+        uptimeMs: 123456,
+        protocol: "nec",
+        address: "00FF",
+        command: "18",
+        repeat: false
       }
     ]) {
       expect(
@@ -509,21 +539,20 @@ describe("protocol validation", () => {
     }
   });
 
-  it("accepts a low-frequency hardware sensor snapshot event", () => {
+  it("accepts a low-frequency hardware status event", () => {
     const message = validator.parseMessage({
       type: "robot.event",
-      eventId: "evt-sensor-snapshot",
+      eventId: "evt-hardware-status",
       deviceId: "stackchan-001",
       timestamp: new Date().toISOString(),
       event: {
-        kind: "sensorSnapshot",
+        kind: "hardwareStatus",
         uptimeMs: 123456,
         power: {
           batteryLevel: 82,
           charging: true,
           backlight: 75,
-          speakerVolume: 80,
-          servoPower: true
+          speakerVolume: 80
         },
         network: {
           wifi: {
@@ -532,89 +561,29 @@ describe("protocol validation", () => {
             ssid: "local-lab"
           },
           ble: {
-            available: true,
-            connected: false,
-            provisioning: true
+            connected: false
           }
         },
         motion: {
-          imu: {
-            available: true,
-            motion: "none",
-            x: -0.12,
-            y: 0.05,
-            z: 9.81,
-            gyroX: 0.4,
-            gyroY: -1.1,
-            gyroZ: 2.6,
-            uptimeMs: 123450
-          },
           servos: {
-            available: true,
-            yaw: {
-              angle: 4.5,
-              moving: false,
-              torque: true
-            },
-            pitch: {
-              angle: 31.2,
-              moving: true,
-              torque: true
-            },
             power: true
           }
         },
-        interaction: {
-          screenTouch: {
-            available: true,
-            pressed: true,
-            x: 128,
-            y: 64,
-            points: 1
-          },
-          headTouch: {
-            available: true,
-            gesture: "press",
-            pressed: true,
-            zones: [0, 2]
-          },
-          wakeWord: {
-            available: true,
-            text: "Hi, Stack Chan"
-          }
-        },
         peripherals: {
+          headTouch: {
+            available: true
+          },
           ioExpander: {
             available: true
           },
           camera: {
             available: true,
             streaming: true,
-            width: 320,
-            height: 240,
-            fps: 4,
-            requestedWidth: 640,
-            requestedHeight: 480,
-            actualWidth: 320,
-            actualHeight: 240,
-            quality: 30,
-            transport: "binary",
-            adaptiveLevel: 1,
-            lastCaptureMs: 91,
-            lastEncodeMs: 11,
-            lastSendMs: 3,
-            lastTotalMs: 106,
-            lastFrameIntervalMs: 112,
-            lastJpegBytes: 3142,
-            fallbackReason: "runtime_resolution_change_not_supported"
+            adaptiveLevel: 1
           },
           rgb: {
             available: true,
-            count: 12,
-            enabled: true,
-            color: "#43D5B0",
-            brightness: 0.8,
-            driver: "neon-light"
+            enabled: true
           },
           rtc: {
             available: true,
@@ -622,15 +591,10 @@ describe("protocol validation", () => {
             timezone: "GMT0"
           },
           nfc: {
-            available: true,
-            driver: "st25r3916-probe",
-            address: 0x50,
-            status: "chip_detected"
+            available: true
           },
           powerMonitor: {
             available: true,
-            driver: "ina226",
-            address: 0x41,
             busVoltage: 3.98,
             shuntVoltage: 0.0012,
             current: 0.12,
@@ -649,45 +613,10 @@ describe("protocol validation", () => {
             }
           ],
           ir: {
-            available: true,
-            driver: "gpio-ir-basic",
-            txPin: 5,
-            rxPin: 10
-          },
-          proximity: {
-            available: true,
-            value: 42,
-            raw: 42,
-            driver: "ltr553"
-          },
-          ambientLight: {
-            available: true,
-            lux: 18.5,
-            raw: 320,
-            driver: "ltr553"
-          },
-          magnetometer: {
-            available: true,
-            x: 0.1,
-            y: -0.2,
-            z: 0.3,
-            rawX: 12,
-            rawY: -24,
-            rawZ: 36,
-            headingDeg: 296.6,
-            driver: "bmi270-aux-bmm150"
+            available: true
           },
           mic: {
-            available: true,
-            channels: 2,
-            mode: "mono_opus",
-            localization: "abandoned",
-            level: 0.42,
-            rms: 0.08,
-            peak: 0.31,
-            dbfs: -21.4,
-            updatedAt: 123455,
-            driver: "es7210-level-meter"
+            available: true
           }
         }
       }
@@ -696,15 +625,30 @@ describe("protocol validation", () => {
     expect(message.type).toBe("robot.event");
   });
 
-  it("rejects invalid hardware sensor snapshots", () => {
+  it("rejects invalid hardware status events", () => {
+    for (const event of [
+      { kind: "battery", level: 82, charging: true },
+      { kind: "wifi", status: "connected", rssi: -54, ssid: "local-lab" }
+    ]) {
+      expect(() =>
+        validator.parseMessage({
+          type: "robot.event",
+          eventId: `evt-obsolete-${event.kind}`,
+          deviceId: "stackchan-001",
+          timestamp: new Date().toISOString(),
+          event
+        })
+      ).toThrow("Invalid local protocol message");
+    }
+
     expect(() =>
       validator.parseMessage({
         type: "robot.event",
-        eventId: "evt-bad-sensor-snapshot",
+        eventId: "evt-bad-hardware-status",
         deviceId: "stackchan-001",
         timestamp: new Date().toISOString(),
         event: {
-          kind: "sensorSnapshot",
+          kind: "hardwareStatus",
           uptimeMs: 123456,
           power: {
             batteryLevel: 180
@@ -716,17 +660,112 @@ describe("protocol validation", () => {
     expect(() =>
       validator.parseMessage({
         type: "robot.event",
-        eventId: "evt-bad-sensor-peripheral",
+        eventId: "evt-obsolete-sensor-interaction",
         deviceId: "stackchan-001",
         timestamp: new Date().toISOString(),
         event: {
-          kind: "sensorSnapshot",
+          kind: "hardwareStatus",
+          uptimeMs: 123456,
+          interaction: {
+            wakeWord: {
+              available: true,
+              text: "Hi, Stack Chan"
+            }
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.event",
+        eventId: "evt-obsolete-static-sensor-fields",
+        deviceId: "stackchan-001",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "hardwareStatus",
+          uptimeMs: 123456,
+          network: {
+            ble: {
+              available: true,
+              provisioning: true
+            }
+          },
+          motion: {
+            servos: {
+              available: true
+            }
+          },
+          peripherals: {
+            rgb: {
+              available: true,
+              driver: "neon-light"
+            }
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.event",
+        eventId: "evt-obsolete-hardware-status-detail-fields",
+        deviceId: "stackchan-001",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "hardwareStatus",
+          uptimeMs: 123456,
+          power: {
+            servoPower: true
+          },
+          motion: {
+            servos: {
+              yaw: {
+                angle: 4.5,
+                moving: false,
+                torque: true
+              }
+            }
+          },
+          peripherals: {
+            headTouch: {
+              available: true,
+              zones: [0]
+            },
+            camera: {
+              available: true,
+              width: 320,
+              quality: 30,
+              lastCaptureMs: 91,
+              fallbackReason: "runtime_resolution_change_not_supported"
+            },
+            rgb: {
+              available: true,
+              color: "#43D5B0",
+              brightness: 0.8
+            },
+            nfc: {
+              available: true,
+              status: "chip_detected"
+            }
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.event",
+        eventId: "evt-bad-hardware-peripheral",
+        deviceId: "stackchan-001",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "hardwareStatus",
           uptimeMs: 123456,
           peripherals: {
             mic: {
               available: true,
-              channels: 4,
-              mode: "mono_opus"
+              channels: 4
             }
           }
         }
@@ -740,14 +779,32 @@ describe("protocol validation", () => {
         deviceId: "stackchan-001",
         timestamp: new Date().toISOString(),
         event: {
-          kind: "sensorSnapshot",
+          kind: "hardwareStatus",
           uptimeMs: 123456,
           peripherals: {
             mic: {
               available: true,
               channels: 1,
-              mode: "mono_opus",
               level: 1.5
+            }
+          }
+        }
+      })
+    ).toThrow("Invalid local protocol message");
+
+    expect(() =>
+      validator.parseMessage({
+        type: "robot.event",
+        eventId: "evt-obsolete-hardware-high-rate-fields",
+        deviceId: "stackchan-001",
+        timestamp: new Date().toISOString(),
+        event: {
+          kind: "hardwareStatus",
+          uptimeMs: 123456,
+          peripherals: {
+            proximity: {
+              available: true,
+              value: 42
             }
           }
         }
@@ -761,7 +818,7 @@ describe("protocol validation", () => {
         deviceId: "stackchan-001",
         timestamp: new Date().toISOString(),
         event: {
-          kind: "sensorSnapshot",
+          kind: "hardwareStatus",
           uptimeMs: 123456,
           peripherals: {
             i2cScan: [
@@ -838,8 +895,8 @@ describe("protocol validation", () => {
         commandId: "cmd-bad-telemetry-rate",
         command: {
           kind: "telemetryConfig",
-          sensorSnapshotHz: 3,
-          imuHz: 2
+          hardwareStatusHz: 3,
+          includeI2cScan: false
         }
       })
     ).toThrow("Invalid local protocol message");

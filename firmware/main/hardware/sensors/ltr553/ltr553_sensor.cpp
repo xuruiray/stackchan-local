@@ -49,8 +49,6 @@ void Ltr553::init(LocalPeripheralProbeSnapshot& snapshot)
         dev_ = nullptr;
     }
 
-    snapshot.proximityDriver = "ltr553";
-    snapshot.ambientLightDriver = "ltr553";
     snapshot.proximityReason = "not_detected_i2c_0x23";
     snapshot.ambientLightReason = "not_detected_i2c_0x23";
 
