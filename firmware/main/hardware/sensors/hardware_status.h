@@ -18,6 +18,13 @@ enum class ImuMotionEvent {
     PickUp,
 };
 
+enum class ImuAttitudeQuality {
+    Unavailable = 0,
+    GyroAccel,
+    GyroAccelMag,
+    MagnetometerRejected,
+};
+
 enum class LocalCompanionState {
     Idle = 0,
     Connecting,
@@ -81,6 +88,17 @@ struct LocalImuSnapshot {
     int16_t magnetometerRawY    = 0;
     int16_t magnetometerRawZ    = 0;
     float magnetometerHeadingDeg = 0.0f;
+    bool attitudeAvailable      = false;
+    float attitudeQw            = 1.0f;
+    float attitudeQx            = 0.0f;
+    float attitudeQy            = 0.0f;
+    float attitudeQz            = 0.0f;
+    float attitudePitchDeg      = 0.0f;
+    float attitudeRollDeg       = 0.0f;
+    float attitudeYawDeg        = 0.0f;
+    bool attitudeMagnetometerUsed = false;
+    ImuAttitudeQuality attitudeQuality = ImuAttitudeQuality::Unavailable;
+    float attitudeSampleHz      = 0.0f;
     ImuMotionEvent motion       = ImuMotionEvent::None;
     uint32_t updatedAt          = 0;
 };

@@ -6,7 +6,6 @@ import {
   bmi270,
   irEvent,
   interaction,
-  magnetometer,
   motion,
   network,
   nfcEvent,
@@ -52,10 +51,6 @@ export function mot(snapshot: PreviewSnapshot | null): AnyRecord {
 
 export function bmi(snapshot: PreviewSnapshot | null): AnyRecord {
   return record(bmi270(snapshot));
-}
-
-export function mag(snapshot: PreviewSnapshot | null): AnyRecord {
-  return record(magnetometer(snapshot));
 }
 
 export function prox(snapshot: PreviewSnapshot | null): AnyRecord {

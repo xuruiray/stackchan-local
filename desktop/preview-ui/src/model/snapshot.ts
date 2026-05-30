@@ -29,10 +29,6 @@ export function irEvent(snapshot: PreviewSnapshot | null | undefined) {
   return activeDevice(snapshot)?.sensors.ir;
 }
 
-export function magnetometer(snapshot: PreviewSnapshot | null | undefined) {
-  return bmi270(snapshot)?.magnetometer;
-}
-
 export function peripherals(snapshot: PreviewSnapshot | null | undefined) {
   return hardwareStatus(snapshot)?.peripherals ?? {};
 }

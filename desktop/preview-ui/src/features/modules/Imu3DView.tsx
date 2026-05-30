@@ -1,16 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { Crosshair } from "lucide-react";
 import * as THREE from "three";
 
 import { numberText } from "../../model/format";
 import type { AnyRecord } from "./module-utils";
 
 type PoseReadout = {
-  hasAccel: boolean;
+  hasPose: boolean;
   pitchRad?: number;
   rollRad?: number;
   yawRad: number;
+  quaternion?: THREE.Quaternion;
   accelMagnitude?: number;
   gyroMagnitude?: number;
+  quality?: string;
+  source: "fused" | "raw";
 };
 
 type SceneHandle = {
@@ -23,6 +27,8 @@ type SceneHandle = {
 
 const DEG_TO_RAD = Math.PI / 180;
 const RAD_TO_DEG = 180 / Math.PI;
+const FUSED_SMOOTHING_HZ = 18;
+const RAW_SMOOTHING_HZ = 24;
 
 function finiteNumber(value: unknown): number | undefined {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -31,6 +37,42 @@ function finiteNumber(value: unknown): number | undefined {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function nestedRecord(value: unknown): AnyRecord | undefined {
+  return value && typeof value === "object" ? (value as AnyRecord) : undefined;
+}
+
+function displayQuaternion(pitchRad: number | undefined, rollRad: number | undefined, yawRad: number): THREE.Quaternion {
+  return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitchRad ?? 0, yawRad, -(rollRad ?? 0), "YXZ"));
+}
+
+function poseFromDisplayQuaternion(pose: PoseReadout, quaternion: THREE.Quaternion): PoseReadout {
+  const euler = new THREE.Euler().setFromQuaternion(quaternion, "YXZ");
+  return {
+    ...pose,
+    pitchRad: euler.x,
+    rollRad: -euler.z,
+    yawRad: euler.y,
+    quaternion
+  };
+}
+
+function relativePose(pose: PoseReadout, baselineRef: MutableRefObject<THREE.Quaternion | null>, baselineSourceRef: MutableRefObject<string | null>): PoseReadout {
+  if (!pose.quaternion) {
+    baselineRef.current = null;
+    baselineSourceRef.current = null;
+    return pose;
+  }
+
+  if (!baselineRef.current || baselineSourceRef.current !== pose.source) {
+    baselineRef.current = pose.quaternion.clone();
+    baselineSourceRef.current = pose.source;
+  }
+
+  const baselineInverse = baselineRef.current.clone().invert();
+  const relativeQuaternion = pose.quaternion.clone().multiply(baselineInverse).normalize();
+  return poseFromDisplayQuaternion(pose, relativeQuaternion);
 }
 
 function poseFromImu(imu: AnyRecord, yawRad: number): PoseReadout {
@@ -43,14 +85,42 @@ function poseFromImu(imu: AnyRecord, yawRad: number): PoseReadout {
   const hasAccel = x !== undefined && y !== undefined && z !== undefined;
   const accelMagnitude = hasAccel ? Math.sqrt(x ** 2 + y ** 2 + z ** 2) : undefined;
   const hasStableAccel = hasAccel && accelMagnitude !== undefined && accelMagnitude > 0.0001;
+  const gyroMagnitude =
+    gyroX !== undefined && gyroY !== undefined && gyroZ !== undefined ? Math.sqrt(gyroX ** 2 + gyroY ** 2 + gyroZ ** 2) : undefined;
+  const attitude = nestedRecord(imu.attitude);
+  if (attitude && attitude.available !== false) {
+    const pitchDeg = finiteNumber(attitude.pitchDeg);
+    const rollDeg = finiteNumber(attitude.rollDeg);
+    const yawDeg = finiteNumber(attitude.yawDeg);
+    if (pitchDeg !== undefined || rollDeg !== undefined || yawDeg !== undefined) {
+      const pitchRad = pitchDeg === undefined ? undefined : pitchDeg * DEG_TO_RAD;
+      const rollRad = rollDeg === undefined ? undefined : rollDeg * DEG_TO_RAD;
+      const fusedYawRad = yawDeg === undefined ? yawRad : yawDeg * DEG_TO_RAD;
+      return {
+        hasPose: true,
+        pitchRad,
+        rollRad,
+        yawRad: fusedYawRad,
+        quaternion: displayQuaternion(pitchRad, rollRad, fusedYawRad),
+        accelMagnitude,
+        gyroMagnitude,
+        quality: typeof attitude.quality === "string" ? attitude.quality : undefined,
+        source: "fused"
+      };
+    }
+  }
+
+  const pitchRad = hasStableAccel ? Math.atan2(-x, Math.sqrt(y ** 2 + z ** 2)) : undefined;
+  const rollRad = hasStableAccel ? Math.atan2(y, z) : undefined;
   return {
-    hasAccel: hasStableAccel,
-    pitchRad: hasStableAccel ? Math.atan2(-x, Math.sqrt(y ** 2 + z ** 2)) : undefined,
-    rollRad: hasStableAccel ? Math.atan2(y, z) : undefined,
+    hasPose: hasStableAccel,
+    pitchRad,
+    rollRad,
     yawRad,
+    quaternion: hasStableAccel ? displayQuaternion(pitchRad, rollRad, yawRad) : undefined,
     accelMagnitude,
-    gyroMagnitude:
-      gyroX !== undefined && gyroY !== undefined && gyroZ !== undefined ? Math.sqrt(gyroX ** 2 + gyroY ** 2 + gyroZ ** 2) : undefined
+    gyroMagnitude,
+    source: "raw"
   };
 }
 
@@ -100,20 +170,20 @@ function createScene(container: HTMLDivElement): SceneHandle {
   scene.background = new THREE.Color(0x101418);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.set(3.1, 2.4, 3.3);
+  camera.position.set(0, 0, 5.1);
   camera.lookAt(0, 0, 0);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   container.appendChild(renderer.domElement);
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.58));
   const keyLight = new THREE.DirectionalLight(0xffffff, 1.25);
-  keyLight.position.set(2.8, 4, 3);
+  keyLight.position.set(0, 2.6, 4.2);
   scene.add(keyLight);
   const rimLight = new THREE.DirectionalLight(0x69b7ff, 0.55);
-  rimLight.position.set(-3, 2, -2);
+  rimLight.position.set(-3, 2, 2);
   scene.add(rimLight);
 
   const cube = createCube();
@@ -131,12 +201,22 @@ export function Imu3DView({ imu }: { imu: AnyRecord }): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imuRef = useRef(imu);
   const yawRef = useRef(0);
+  const baselineRef = useRef<THREE.Quaternion | null>(null);
+  const baselineSourceRef = useRef<string | null>(null);
+  const visualQuaternionRef = useRef(new THREE.Quaternion());
   const [readout, setReadout] = useState<PoseReadout>(() => poseFromImu(imu, 0));
   const [webglError, setWebglError] = useState<string | null>(null);
 
   useEffect(() => {
     imuRef.current = imu;
   }, [imu]);
+
+  const resetBaseline = () => {
+    baselineRef.current = null;
+    baselineSourceRef.current = null;
+    yawRef.current = 0;
+    visualQuaternionRef.current.identity();
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -167,8 +247,20 @@ export function Imu3DView({ imu }: { imu: AnyRecord }): JSX.Element {
       const gyroZ = finiteNumber(imuRef.current.gyroZ) ?? 0;
       yawRef.current += gyroZ * DEG_TO_RAD * dtSeconds;
 
-      const pose = poseFromImu(imuRef.current, yawRef.current);
-      sceneHandle.cube.rotation.set(pose.pitchRad ?? 0, pose.yawRad, -(pose.rollRad ?? 0), "YXZ");
+      const pose = relativePose(poseFromImu(imuRef.current, yawRef.current), baselineRef, baselineSourceRef);
+      if (pose.quaternion) {
+        const visual = visualQuaternionRef.current;
+        const smoothingHz = pose.source === "fused" ? FUSED_SMOOTHING_HZ : RAW_SMOOTHING_HZ;
+        const alpha = clamp(1 - Math.exp(-smoothingHz * dtSeconds), 0, 1);
+        if (visual.angleTo(pose.quaternion) > 1.4) {
+          visual.copy(pose.quaternion);
+        } else {
+          visual.slerp(pose.quaternion, alpha);
+        }
+        sceneHandle.cube.quaternion.copy(visual);
+      } else {
+        sceneHandle.cube.rotation.set(pose.pitchRad ?? 0, pose.yawRad, -(pose.rollRad ?? 0), "YXZ");
+      }
       sceneHandle.renderer.render(sceneHandle.scene, sceneHandle.camera);
 
       if (nowMs - lastReadoutMs > 160) {
@@ -194,7 +286,12 @@ export function Imu3DView({ imu }: { imu: AnyRecord }): JSX.Element {
     <section className="panel-block imu-3d-panel">
       <div className="imu-3d-heading">
         <h3>BMI270 3D</h3>
-        <span>{readout.hasAccel ? "Live attitude" : "Waiting for accel data"}</span>
+        <div className="imu-3d-heading-actions">
+          <span>{readout.hasPose ? (readout.source === "fused" ? "Fused attitude" : "Live attitude") : "Waiting for accel data"}</span>
+          <button className="icon-button" type="button" title="Set baseline" aria-label="Set BMI270 3D baseline" onClick={resetBaseline}>
+            <Crosshair size={14} strokeWidth={2} />
+          </button>
+        </div>
       </div>
       <div className="imu-3d-layout">
         <div className="imu-3d-canvas" ref={containerRef} aria-label="BMI270 3D attitude view">
@@ -212,6 +309,10 @@ export function Imu3DView({ imu }: { imu: AnyRecord }): JSX.Element {
           <span>
             <small>Yaw</small>
             <strong>{numberText(readout.yawRad * RAD_TO_DEG, 1, " deg")}</strong>
+          </span>
+          <span>
+            <small>Quality</small>
+            <strong>{readout.quality ?? readout.source}</strong>
           </span>
           <span>
             <small>Accel</small>

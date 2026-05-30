@@ -8,7 +8,6 @@ import {
   Hand,
   Lightbulb,
   Logs,
-  Magnet,
   Mic,
   Monitor,
   Move3D,
@@ -36,7 +35,6 @@ import { ImuModule } from "../features/modules/ImuModule";
 import { IOExpanderModule } from "../features/modules/IOExpanderModule";
 import { IrModule } from "../features/modules/IrModule";
 import { Ltr553Module } from "../features/modules/Ltr553Module";
-import { MagnetometerModule } from "../features/modules/MagnetometerModule";
 import { NetworkModule } from "../features/modules/NetworkModule";
 import { NfcModule } from "../features/modules/NfcModule";
 import { PowerModule } from "../features/modules/PowerModule";
@@ -53,7 +51,6 @@ import {
   availabilityOf,
   bmi270,
   interaction,
-  magnetometer,
   motion,
   network,
   peripherals,
@@ -86,7 +83,6 @@ export const pages: PageDefinition[] = [
   modulePage("screen-touch", "Screen Touch", "FT6336", Hand, ScreenTouchModule, (s) => availabilityOf(interaction(s).screenTouch)),
   modulePage("head-touch", "Head Touch", "SI12T", Activity, HeadTouchModule, (s) => availabilityOf(interaction(s).headTouch)),
   modulePage("imu", "IMU", "BMI270", Rotate3D, ImuModule, (s) => availabilityOf(bmi270(s))),
-  modulePage("magnetometer", "Magnetometer", "BMM150", Magnet, MagnetometerModule, (s) => availabilityOf(magnetometer(s))),
   modulePage("camera", "Camera", "GC0308", Camera, CameraModule, (s) => availabilityOf(peripherals(s).camera)),
   modulePage("servo", "Servo", "SCS bus", Move3D, ServoModule, (s) => availabilityOf(motion(s).servos)),
   modulePage("io-expander", "IO Expander", "AW9523 / PY32", Cpu, IOExpanderModule, (s) => availabilityOf(peripherals(s).ioExpander)),

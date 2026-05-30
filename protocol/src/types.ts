@@ -318,6 +318,21 @@ export type RobotEvent =
       gyroY?: number;
       gyroZ?: number;
       uptimeMs?: number;
+      attitude?: {
+        available: boolean;
+        quaternion?: {
+          w: number;
+          x: number;
+          y: number;
+          z: number;
+        };
+        pitchDeg?: number;
+        rollDeg?: number;
+        yawDeg?: number;
+        quality?: "unavailable" | "gyroAccel" | "gyroAccelMag" | "magnetometerRejected";
+        magnetometerUsed?: boolean;
+        sampleHz?: number;
+      };
       magnetometer?: {
         available: boolean;
         x?: number;

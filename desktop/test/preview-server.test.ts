@@ -196,6 +196,19 @@ class FakeDeviceRegistry {
             x: 0.1,
             y: -0.2,
             z: 9.7,
+            gyroX: 0.01,
+            gyroY: -0.02,
+            gyroZ: 0.03,
+            attitude: {
+              available: true,
+              quaternion: { w: 0.99, x: 0.01, y: -0.02, z: 0.03 },
+              pitchDeg: -1.2,
+              rollDeg: 2.4,
+              yawDeg: 91.5,
+              quality: "gyroAccelMag",
+              magnetometerUsed: true,
+              sampleHz: 100
+            },
             magnetometer: { available: true, x: 0.1, y: -0.2, z: 0.3, rawX: 12, rawY: -24, rawZ: 36 },
             updatedAt: this.lastSeenAt,
             receivedAt: this.lastSeenAt,
@@ -253,20 +266,52 @@ class FakeDeviceRegistry {
     ];
   }
 
-  emitHardwareStatusBattery(level: number): void {
-    this.lastSeenAt = new Date("2026-05-18T12:00:01.000Z").toISOString();
+  emitHardwareStatusBattery(level: number, timestamp = new Date("2026-05-18T12:00:01.000Z").toISOString()): void {
+    this.lastSeenAt = timestamp;
     for (const listener of this.listeners) {
       listener({
         type: "robot.event",
         eventId: `hardware-status-${level}`,
         deviceId: "stackchan-test",
-        timestamp: this.lastSeenAt,
+        timestamp,
         event: {
           kind: "hardwareStatus",
           uptimeMs: 13_000,
           power: {
             batteryLevel: level,
             charging: false
+          }
+        }
+      });
+    }
+  }
+
+  emitBmi270(timestamp = new Date("2026-05-18T12:00:01.100Z").toISOString()): void {
+    this.lastSeenAt = timestamp;
+    for (const listener of this.listeners) {
+      listener({
+        type: "robot.event",
+        eventId: `bmi270-${timestamp}`,
+        deviceId: "stackchan-test",
+        timestamp,
+        event: {
+          kind: "bmi270",
+          motion: "none",
+          x: 0.2,
+          y: -0.1,
+          z: 9.8,
+          gyroX: 0.02,
+          gyroY: -0.01,
+          gyroZ: 0.04,
+          attitude: {
+            available: true,
+            quaternion: { w: 0.99, x: 0.01, y: -0.02, z: 0.03 },
+            pitchDeg: -1.1,
+            rollDeg: 2.2,
+            yawDeg: 90.5,
+            quality: "gyroAccelMag",
+            magnetometerUsed: true,
+            sampleHz: 100
           }
         }
       });
@@ -679,5 +724,49 @@ describe("PreviewServer", () => {
     reader.cancel().catch(() => {});
 
     expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:01.000Z"');
+  });
+
+  it("lets high-rate device events preempt a pending low-rate snapshot broadcast", async () => {
+    const fakeVision = new FakeVisionTracking();
+    const registry = new FakeDeviceRegistry();
+    server = new PreviewServer(
+      { host: "127.0.0.1", port: 0 },
+      fakeVision as unknown as VisionTrackingService,
+      createLogger("error"),
+      { registry: registry as unknown as DeviceRegistry }
+    );
+    const port = await server.start();
+    const response = await fetch(`http://127.0.0.1:${port}/events`);
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let body = decoder.decode((await reader.read()).value);
+
+    registry.emitHardwareStatusBattery(86, "2026-05-18T12:00:01.000Z");
+    const firstDeadline = Date.now() + 1000;
+    while (!body.includes('"lastSeenAt":"2026-05-18T12:00:01.000Z"') && Date.now() < firstDeadline) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value);
+    }
+    expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:01.000Z"');
+
+    registry.emitHardwareStatusBattery(87, "2026-05-18T12:00:02.000Z");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const startedAt = Date.now();
+    registry.emitBmi270("2026-05-18T12:00:02.100Z");
+
+    const deadline = Date.now() + 1000;
+    while (!body.includes('"lastSeenAt":"2026-05-18T12:00:02.100Z"') && Date.now() < deadline) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value);
+    }
+    reader.cancel().catch(() => {});
+
+    expect(body).toContain('"lastSeenAt":"2026-05-18T12:00:02.100Z"');
+    expect(Date.now() - startedAt).toBeLessThan(250);
   });
 });

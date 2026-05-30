@@ -6,7 +6,7 @@
 
 | event.kind | 对应硬件/模块 | 功能 | 更新频率 |
 | --- | --- | --- | --- |
-| `bmi270` | BMI270 + BMM150 aux | 加速度、陀螺仪、运动状态、磁力计 | 固件固定 10 Hz |
+| `bmi270` | BMI270 + BMM150 aux | 加速度、陀螺仪、运动状态、磁力计、融合姿态 | 固件固定 10 Hz；固件内部姿态融合按 IMU 采样循环运行 |
 | `proximity` | LTR553 | 接近传感器读数 | 固件固定 10 Hz |
 | `ambientLight` | LTR553 | 环境光照读数 | 固件固定 10 Hz |
 | `touch` | FT6336 屏幕触摸、SI12T 头部触摸 | 触摸手势、按下状态、屏幕坐标/点数 | 屏幕触摸按变化推送，最高约 10 Hz；头部触摸按手势事件推送 |
@@ -49,14 +49,29 @@ type Bmi270Event = {
   gyroY?: number;
   gyroZ?: number;
   uptimeMs?: number;
+  attitude?: {
+    available: boolean;
+    quaternion?: {
+      w: number;
+      x: number;
+      y: number;
+      z: number;
+    };
+    pitchDeg?: number;
+    rollDeg?: number;
+    yawDeg?: number;
+    quality?: "unavailable" | "gyroAccel" | "gyroAccelMag" | "magnetometerRejected";
+    magnetometerUsed?: boolean;
+    sampleHz?: number;
+  };
   magnetometer?: {
     available: boolean;
-    x?: number;
-    y?: number;
-    z?: number;
-    rawX?: number;
-    rawY?: number;
-    rawZ?: number;
+    x?: number; // BMM150 trim 补偿后的 X 轴磁场，单位 uT
+    y?: number; // BMM150 trim 补偿后的 Y 轴磁场，单位 uT
+    z?: number; // BMM150 trim 补偿后的 Z 轴磁场，单位 uT
+    rawX?: number; // BMM150 原始 X 轴 ADC 解析值
+    rawY?: number; // BMM150 原始 Y 轴 ADC 解析值
+    rawZ?: number; // BMM150 原始 Z 轴 ADC 解析值
     headingDeg?: number;
     reason?: string;
   };
@@ -116,6 +131,8 @@ type IrEvent = {
   reason?: string;
 };
 ```
+
+`bmi270.attitude` 由固件端 Mahony 姿态融合产生：陀螺仪负责短期积分，加速度计约束重力方向，磁力计在磁场强度通过动态范围检查时参与 yaw 修正。磁力计不可用或被判定异常时，融合会退化为 `gyroAccel`，保留 pitch/roll 修正但 yaw 仍可能随时间漂移。UI 的 3D 视图优先使用 `attitude.quaternion`，没有该字段时才回退到浏览器端的加速度姿态和 `gyroZ` 积分。
 
 低频 `hardwareStatus` 当前格式：
 

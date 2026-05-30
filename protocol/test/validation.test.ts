@@ -483,6 +483,21 @@ describe("protocol validation", () => {
         gyroY: -1.1,
         gyroZ: 2.6,
         uptimeMs: 123456,
+        attitude: {
+          available: true,
+          quaternion: {
+            w: 0.99,
+            x: 0.01,
+            y: -0.02,
+            z: 0.03
+          },
+          pitchDeg: -1.2,
+          rollDeg: 2.4,
+          yawDeg: 296.6,
+          quality: "gyroAccelMag",
+          magnetometerUsed: true,
+          sampleHz: 100
+        },
         magnetometer: {
           available: true,
           x: 0.1,

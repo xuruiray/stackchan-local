@@ -17,8 +17,10 @@ import type {
 import type { AvatarExpressionPayload, CompletionTtsSnapshot, DebugSnapshot, PreviewSnapshot } from "./public-types.js";
 
 const VISION_SNAPSHOT_BROADCAST_MIN_MS = 200;
+const HIGH_RATE_DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 100;
 const DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 500;
 const FRAME_STREAM_MAX_BUFFER_BYTES = 512 * 1024;
+const HIGH_RATE_DEVICE_EVENT_KINDS = new Set(["bmi270", "proximity", "ambientLight", "touch"]);
 const previewUiDistDir = new URL("../../preview-ui/dist/", import.meta.url);
 const previewUiIndexFile = new URL("index.html", previewUiDistDir);
 
@@ -60,6 +62,7 @@ export class PreviewServer {
   private readonly rawFrameStreamClients = new Map<ServerResponse, FrameStreamClientState>();
   private readonly processedFrameStreamClients = new Map<ServerResponse, FrameStreamClientState>();
   private snapshotBroadcastTimer?: NodeJS.Timeout;
+  private snapshotBroadcastDueAt = 0;
   private lastSnapshotBroadcastAt = 0;
 
   constructor(
@@ -81,7 +84,11 @@ export class PreviewServer {
     });
     this.unsubscribeDevice = this.extras.registry?.onEvent((message) => {
       if (message.event.kind !== "cameraFrame") {
-        this.scheduleSnapshotBroadcast(DEVICE_SNAPSHOT_BROADCAST_MIN_MS);
+        this.scheduleSnapshotBroadcast(
+          HIGH_RATE_DEVICE_EVENT_KINDS.has(message.event.kind)
+            ? HIGH_RATE_DEVICE_SNAPSHOT_BROADCAST_MIN_MS
+            : DEVICE_SNAPSHOT_BROADCAST_MIN_MS
+        );
       }
     });
     this.unsubscribeLog = this.extras.debugLog?.onEntry((entry) => this.broadcastLog(entry));
@@ -107,6 +114,7 @@ export class PreviewServer {
       clearTimeout(this.snapshotBroadcastTimer);
       this.snapshotBroadcastTimer = undefined;
     }
+    this.snapshotBroadcastDueAt = 0;
 
     for (const client of this.snapshotClients) {
       client.end();
@@ -782,14 +790,24 @@ export class PreviewServer {
   }
 
   private scheduleSnapshotBroadcast(minIntervalMs: number): void {
-    if (this.snapshotClients.size === 0 || this.snapshotBroadcastTimer) {
+    if (this.snapshotClients.size === 0) {
       return;
     }
 
     const elapsed = Date.now() - this.lastSnapshotBroadcastAt;
     const delay = Math.max(0, minIntervalMs - elapsed);
+    const dueAt = Date.now() + delay;
+    if (this.snapshotBroadcastTimer) {
+      if (dueAt >= this.snapshotBroadcastDueAt) {
+        return;
+      }
+      clearTimeout(this.snapshotBroadcastTimer);
+      this.snapshotBroadcastTimer = undefined;
+    }
+    this.snapshotBroadcastDueAt = dueAt;
     this.snapshotBroadcastTimer = setTimeout(() => {
       this.snapshotBroadcastTimer = undefined;
+      this.snapshotBroadcastDueAt = 0;
       this.broadcastSnapshot();
     }, delay);
   }

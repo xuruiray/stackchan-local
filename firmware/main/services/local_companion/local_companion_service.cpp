@@ -1558,6 +1558,21 @@ private:
         doc["event"]["gyroY"]  = imu.gyroY;
         doc["event"]["gyroZ"]  = imu.gyroZ;
         doc["event"]["uptimeMs"] = imu.updatedAt;
+        auto attitude = doc["event"]["attitude"].to<ArduinoJson::JsonObject>();
+        attitude["available"] = imu.attitudeAvailable;
+        attitude["quality"] = attitude_quality_to_string(imu.attitudeQuality);
+        attitude["magnetometerUsed"] = imu.attitudeMagnetometerUsed;
+        attitude["sampleHz"] = imu.attitudeSampleHz;
+        if (imu.attitudeAvailable) {
+            auto quaternion = attitude["quaternion"].to<ArduinoJson::JsonObject>();
+            quaternion["w"] = imu.attitudeQw;
+            quaternion["x"] = imu.attitudeQx;
+            quaternion["y"] = imu.attitudeQy;
+            quaternion["z"] = imu.attitudeQz;
+            attitude["pitchDeg"] = imu.attitudePitchDeg;
+            attitude["rollDeg"] = imu.attitudeRollDeg;
+            attitude["yawDeg"] = imu.attitudeYawDeg;
+        }
 
         const auto& peripherals = cache.peripherals;
         const bool mag_available = imu.magnetometerAvailable || peripherals.magnetometerAvailable;

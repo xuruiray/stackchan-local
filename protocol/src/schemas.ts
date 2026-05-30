@@ -444,6 +444,32 @@ const magnetometerTelemetrySchema = {
   }
 } as const;
 
+const attitudeTelemetrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["available"],
+  properties: {
+    available: { type: "boolean" },
+    quaternion: {
+      type: "object",
+      additionalProperties: false,
+      required: ["w", "x", "y", "z"],
+      properties: {
+        w: { type: "number" },
+        x: { type: "number" },
+        y: { type: "number" },
+        z: { type: "number" }
+      }
+    },
+    pitchDeg: { type: "number", minimum: -180, maximum: 180 },
+    rollDeg: { type: "number", minimum: -180, maximum: 180 },
+    yawDeg: { type: "number", minimum: 0, maximum: 360 },
+    quality: { enum: ["unavailable", "gyroAccel", "gyroAccelMag", "magnetometerRejected"] },
+    magnetometerUsed: { type: "boolean" },
+    sampleHz: { type: "number", minimum: 0 }
+  }
+} as const;
+
 const proximityTelemetrySchema = {
   type: "object",
   additionalProperties: false,
@@ -723,6 +749,7 @@ export const robotEventSchema = {
             gyroY: { type: "number" },
             gyroZ: { type: "number" },
             uptimeMs: { type: "integer", minimum: 0 },
+            attitude: attitudeTelemetrySchema,
             magnetometer: magnetometerTelemetrySchema
           }
         },

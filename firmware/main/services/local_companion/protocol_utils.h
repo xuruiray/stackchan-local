@@ -18,6 +18,7 @@ const char* known_command_kind_or_unknown(const char* kind);
 std::string iso_now();
 LocalCompanionState mode_from_string(const char* mode);
 const char* motion_event_to_string(ImuMotionEvent motion);
+const char* attitude_quality_to_string(ImuAttitudeQuality quality);
 const char* head_touch_gesture_to_string(HeadPetGesture gesture);
 float clamp_float(float value, float min_value, float max_value);
 int clamp_int(int value, int min_value, int max_value);

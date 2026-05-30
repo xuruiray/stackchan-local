@@ -16,16 +16,16 @@ static const char* TAG = "BMI270";
 namespace {
 constexpr uint8_t kBmm150Address = 0x10;
 constexpr uint8_t kBmm150ChipId = 0x32;
-constexpr float kBmm150MagResolution = 10.0f * 4912.0f / 32760.0f;
 
-constexpr uint8_t CHIP_ID_ADDR = 0x00;
 constexpr uint8_t STATUS_ADDR = 0x03;
 constexpr uint8_t AUX_X_LSB_ADDR = 0x04;
+constexpr uint8_t AUX_CONF_ADDR = 0x44;
 constexpr uint8_t AUX_DEV_ID_ADDR = 0x4B;
 constexpr uint8_t AUX_IF_CONF_ADDR = 0x4C;
 constexpr uint8_t AUX_RD_ADDR = 0x4D;
 constexpr uint8_t AUX_WR_ADDR = 0x4E;
 constexpr uint8_t AUX_WR_DATA_ADDR = 0x4F;
+constexpr uint8_t AUX_IF_TRIM_ADDR = 0x68;
 constexpr uint8_t IF_CONF_ADDR = 0x6B;
 constexpr uint8_t PWR_CONF_ADDR = 0x7C;
 constexpr uint8_t PWR_CTRL_ADDR = 0x7D;
@@ -34,9 +34,108 @@ constexpr uint8_t BMM150_CHIP_ID = 0x40;
 constexpr uint8_t BMM150_DATA_X_LSB = 0x42;
 constexpr uint8_t BMM150_POWER_CONTROL = 0x4B;
 constexpr uint8_t BMM150_OP_MODE = 0x4C;
+constexpr uint8_t BMM150_AXES_ENABLE = 0x4E;
+constexpr uint8_t BMM150_REP_XY = 0x51;
+constexpr uint8_t BMM150_REP_Z = 0x52;
+constexpr uint8_t BMM150_DIG_X1 = 0x5D;
+constexpr uint8_t BMM150_DIG_Z4_LSB = 0x62;
+constexpr uint8_t BMM150_DIG_Z2_LSB = 0x68;
+
+constexpr uint8_t BMI2_AUX_ODR_100HZ_VALUE = 0x08;
+constexpr uint8_t BMI2_ASDA_PUPSEL_10K_VALUE = 0x02;
+constexpr uint8_t BMI2_AUX_AUTO_READ_8_BYTES = 0x4F;
+
+constexpr uint8_t BMM150_ODR_MASK = 0x38;
+constexpr uint8_t BMM150_ODR_POS = 3;
+constexpr uint8_t BMM150_OP_MODE_MASK = 0x06;
+constexpr uint8_t BMM150_OP_MODE_POS = 1;
+constexpr uint8_t BMM150_DATA_RATE_10HZ = 0x00;
+constexpr uint8_t BMM150_POWERMODE_NORMAL = 0x00;
+constexpr uint8_t BMM150_REPXY_REGULAR = 0x04;
+constexpr uint8_t BMM150_REPZ_REGULAR = 0x07;
+constexpr uint8_t BMM150_XYZ_CHANNEL_ENABLE = 0x00;
+
+constexpr int16_t BMM150_OVERFLOW_ADCVAL_XYAXES_FLIP = -4096;
+constexpr int16_t BMM150_OVERFLOW_ADCVAL_ZAXIS_HALL = -16384;
+
+struct Bmm150RawData {
+    int16_t x = 0;
+    int16_t y = 0;
+    int16_t z = 0;
+    uint16_t rhall = 0;
+};
+
+int16_t combine_i16(uint8_t lsb, uint8_t msb)
+{
+    return static_cast<int16_t>(static_cast<uint16_t>(lsb) | (static_cast<uint16_t>(msb) << 8));
+}
+
+int16_t parse_bmm150_signed_axis(uint8_t lsb, uint8_t msb, uint8_t lsb_mask, uint8_t lsb_shift,
+                                 int16_t msb_multiplier)
+{
+    const uint8_t low_bits = static_cast<uint8_t>((lsb & lsb_mask) >> lsb_shift);
+    const int16_t high_bits = static_cast<int16_t>(static_cast<int8_t>(msb)) * msb_multiplier;
+    return static_cast<int16_t>(high_bits | low_bits);
+}
+
+Bmm150RawData parse_bmm150_aux_data(const uint8_t aux_data[8])
+{
+    Bmm150RawData raw;
+    raw.x = parse_bmm150_signed_axis(aux_data[0], aux_data[1], 0xF8, 3, 32);
+    raw.y = parse_bmm150_signed_axis(aux_data[2], aux_data[3], 0xF8, 3, 32);
+    raw.z = parse_bmm150_signed_axis(aux_data[4], aux_data[5], 0xFE, 1, 128);
+    raw.rhall = static_cast<uint16_t>((static_cast<uint16_t>(aux_data[7]) << 6) | ((aux_data[6] & 0xFC) >> 2));
+    return raw;
+}
+
+float compensate_bmm150_x(int16_t mag_data_x, uint16_t rhall, const BMM150_TrimData& trim)
+{
+    if (mag_data_x == BMM150_OVERFLOW_ADCVAL_XYAXES_FLIP || rhall == 0 || trim.dig_xyz1 == 0) {
+        return 0.0f;
+    }
+
+    const float process_comp_x0 = static_cast<float>(trim.dig_xyz1) * 16384.0f / static_cast<float>(rhall);
+    const float retval = process_comp_x0 - 16384.0f;
+    const float process_comp_x1 = static_cast<float>(trim.dig_xy2) * (retval * retval / 268435456.0f);
+    const float process_comp_x2 = process_comp_x1 + retval * static_cast<float>(trim.dig_xy1) / 16384.0f;
+    const float process_comp_x3 = static_cast<float>(trim.dig_x2) + 160.0f;
+    const float process_comp_x4 = static_cast<float>(mag_data_x) * ((process_comp_x2 + 256.0f) * process_comp_x3);
+    return ((process_comp_x4 / 8192.0f) + (static_cast<float>(trim.dig_x1) * 8.0f)) / 16.0f;
+}
+
+float compensate_bmm150_y(int16_t mag_data_y, uint16_t rhall, const BMM150_TrimData& trim)
+{
+    if (mag_data_y == BMM150_OVERFLOW_ADCVAL_XYAXES_FLIP || rhall == 0 || trim.dig_xyz1 == 0) {
+        return 0.0f;
+    }
+
+    const float process_comp_y0 = static_cast<float>(trim.dig_xyz1) * 16384.0f / static_cast<float>(rhall);
+    const float retval = process_comp_y0 - 16384.0f;
+    const float process_comp_y1 = static_cast<float>(trim.dig_xy2) * (retval * retval / 268435456.0f);
+    const float process_comp_y2 = process_comp_y1 + retval * static_cast<float>(trim.dig_xy1) / 16384.0f;
+    const float process_comp_y3 = static_cast<float>(trim.dig_y2) + 160.0f;
+    const float process_comp_y4 = static_cast<float>(mag_data_y) * ((process_comp_y2 + 256.0f) * process_comp_y3);
+    return ((process_comp_y4 / 8192.0f) + (static_cast<float>(trim.dig_y1) * 8.0f)) / 16.0f;
+}
+
+float compensate_bmm150_z(int16_t mag_data_z, uint16_t rhall, const BMM150_TrimData& trim)
+{
+    if (mag_data_z == BMM150_OVERFLOW_ADCVAL_ZAXIS_HALL || trim.dig_z2 == 0 || trim.dig_z1 == 0 ||
+        trim.dig_xyz1 == 0 || rhall == 0) {
+        return 0.0f;
+    }
+
+    const float process_comp_z0 = static_cast<float>(mag_data_z) - static_cast<float>(trim.dig_z4);
+    const float process_comp_z1 = static_cast<float>(rhall) - static_cast<float>(trim.dig_xyz1);
+    const float process_comp_z2 = static_cast<float>(trim.dig_z3) * process_comp_z1;
+    const float process_comp_z3 = static_cast<float>(trim.dig_z1) * static_cast<float>(rhall) / 32768.0f;
+    const float process_comp_z4 = static_cast<float>(trim.dig_z2) + process_comp_z3;
+    const float process_comp_z5 = (process_comp_z0 * 131072.0f) - process_comp_z2;
+    return (process_comp_z5 / (process_comp_z4 * 4.0f)) / 16.0f;
+}
 }  // namespace
 
-BMI270::BMI270(i2c_master_bus_handle_t i2c_bus_handle, uint8_t addr) : _addr(addr), _initialized(false)
+BMI270::BMI270(i2c_master_bus_handle_t i2c_bus_handle, uint8_t addr) : _addr(addr), _initialized(false), _data{}
 {
     stackchan::hal::hardware::bus::I2cBusGuard guard;
     i2c_device_config_t dev_cfg = {
@@ -142,26 +241,103 @@ bool BMI270::auxReadRegister8(uint8_t reg_addr, uint8_t& value)
     return true;
 }
 
+bool BMI270::auxReadRegisters(uint8_t reg_addr, uint8_t* reg_data, uint8_t len)
+{
+    if (reg_data == nullptr) {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < len; ++i) {
+        if (!auxReadRegister8(static_cast<uint8_t>(reg_addr + i), reg_data[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool BMI270::readBmm150TrimRegisters()
+{
+    uint8_t trim_x1y1[2] = {};
+    uint8_t trim_xyz_data[4] = {};
+    uint8_t trim_xy1xy2[10] = {};
+
+    if (!auxReadRegisters(BMM150_DIG_X1, trim_x1y1, sizeof(trim_x1y1)) ||
+        !auxReadRegisters(BMM150_DIG_Z4_LSB, trim_xyz_data, sizeof(trim_xyz_data)) ||
+        !auxReadRegisters(BMM150_DIG_Z2_LSB, trim_xy1xy2, sizeof(trim_xy1xy2))) {
+        return false;
+    }
+
+    _bmm150_trim.dig_x1 = static_cast<int8_t>(trim_x1y1[0]);
+    _bmm150_trim.dig_y1 = static_cast<int8_t>(trim_x1y1[1]);
+    _bmm150_trim.dig_x2 = static_cast<int8_t>(trim_xyz_data[2]);
+    _bmm150_trim.dig_y2 = static_cast<int8_t>(trim_xyz_data[3]);
+    _bmm150_trim.dig_z1 = static_cast<uint16_t>((static_cast<uint16_t>(trim_xy1xy2[3]) << 8) | trim_xy1xy2[2]);
+    _bmm150_trim.dig_z2 = combine_i16(trim_xy1xy2[0], trim_xy1xy2[1]);
+    _bmm150_trim.dig_z3 = combine_i16(trim_xy1xy2[6], trim_xy1xy2[7]);
+    _bmm150_trim.dig_z4 = combine_i16(trim_xyz_data[0], trim_xyz_data[1]);
+    _bmm150_trim.dig_xy1 = trim_xy1xy2[9];
+    _bmm150_trim.dig_xy2 = static_cast<int8_t>(trim_xy1xy2[8]);
+    _bmm150_trim.dig_xyz1 =
+        static_cast<uint16_t>((static_cast<uint16_t>(trim_xy1xy2[5] & 0x7F) << 8) | trim_xy1xy2[4]);
+
+    _bmm150_trim_ready = _bmm150_trim.dig_xyz1 != 0 && _bmm150_trim.dig_z1 != 0 && _bmm150_trim.dig_z2 != 0;
+    if (!_bmm150_trim_ready) {
+        ESP_LOGW(TAG, "BMM150 trim data invalid");
+    }
+    return _bmm150_trim_ready;
+}
+
+bool BMI270::configureBmm150RegularPreset()
+{
+    uint8_t op_mode = 0;
+    if (!auxReadRegister8(BMM150_OP_MODE, op_mode)) {
+        return false;
+    }
+
+    op_mode = static_cast<uint8_t>((op_mode & ~BMM150_ODR_MASK) | (BMM150_DATA_RATE_10HZ << BMM150_ODR_POS));
+    if (!auxWriteRegister8(BMM150_OP_MODE, op_mode) ||
+        !auxWriteRegister8(BMM150_REP_XY, BMM150_REPXY_REGULAR) ||
+        !auxWriteRegister8(BMM150_REP_Z, BMM150_REPZ_REGULAR) ||
+        !auxWriteRegister8(BMM150_AXES_ENABLE, BMM150_XYZ_CHANNEL_ENABLE)) {
+        return false;
+    }
+
+    op_mode = static_cast<uint8_t>((op_mode & ~BMM150_OP_MODE_MASK) |
+                                   (BMM150_POWERMODE_NORMAL << BMM150_OP_MODE_POS));
+    return auxWriteRegister8(BMM150_OP_MODE, op_mode);
+}
+
 bool BMI270::setupBmm150Aux()
 {
     if (!auxSetupMode(kBmm150Address)) {
         return false;
     }
 
-    auxWriteRegister8(BMM150_POWER_CONTROL, 0x83);
+    if (!writeRegister8(AUX_IF_TRIM_ADDR, BMI2_ASDA_PUPSEL_10K_VALUE)) {
+        return false;
+    }
+
+    if (!auxWriteRegister8(BMM150_POWER_CONTROL, 0x83)) {
+        return false;
+    }
     vTaskDelay(pdMS_TO_TICKS(4));
 
     uint8_t chip_id = 0;
-    auxReadRegister8(BMM150_CHIP_ID, chip_id);
     if (!auxReadRegister8(BMM150_CHIP_ID, chip_id) || chip_id != kBmm150ChipId) {
         ESP_LOGW(TAG, "BMM150 not detected through BMI270 AUX: 0x%02x", chip_id);
         return false;
     }
 
-    if (!auxWriteRegister8(BMM150_OP_MODE, 0x38)) {
+    if (!readBmm150TrimRegisters()) {
         return false;
     }
-    if (!writeRegister8(AUX_IF_CONF_ADDR, 0x4F) ||
+
+    if (!configureBmm150RegularPreset()) {
+        return false;
+    }
+
+    if (!writeRegister8(AUX_CONF_ADDR, BMI2_AUX_ODR_100HZ_VALUE) ||
+        !writeRegister8(AUX_IF_CONF_ADDR, BMI2_AUX_AUTO_READ_8_BYTES) ||
         !writeRegister8(AUX_RD_ADDR, BMM150_DATA_X_LSB) ||
         !writeRegister8(PWR_CTRL_ADDR, 0x0F)) {
         return false;
@@ -178,17 +354,34 @@ void BMI270::updateBmm150()
         return;
     }
 
-    int16_t buffer[10] = {};
-    if (!readRegister(AUX_X_LSB_ADDR, reinterpret_cast<uint8_t*>(buffer), sizeof(buffer))) {
+    if (!_bmm150_trim_ready) {
         return;
     }
 
-    _data.mag_raw_x = static_cast<int16_t>(buffer[0] >> 2);
-    _data.mag_raw_y = static_cast<int16_t>(buffer[1] >> 2);
-    _data.mag_raw_z = static_cast<int16_t>(buffer[2] & 0xFFFE);
-    _data.mag_x = static_cast<float>(_data.mag_raw_x) * kBmm150MagResolution;
-    _data.mag_y = static_cast<float>(_data.mag_raw_y) * kBmm150MagResolution;
-    _data.mag_z = static_cast<float>(_data.mag_raw_z) * kBmm150MagResolution;
+    uint8_t aux_data[8] = {};
+    if (!readRegister(AUX_X_LSB_ADDR, aux_data, sizeof(aux_data))) {
+        return;
+    }
+
+    const auto raw = parse_bmm150_aux_data(aux_data);
+    if (raw.x == BMM150_OVERFLOW_ADCVAL_XYAXES_FLIP || raw.y == BMM150_OVERFLOW_ADCVAL_XYAXES_FLIP ||
+        raw.z == BMM150_OVERFLOW_ADCVAL_ZAXIS_HALL || raw.rhall == 0) {
+        return;
+    }
+
+    const float mag_x = compensate_bmm150_x(raw.x, raw.rhall, _bmm150_trim);
+    const float mag_y = compensate_bmm150_y(raw.y, raw.rhall, _bmm150_trim);
+    const float mag_z = compensate_bmm150_z(raw.z, raw.rhall, _bmm150_trim);
+    if (!std::isfinite(mag_x) || !std::isfinite(mag_y) || !std::isfinite(mag_z)) {
+        return;
+    }
+
+    _data.mag_raw_x = raw.x;
+    _data.mag_raw_y = raw.y;
+    _data.mag_raw_z = raw.z;
+    _data.mag_x = mag_x;
+    _data.mag_y = mag_y;
+    _data.mag_z = mag_z;
     _data.mag_updated = true;
 }
 

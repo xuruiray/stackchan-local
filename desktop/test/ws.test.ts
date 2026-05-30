@@ -340,6 +340,19 @@ describe("StackChanWebSocketServer", () => {
         x: 0.1,
         y: -0.2,
         z: 9.7,
+        gyroX: 0.01,
+        gyroY: -0.02,
+        gyroZ: 0.03,
+        attitude: {
+          available: true,
+          quaternion: { w: 0.99, x: 0.01, y: -0.02, z: 0.03 },
+          pitchDeg: -1.2,
+          rollDeg: 2.4,
+          yawDeg: 91.5,
+          quality: "gyroAccelMag",
+          magnetometerUsed: true,
+          sampleHz: 100
+        },
         magnetometer: { available: true, x: 0.1, y: -0.2, z: 0.3 }
       },
       { kind: "proximity", available: true, value: 42, raw: 42 },
@@ -399,6 +412,8 @@ describe("StackChanWebSocketServer", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const [snapshot] = registry.listSnapshots();
     expect(snapshot.sensors.bmi270?.z).toBe(9.7);
+    expect(snapshot.sensors.bmi270?.attitude?.quality).toBe("gyroAccelMag");
+    expect(snapshot.sensors.bmi270?.attitude?.quaternion?.w).toBe(0.99);
     expect(snapshot.sensors.bmi270?.magnetometer?.x).toBe(0.1);
     expect(snapshot.sensors.proximity?.value).toBe(42);
     expect(snapshot.sensors.ambientLight?.lux).toBe(18.5);
