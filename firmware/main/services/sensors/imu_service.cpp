@@ -29,6 +29,9 @@ static constexpr float kStableCorrectionMaxGyroDps = 8.0f;
 static constexpr float kStableCorrectionAccelToleranceMps2 = 0.35f;
 static constexpr float kStableCorrectionKp = 3.0f;
 static constexpr float kStableObservationBlendPerSecond = 4.0f;
+// Keep BMM150 telemetry visible, but do not use it to correct yaw until the
+// local magnetic field around the servos is calibrated and consistency-gated.
+static constexpr bool kUseMagnetometerForYawFusion = false;
 static constexpr int kGyroBiasSamples = 40;
 static constexpr float kDefaultFusionDtSeconds = 0.01f;
 static constexpr float kMaxFusionDtSeconds = 0.2f;
@@ -134,9 +137,10 @@ public:
         const bool accel_valid = accel_norm > 0.001f &&
                                  accel_error < kAccelGravityToleranceMps2 &&
                                  gyro_norm < kAccelCorrectionMaxGyroDps;
-        const bool mag_usable = accel_valid &&
-                                gyro_norm < kMagCorrectionMaxGyroDps &&
-                                is_magnetometer_usable(frame, magnetometer_available && magnetometer_updated);
+        const bool mag_candidate = accel_valid &&
+                                   gyro_norm < kMagCorrectionMaxGyroDps &&
+                                   is_magnetometer_usable(frame, magnetometer_available && magnetometer_updated);
+        const bool mag_usable = kUseMagnetometerForYawFusion && mag_candidate;
         const bool integral_valid = accel_valid &&
                                     gyro_norm < kIntegralCorrectionMaxGyroDps &&
                                     accel_error < kIntegralAccelToleranceMps2;
@@ -169,9 +173,7 @@ public:
         estimate.qy = q2_;
         estimate.qz = q3_;
         estimate.magnetometerUsed = mag_usable;
-        estimate.quality = mag_usable ? ImuAttitudeQuality::GyroAccelMag :
-                           (magnetometer_available && magnetometer_updated ? ImuAttitudeQuality::MagnetometerRejected
-                                                                            : ImuAttitudeQuality::GyroAccel);
+        estimate.quality = mag_usable ? ImuAttitudeQuality::GyroAccelMag : ImuAttitudeQuality::GyroAccel;
         estimate.sampleHz = dt > 0.0f ? 1.0f / dt : 0.0f;
         fill_euler(estimate);
         return estimate;
