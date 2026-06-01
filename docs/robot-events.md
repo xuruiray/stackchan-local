@@ -10,9 +10,9 @@
 | `proximity` | LTR553 | 接近传感器读数 | 固件固定 10 Hz |
 | `ambientLight` | LTR553 | 环境光照读数 | 固件固定 10 Hz |
 | `touch` | FT6336 屏幕触摸、SI12T 头部触摸 | 触摸手势、按下状态、屏幕坐标/点数 | 屏幕触摸按变化推送，最高约 10 Hz；头部触摸按手势事件推送 |
-| `nfc` | ST25R3916 NFC | 标签进入/变化/移开、读取错误 | 事件驱动；当前固件已接通事件通道和芯片读取错误事件，标签 UID 读取需要后续接入 NFC-A/RFAL 栈 |
+| `nfc` | ST25R3916 NFC | 标签进入/变化/移开、读取错误 | 事件驱动；当前固件接通事件通道和芯片读取错误事件 |
 | `ir` | IR RX/TX GPIO/RMT | 收到红外码、接收错误、发送结果 | 事件驱动；当前固件实现 NEC RX，repeat 帧限流 |
-| `hardwareStatus` | 低频硬件状态 | 电池、Wi-Fi/BLE、外设可用性、舵机、RGB、相机、RTC、NFC、INA226、IR、麦克风、I2C scan | 默认 1 Hz；`telemetryConfig.hardwareStatusHz` 可设 `0/0.5/1/2` Hz |
+| `hardwareStatus` | 低频硬件状态 | 电池、Wi-Fi/BLE、外设可用性、舵机、RGB、相机、RTC、NFC、INA226、IR、麦克风、I2C scan | 固件固定 2 Hz |
 | `cameraFrame` | GC0308 相机 | JPEG 帧和链路 trace | 由 `cameraStream.fps` 或 UI raw preview 配置决定 |
 | `image` | GC0308 相机 | 单张拍照返回 | `captureImage` 命令触发 |
 | `state` | 本地状态机 | `idle/listening/speaking/...` 状态 | 状态变化或命令触发 |
@@ -172,7 +172,6 @@ type HardwareStatusEvent = {
     camera?: {
       available: boolean;
       streaming?: boolean;
-      adaptiveLevel?: number;
       reason?: string;
     };
     rgb?: { available: boolean; enabled?: boolean; reason?: string };

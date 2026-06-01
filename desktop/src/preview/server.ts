@@ -33,7 +33,7 @@ export interface PreviewServerExtras {
   registry?: DeviceRegistry;
   debugLog?: DebugLogBuffer;
   robotController?: Pick<RobotController, "setRgb"> &
-    Partial<Pick<RobotController, "react" | "moveHead" | "cameraStream" | "captureImage" | "telemetryConfig">>;
+    Partial<Pick<RobotController, "react" | "moveHead" | "cameraStream" | "captureImage">>;
   completionAnnouncer?: {
     announce(completion: { id: string; reason: string; taskSummary?: string }): void;
     isEnabled(): boolean;
@@ -436,32 +436,6 @@ export class PreviewServer {
           waitForAck: true,
           waitForCompletion: false
         });
-        this.sendJson(response, commandResponse(result));
-        return;
-      }
-
-      if (request.method === "POST" && url.pathname === "/api/hardware/telemetry") {
-        if (!this.extras.robotController?.telemetryConfig) {
-          this.sendJson(response, { ok: false, error: "telemetryConfig unavailable" });
-          return;
-        }
-        const body = await readBody(request);
-        const parsed = body
-          ? (JSON.parse(body) as {
-              hardwareStatusHz?: unknown;
-              includeI2cScan?: unknown;
-              reason?: unknown;
-            })
-          : {};
-        const hardwareStatusHz = sanitizeEnumNumber(parsed.hardwareStatusHz, [0, 0.5, 1, 2] as const);
-        const result = await this.extras.robotController.telemetryConfig(
-          {
-            hardwareStatusHz,
-            includeI2cScan: typeof parsed.includeI2cScan === "boolean" ? parsed.includeI2cScan : undefined,
-            reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 120) : "preview-ui"
-          },
-          { waitForAck: true, waitForCompletion: false }
-        );
         this.sendJson(response, commandResponse(result));
         return;
       }
@@ -967,13 +941,6 @@ function sanitizeNumber(value: unknown, min: number, max: number): number | unde
 function sanitizeInteger(value: unknown, min: number, max: number): number | undefined {
   const number = sanitizeNumber(value, min, max);
   return number === undefined ? undefined : Math.round(number);
-}
-
-function sanitizeEnumNumber<const T extends readonly number[]>(value: unknown, allowed: T): T[number] | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return allowed.includes(value) ? (value as T[number]) : undefined;
 }
 
 function commandResponse(result: RobotActionResult): Record<string, unknown> {

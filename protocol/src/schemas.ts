@@ -194,31 +194,46 @@ export const normalizedFaceBoxSchema = {
   }
 } as const;
 
-export const faceServoRangeSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["yawMin", "yawMax", "pitchMin", "pitchMax"],
-  properties: {
-    yawMin: { type: "number", minimum: -1800, maximum: 0 },
-    yawMax: { type: "number", minimum: 0, maximum: 1800 },
-    pitchMin: { type: "number", minimum: -900, maximum: 1200 },
-    pitchMax: { type: "number", minimum: -900, maximum: 1200 }
-  }
-} as const;
-
 export const faceTrackingControlSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["mode", "deadband", "yaw", "pitch", "integralLimit", "outputLimitDeg", "servoRange"],
+  required: ["mode", "deadband", "yaw", "pitch", "integralLimit", "outputLimitDeg"],
   properties: {
     mode: { const: "pid" },
     deadband: { type: "number", minimum: 0, maximum: 0.3 },
     yaw: faceTrackingPidAxisSchema,
     pitch: faceTrackingPidAxisSchema,
     integralLimit: { type: "number", minimum: 0, maximum: 2 },
-    outputLimitDeg: { type: "number", minimum: 1, maximum: 45 },
-    servoRange: faceServoRangeSchema
+    outputLimitDeg: { type: "number", minimum: 1, maximum: 45 }
   }
+} as const;
+
+export const trackFaceCommandSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "detected"],
+  properties: {
+    kind: { const: "trackFace" },
+    detected: { type: "boolean" },
+    centerX: { type: "number", minimum: 0, maximum: 1 },
+    centerY: { type: "number", minimum: 0, maximum: 1 },
+    bbox: normalizedFaceBoxSchema,
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    speed: { type: "number", minimum: 0, maximum: 1000 },
+    control: faceTrackingControlSchema,
+    reason: { type: "string" }
+  },
+  allOf: [
+    {
+      if: {
+        properties: { detected: { const: true } },
+        required: ["detected"]
+      },
+      then: {
+        required: ["centerX", "centerY"]
+      }
+    }
+  ]
 } as const;
 
 export const robotCommandSchema = {
@@ -281,20 +296,7 @@ export const robotCommandSchema = {
           }
         },
         {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind", "detected"],
-          properties: {
-            kind: { const: "trackFace" },
-            detected: { type: "boolean" },
-            centerX: { type: "number", minimum: 0, maximum: 1 },
-            centerY: { type: "number", minimum: 0, maximum: 1 },
-            bbox: normalizedFaceBoxSchema,
-            confidence: { type: "number", minimum: 0, maximum: 1 },
-            speed: { type: "number", minimum: 0, maximum: 1000 },
-            control: faceTrackingControlSchema,
-            reason: { type: "string" }
-          }
+          ...trackFaceCommandSchema
         },
         {
           type: "object",
@@ -372,17 +374,6 @@ export const robotCommandSchema = {
             enabled: { type: "boolean" },
             color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
             brightness: { type: "number", minimum: 0, maximum: 1 }
-          }
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind"],
-          properties: {
-            kind: { const: "telemetryConfig" },
-            hardwareStatusHz: { enum: [0, 0.5, 1, 2] },
-            includeI2cScan: { type: "boolean" },
-            reason: { type: "string" }
           }
         },
         {
@@ -610,7 +601,6 @@ const hardwareStatusSchema = {
           properties: {
             available: { type: "boolean" },
             streaming: { type: "boolean" },
-            adaptiveLevel: { type: "integer", minimum: 0, maximum: 5 },
             reason: { type: "string" }
           }
         },
@@ -808,7 +798,6 @@ export const robotEventSchema = {
                 "captureImage",
                 "setMode",
                 "setRgb",
-                "telemetryConfig",
                 "mediaFlowControl",
                 "unknown"
               ]
@@ -839,7 +828,6 @@ export const robotEventSchema = {
                 "captureImage",
                 "setMode",
                 "setRgb",
-                "telemetryConfig",
                 "mediaFlowControl",
                 "unknown"
               ]
@@ -925,8 +913,8 @@ export const protocolSchemas = {
   facePoseSchema,
   faceExpressionSchema,
   normalizedFaceBoxSchema,
-  faceServoRangeSchema,
   faceTrackingControlSchema,
+  trackFaceCommandSchema,
   magnetometerTelemetrySchema,
   proximityTelemetrySchema,
   ambientLightTelemetrySchema,

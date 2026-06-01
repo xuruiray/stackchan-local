@@ -20,8 +20,7 @@
     "firmware:check-local-only": "scripts/check-firmware-local-only",
     "firmware:flash": "scripts/flash-firmware",
     "open-source:check": "scripts/check-open-source",
-    "vision:install": "python3 -m pip install -r desktop/requirements-vision.txt",
-    "vision:model": "node desktop/scripts/download_face_landmarker_model.mjs"
+    "vision:install": "python3 -m pip install -r desktop/requirements-vision.txt"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

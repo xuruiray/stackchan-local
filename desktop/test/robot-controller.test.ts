@@ -13,9 +13,9 @@ describe("RobotController logging", () => {
 
     await controller.trackFace({
       detected: true,
-      centerX: 0.4,
-      centerY: 0.6,
-      confidence: 0.68,
+      centerX: 0.42,
+      centerY: 0.58,
+      confidence: 0.82,
       speed: 420
     }, { waitForAck: false });
 
@@ -24,9 +24,9 @@ describe("RobotController logging", () => {
     expect(commandEntries[0]?.context).toMatchObject({
       kind: "trackFace",
       detected: true,
-      centerX: 0.4,
-      centerY: 0.6,
-      confidence: 0.68,
+      centerX: 0.42,
+      centerY: 0.58,
+      confidence: 0.82,
       speed: 420
     });
   });

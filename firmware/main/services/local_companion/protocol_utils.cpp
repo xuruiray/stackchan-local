@@ -50,7 +50,6 @@ const char* known_command_kind_or_unknown(const char* kind)
         "captureImage",
         "setMode",
         "setRgb",
-        "telemetryConfig",
         "mediaFlowControl",
     };
     for (const auto* value : known) {
@@ -176,23 +175,6 @@ static void update_pid_axis(LocalFaceTrackingTarget::PidAxis& axis, ArduinoJson:
     axis.kd = clamp_float(source["kd"] | axis.kd, 0.0f, 80.0f);
 }
 
-static void update_servo_range(LocalFaceTrackingTarget::ServoRange& range, ArduinoJson::JsonObject source)
-{
-    if (source.isNull()) {
-        return;
-    }
-    range.yawMin   = clamp_int(source["yawMin"] | range.yawMin, -1800, 0);
-    range.yawMax   = clamp_int(source["yawMax"] | range.yawMax, 0, 1800);
-    range.pitchMin = clamp_int(source["pitchMin"] | range.pitchMin, -900, 1200);
-    range.pitchMax = clamp_int(source["pitchMax"] | range.pitchMax, -900, 1200);
-    if (range.yawMin > range.yawMax) {
-        std::swap(range.yawMin, range.yawMax);
-    }
-    if (range.pitchMin > range.pitchMax) {
-        std::swap(range.pitchMin, range.pitchMax);
-    }
-}
-
 void update_tracking_control(LocalFaceTrackingTarget::Control& control, ArduinoJson::JsonObject source)
 {
     if (source.isNull()) {
@@ -203,7 +185,6 @@ void update_tracking_control(LocalFaceTrackingTarget::Control& control, ArduinoJ
     control.outputLimitDeg = clamp_float(source["outputLimitDeg"] | control.outputLimitDeg, 1.0f, 45.0f);
     update_pid_axis(control.yaw, source["yaw"].as<ArduinoJson::JsonObject>());
     update_pid_axis(control.pitch, source["pitch"].as<ArduinoJson::JsonObject>());
-    update_servo_range(control.servoRange, source["servoRange"].as<ArduinoJson::JsonObject>());
 }
 
 }  // namespace stackchan::hal::local_companion

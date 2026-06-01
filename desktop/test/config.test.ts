@@ -28,15 +28,15 @@ describe("loadConfig", () => {
     });
 
     expect(config.faceTrackingCameraPreset).toBe("fast");
-    expect(config.faceTrackingSpeed).toBe(700);
-    expect(config.faceTrackingDeadband).toBe(0.018);
-    expect(config.faceTrackingYawKp).toBe(44);
-    expect(config.faceTrackingYawKd).toBe(0);
-    expect(config.faceTrackingPitchKp).toBe(32);
-    expect(config.faceTrackingPitchKd).toBe(0);
-    expect(config.faceTrackingIntegralLimit).toBe(0.25);
+    expect(config.faceTrackingSpeed).toBe(420);
+    expect(config.faceTrackingDeadband).toBe(0.045);
+    expect(config.faceTrackingYawKp).toBe(42);
+    expect(config.faceTrackingYawKd).toBe(8);
+    expect(config.faceTrackingPitchKp).toBe(30);
+    expect(config.faceTrackingPitchKd).toBe(6);
+    expect(config.faceTrackingIntegralLimit).toBe(0.35);
     expect(config.faceTrackingOutputLimitDeg).toBe(20);
-    expect(config.faceLandmarkerModel).toBe(path.join(projectRoot, "desktop/models/face_landmarker.task"));
+    expect(config.faceTrackingTraceLog).toBe(path.join(projectRoot, "logs/face-tracking.ndjson"));
     expect(config.faceTrackingDetectorScript).toBe(path.join(projectRoot, "desktop/scripts/face_detector.py"));
   });
 
@@ -50,7 +50,6 @@ describe("loadConfig", () => {
         `${"VOLCENGINE_TTS_API_KEY"}=from-dot-env`,
         "VOLCENGINE_TTS_VOICE_ID=voice-from-dot-env",
         "STACKCHAN_CODEX_COMPLETION_TTS_VOLUME=91",
-        "STACKCHAN_FACE_LANDMARKER_MODEL=desktop/models/custom-face.task",
         "STACKCHAN_FACE_TRACKING_DETECTOR=desktop/scripts/custom_detector.py"
       ].join("\n")
     );
@@ -66,7 +65,6 @@ describe("loadConfig", () => {
     expect(config.volcengineTtsApiKey).toBe("explicit-token");
     expect(config.volcengineTtsVoiceId).toBe("voice-from-dot-env");
     expect(config.volcengineTtsCompletionVolume).toBe(91);
-    expect(config.faceLandmarkerModel).toBe(path.join(projectRoot, "desktop/models/custom-face.task"));
     expect(config.faceTrackingDetectorScript).toBe(path.join(projectRoot, "desktop/scripts/custom_detector.py"));
   });
 });

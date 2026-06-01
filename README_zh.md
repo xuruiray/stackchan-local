@@ -100,7 +100,7 @@ StackChan Local 是面向 M5Stack StackChan / ESP32-S3 的本地优先桌面 dae
 flowchart LR
   Codex["Codex / MCP"] --> Desktop["desktop daemon"]
   Browser["React WebUI :8788"] --> Desktop
-  Desktop --> Vision["Python MediaPipe detector"]
+  Desktop --> Vision["Python OpenCV detector"]
   Desktop <-->|"ws://<mac-ip>:8787/stackchan/local"| Firmware["ESP32-S3 firmware"]
   Firmware --> System["system"]
   Firmware --> Services["services"]
@@ -286,11 +286,10 @@ npm run dev
 
 ```bash
 npm run vision:install
-npm run vision:model
 STACKCHAN_FACE_TRACKING=1 npm run dev
 ```
 
-人脸追踪使用本地 Python sidecar，摄像头输入固定为 320 x 240。WebUI 提供 active stream 的 FPS 选项。
+人脸追踪使用本地 Python OpenCV sidecar，摄像头输入固定为 320 x 240。WebUI 提供 active stream 选项和中心点 PID 控制。
 
 ### 4. 编译和烧录固件
 
@@ -325,8 +324,8 @@ idf.py -p /dev/cu.usbmodem21301 flash monitor
 - `STACKCHAN_PAIRING_TOKEN=dev-local-token`
 - `STACKCHAN_FACE_TRACKING=0`
 - `STACKCHAN_FACE_TRACKING_CAMERA_PRESET=fast`
-- `STACKCHAN_FACE_TRACKING_SPEED=700`
-- `STACKCHAN_FACE_TRACKING_DEADBAND=0.018`
+- `STACKCHAN_FACE_TRACKING_SPEED=420`
+- `STACKCHAN_FACE_TRACKING_DEADBAND=0.045`
 - `STACKCHAN_CODEX_STATUS=1`
 - `STACKCHAN_VOLCENGINE_TTS_ENABLED=0`
 
@@ -362,7 +361,6 @@ npm run mcp
 | 运行 protocol 和 desktop 测试 | `npm test` |
 | 构建 preview UI 和 desktop TypeScript | `npm run build` |
 | 安装本地 vision 依赖 | `npm run vision:install` |
-| 下载人脸检测模型 | `npm run vision:model` |
 | 编译固件 | `source ~/esp/esp-idf-v5.5.4/export.sh && npm run firmware:build` |
 | 烧录固件 | `source ~/esp/esp-idf-v5.5.4/export.sh && npm run firmware:flash` |
 | 检查固件 local-only 边界 | `npm run firmware:check-local-only` |

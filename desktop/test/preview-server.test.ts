@@ -25,24 +25,13 @@ class FakeVisionTracking {
           fps: 10,
           quality: 18
         },
-        detector: {
-          minDetectionConfidence: 0.18,
-          minPresenceConfidence: 0.18,
-          minTrackingConfidence: 0.18
-        },
         control: {
           mode: "pid",
           deadband: 0.045,
-          yaw: { kp: 42, ki: 0, kd: 0 },
-          pitch: { kp: 30, ki: 0, kd: 0 },
+          yaw: { kp: 42, ki: 0, kd: 8 },
+          pitch: { kp: 30, ki: 0, kd: 6 },
           integralLimit: 0.35,
-          outputLimitDeg: 20,
-          servoRange: {
-            yawMin: -1280,
-            yawMax: 1280,
-            pitchMin: 0,
-            pitchMax: 900
-          }
+          outputLimitDeg: 20
         }
       },
       sourceCamera: {
@@ -346,11 +335,6 @@ describe("PreviewServer", () => {
     }> = [];
     const moveCommands: Array<{ yaw: number; pitch: number; speed?: number }> = [];
     const cameraStreamCommands: Array<{ enabled: boolean; fps?: number; width?: number; height?: number; quality?: number; format?: "jpeg" }> = [];
-    const telemetryCommands: Array<{
-      hardwareStatusHz?: 0 | 0.5 | 1 | 2;
-      includeI2cScan?: boolean;
-      reason?: string;
-    }> = [];
     let captureImageCount = 0;
     let ttsEnabled = true;
     let lightEnabled = true;
@@ -392,15 +376,6 @@ describe("PreviewServer", () => {
             sent: true,
             deviceId: "stackchan-test",
             command: { kind: "captureImage", requestId: "capture-test", format: "jpeg" },
-            ack: { received: true, status: "accepted" }
-          };
-        },
-        telemetryConfig: async (options) => {
-          telemetryCommands.push(options);
-          return {
-            sent: true,
-            deviceId: "stackchan-test",
-            command: { kind: "telemetryConfig", ...options },
             ack: { received: true, status: "accepted" }
           };
         },
@@ -650,22 +625,14 @@ describe("PreviewServer", () => {
     expect(captured.ok).toBe(true);
     expect(captureImageCount).toBe(1);
 
-    const telemetry = (await fetch(`${baseUrl}/api/hardware/telemetry`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hardwareStatusHz: 1, includeI2cScan: true, reason: "test" })
-    }).then((response) => response.json())) as { ok: boolean };
-    expect(telemetry.ok).toBe(true);
-    expect(telemetryCommands).toEqual([{ hardwareStatusHz: 1, includeI2cScan: true, reason: "test" }]);
-
     const tuned = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ control: { speed: 520, control: { deadband: 0.03 } } })
+      body: JSON.stringify({ control: { speed: 520, control: { deadband: 0.08 } } })
     }).then((response) => response.json())) as { status: { control: { speed: number; control: { deadband: number } } } };
 
     expect(tuned.status.control.speed).toBe(520);
-    expect(tuned.status.control.control.deadband).toBe(0.03);
+    expect(tuned.status.control.control.deadband).toBe(0.08);
 
     const cameraTuned = (await fetch(`${baseUrl}/api/tracking`, {
       method: "POST",

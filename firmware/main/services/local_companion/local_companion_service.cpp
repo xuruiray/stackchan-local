@@ -134,8 +134,6 @@ struct SensorTelemetryCacheCopy {
     PowerTelemetryCache power;
     NetworkTelemetryCache network;
     ServoTelemetryCache servo;
-    bool includeI2cScan = true;
-    uint8_t adaptiveLevel = 0;
 };
 
 struct CameraTelemetryCopy {
@@ -161,6 +159,7 @@ static constexpr size_t kMaxAudioChunkBase64Bytes = 8192;
 static constexpr size_t kMaxAudioChunks = 128;
 static constexpr uint32_t kBmi270EventIntervalMs = 100;
 static constexpr uint32_t kLtr553EventIntervalMs = 100;
+static constexpr uint32_t kHardwareStatusEventIntervalMs = 500;
 static constexpr uint32_t kHeadTouchCacheIntervalMs = 250;
 static constexpr uint32_t kPowerCacheIntervalMs = 1000;
 static constexpr uint32_t kNetworkCacheIntervalMs = 1000;
@@ -341,7 +340,6 @@ private:
     uint32_t _last_proximity_event_time = 0;
     uint32_t _last_ambient_light_event_time = 0;
     uint32_t _last_hardware_status_event_time = 0;
-    uint32_t _hardware_status_interval_ms = 1000;
     uint32_t _last_screen_touch_event_time = 0;
     uint32_t _next_imu_cache_time = 0;
     uint32_t _next_ltr553_cache_time = 0;
@@ -384,8 +382,6 @@ private:
     uint32_t _last_camera_frame_interval_ms = 0;
     uint32_t _last_camera_sent_at_ms = 0;
     uint32_t _last_camera_jpeg_bytes = 0;
-    bool _include_i2c_scan = true;
-    uint8_t _adaptive_level = 0;
     std::atomic<bool> _tasks_running{false};
     TaskHandle_t _tx_task_handle = nullptr;
     TaskHandle_t _camera_task_handle = nullptr;
@@ -718,10 +714,6 @@ private:
                     _camera_max_in_flight = kDefaultCameraCreditFrames;
                     _last_camera_sent_at_ms = 0;
                 }
-                {
-                    std::lock_guard<std::mutex> lock(_telemetry_mutex);
-                    _adaptive_level = 0;
-                }
                 clear_tx_queue();
                 reset_sensor_cache_schedule(_last_heartbeat_time);
                 send_handshake();
@@ -866,34 +858,6 @@ private:
                        camera_credit_enabled ? "yes" : "no");
     }
 
-    void handle_telemetry_config(ArduinoJson::JsonObject command)
-    {
-        uint32_t hardware_status_interval_ms = 0;
-        bool include_i2c_scan = true;
-        uint8_t adaptive_level = 0;
-        {
-            std::lock_guard<std::mutex> lock(_telemetry_mutex);
-            if (!command["hardwareStatusHz"].isNull()) {
-                const float hz = command["hardwareStatusHz"] | 1.0f;
-                _hardware_status_interval_ms = hz <= 0.0f ? 0 : static_cast<uint32_t>(1000.0f / hz);
-            }
-
-            if (!command["includeI2cScan"].isNull()) {
-                _include_i2c_scan = command["includeI2cScan"] | true;
-            }
-
-            _adaptive_level = (_hardware_status_interval_ms > 1000 || !_include_i2c_scan) ? 1 : 0;
-            _sensor_cache_initialized = false;
-            hardware_status_interval_ms = _hardware_status_interval_ms;
-            include_i2c_scan = _include_i2c_scan;
-            adaptive_level = _adaptive_level;
-        }
-        mclog::tagInfo(_tag, "telemetry config hardwareStatus={}ms bmi270={}ms ltr553={}ms i2cScan={} adaptiveLevel={}",
-                       hardware_status_interval_ms, kBmi270EventIntervalMs, kLtr553EventIntervalMs,
-                       include_i2c_scan ? "yes" : "no",
-                       static_cast<int>(adaptive_level));
-    }
-
     void handle_media_flow_control(ArduinoJson::JsonObject command)
     {
         const char* stream = command["stream"] | "";
@@ -1000,19 +964,11 @@ private:
                 _face_tracking_target.updatedAt = GetDeviceRuntime().millis();
                 _face_tracking_target.detected = false;
                 _face_tracking_target.reserved = true;
-                _face_tracking_target.recenterOnLost = true;
                 _face_tracking_target.speed = std::max(_face_tracking_target.speed, 420);
                 _face_tracking_hold_until = GetDeviceRuntime().millis() + 3500;
             }
             send_command_ack(command_id, kind, nullptr, true, "accepted");
             send_command_status(command_id, kind, nullptr, "completed", "camera stream configured", 1.0f);
-            return;
-        }
-
-        if (strcmp(kind, "telemetryConfig") == 0) {
-            handle_telemetry_config(command);
-            send_command_ack(command_id, kind, nullptr, true, "accepted");
-            send_command_status(command_id, kind, nullptr, "completed", "telemetry configured", 1.0f);
             return;
         }
 
@@ -1080,23 +1036,27 @@ private:
     {
         const bool detected = command["detected"] | false;
         std::lock_guard<std::mutex> lock(_face_tracking_mutex);
-        _face_tracking_target.updatedAt = GetDeviceRuntime().millis();
+        const uint32_t now = GetDeviceRuntime().millis();
+        _face_tracking_target.updatedAt = now;
         _face_tracking_target.speed     = std::max(0, std::min(1000, command["speed"] | 420));
         update_tracking_control(_face_tracking_target.control, command["control"].as<ArduinoJson::JsonObject>());
 
         if (!detected) {
-            const char* reason = command["reason"] | "";
             _face_tracking_target.detected = false;
             _face_tracking_target.reserved = true;
-            _face_tracking_target.recenterOnLost =
-                strcmp(reason, "face_lost") == 0 || strcmp(reason, "tracking_enabled") == 0;
             _face_tracking_hold_until      = GetDeviceRuntime().millis() + 3500;
+            return;
+        }
+
+        if (command["centerX"].isNull() || command["centerY"].isNull()) {
+            _face_tracking_target.detected = false;
+            _face_tracking_target.reserved = true;
+            _face_tracking_hold_until = GetDeviceRuntime().millis() + 3500;
             return;
         }
 
         _face_tracking_target.reserved    = true;
         _face_tracking_target.detected    = true;
-        _face_tracking_target.recenterOnLost = false;
         _face_tracking_target.centerX     = clamp_float(command["centerX"] | 0.5f, 0.0f, 1.0f);
         _face_tracking_target.centerY     = clamp_float(command["centerY"] | 0.5f, 0.0f, 1.0f);
         _face_tracking_target.confidence  = clamp_float(command["confidence"] | 0.0f, 0.0f, 1.0f);
@@ -1332,12 +1292,6 @@ private:
         send_nfc_event_if_available();
         send_ir_event_if_available();
 
-        uint32_t hardware_status_interval_ms = 0;
-        {
-            std::lock_guard<std::mutex> lock(_telemetry_mutex);
-            hardware_status_interval_ms = _hardware_status_interval_ms;
-        }
-
         if (now - _last_bmi270_event_time >= kBmi270EventIntervalMs) {
             send_bmi270_event();
             _last_bmi270_event_time = now;
@@ -1353,8 +1307,7 @@ private:
             _last_ambient_light_event_time = now;
         }
 
-        if (hardware_status_interval_ms > 0 &&
-            now - _last_hardware_status_event_time >= hardware_status_interval_ms) {
+        if (now - _last_hardware_status_event_time >= kHardwareStatusEventIntervalMs) {
             send_hardware_status_event(now);
             _last_hardware_status_event_time = now;
         }
@@ -1506,8 +1459,6 @@ private:
         copy.power = _power_cache;
         copy.network = _network_cache;
         copy.servo = _servo_cache;
-        copy.includeI2cScan = _include_i2c_scan;
-        copy.adaptiveLevel = _adaptive_level;
         return copy;
     }
 
@@ -1747,7 +1698,6 @@ private:
 
         doc["event"]["peripherals"]["camera"]["available"] = camera != nullptr;
         doc["event"]["peripherals"]["camera"]["streaming"] = camera_state.streaming;
-        doc["event"]["peripherals"]["camera"]["adaptiveLevel"] = cache.adaptiveLevel;
         if (!camera) {
             doc["event"]["peripherals"]["camera"]["reason"] = "driver_unavailable";
         }
@@ -1786,22 +1736,20 @@ private:
             doc["event"]["peripherals"]["ir"]["reason"] = peripherals.irReason.c_str();
         }
 
-        if (cache.includeI2cScan) {
-            auto i2c_scans = doc["event"]["peripherals"]["i2cScan"].to<ArduinoJson::JsonArray>();
-            for (const auto& scan : peripherals.i2cScans) {
-                auto scan_doc = i2c_scans.add<ArduinoJson::JsonObject>();
-                scan_doc["stage"] = scan.stage.data();
-                scan_doc["uptimeMs"] = scan.uptimeMs;
-                auto addresses = scan_doc["addresses"].to<ArduinoJson::JsonArray>();
-                for (const auto address : scan.addresses) {
-                    addresses.add(static_cast<int>(address));
-                }
-                scan_doc["targets"]["ltr553"] = scan.foundLtr553;
-                scan_doc["targets"]["ina226"] = scan.foundIna226;
-                scan_doc["targets"]["nfc"] = scan.foundNfc;
-                if (!scan.reason.empty()) {
-                    scan_doc["reason"] = scan.reason.c_str();
-                }
+        auto i2c_scans = doc["event"]["peripherals"]["i2cScan"].to<ArduinoJson::JsonArray>();
+        for (const auto& scan : peripherals.i2cScans) {
+            auto scan_doc = i2c_scans.add<ArduinoJson::JsonObject>();
+            scan_doc["stage"] = scan.stage.data();
+            scan_doc["uptimeMs"] = scan.uptimeMs;
+            auto addresses = scan_doc["addresses"].to<ArduinoJson::JsonArray>();
+            for (const auto address : scan.addresses) {
+                addresses.add(static_cast<int>(address));
+            }
+            scan_doc["targets"]["ltr553"] = scan.foundLtr553;
+            scan_doc["targets"]["ina226"] = scan.foundIna226;
+            scan_doc["targets"]["nfc"] = scan.foundNfc;
+            if (!scan.reason.empty()) {
+                scan_doc["reason"] = scan.reason.c_str();
             }
         }
 

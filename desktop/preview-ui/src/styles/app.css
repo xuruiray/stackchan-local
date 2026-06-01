@@ -408,6 +408,17 @@ nav {
   font-size: 12px;
 }
 
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.form-grid .field {
+  min-width: 0;
+}
+
 input,
 select {
   height: 34px;

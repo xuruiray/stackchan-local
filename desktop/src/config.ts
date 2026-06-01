@@ -27,13 +27,9 @@ export interface DesktopConfig {
   faceTrackingPitchKd: number;
   faceTrackingIntegralLimit: number;
   faceTrackingOutputLimitDeg: number;
+  faceTrackingTraceLog?: string;
   faceTrackingPython: string;
   faceTrackingDetectorScript: string;
-  faceLandmarkerModel: string;
-  faceTrackingMaxFaces: number;
-  faceTrackingMinDetectionConfidence: number;
-  faceTrackingMinPresenceConfidence: number;
-  faceTrackingMinTrackingConfidence: number;
   faceTrackingCameraPreset: FaceTrackingCameraPreset;
   volcengineTtsEnabled: boolean;
   volcengineTtsApiKey?: string;
@@ -143,42 +139,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
     faceTrackingEnabled: parseBoolean(env.STACKCHAN_FACE_TRACKING, false),
     faceTrackingFps: Math.min(15, Math.max(1, parseInteger(env.STACKCHAN_FACE_TRACKING_FPS, 4))),
     faceTrackingMirrorX: parseBoolean(env.STACKCHAN_FACE_TRACKING_MIRROR_X, false),
-    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 700), 0, 1000),
-    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.018), 0, 0.3),
-    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 44), 0, 150),
+    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 420), 0, 1000),
+    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.045), 0, 0.3),
+    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 42), 0, 150),
     faceTrackingYawKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KI, 0), 0, 50),
-    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 0), 0, 80),
-    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 32), 0, 150),
+    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 8), 0, 80),
+    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 30), 0, 150),
     faceTrackingPitchKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KI, 0), 0, 50),
-    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 0), 0, 80),
-    faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.25), 0, 2),
+    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 6), 0, 80),
+    faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.35), 0, 2),
     faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 20), 1, 45),
+    faceTrackingTraceLog:
+      env.STACKCHAN_FACE_TRACKING_TRACE_LOG === "0" || env.STACKCHAN_FACE_TRACKING_TRACE_LOG === "false"
+        ? undefined
+        : resolveProjectPath(projectRoot, env.STACKCHAN_FACE_TRACKING_TRACE_LOG, "logs/face-tracking.ndjson"),
     faceTrackingPython: env.STACKCHAN_FACE_TRACKING_PYTHON ?? defaultFaceTrackingPython(),
     faceTrackingDetectorScript: resolveProjectPath(
       projectRoot,
       env.STACKCHAN_FACE_TRACKING_DETECTOR,
       "desktop/scripts/face_detector.py"
-    ),
-    faceLandmarkerModel: resolveProjectPath(
-      projectRoot,
-      env.STACKCHAN_FACE_LANDMARKER_MODEL,
-      "desktop/models/face_landmarker.task"
-    ),
-    faceTrackingMaxFaces: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_MAX_FACES, 1), 1, 4),
-    faceTrackingMinDetectionConfidence: clampNumber(
-      parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_DETECTION_CONFIDENCE, 0.18),
-      0,
-      1
-    ),
-    faceTrackingMinPresenceConfidence: clampNumber(
-      parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_PRESENCE_CONFIDENCE, 0.18),
-      0,
-      1
-    ),
-    faceTrackingMinTrackingConfidence: clampNumber(
-      parseNumber(env.STACKCHAN_FACE_TRACKING_MIN_TRACKING_CONFIDENCE, 0.18),
-      0,
-      1
     ),
     faceTrackingCameraPreset: parseCameraPreset(env.STACKCHAN_FACE_TRACKING_CAMERA_PRESET),
     volcengineTtsEnabled: parseBoolean(env.STACKCHAN_VOLCENGINE_TTS_ENABLED, Boolean(env.VOLCENGINE_TTS_API_KEY)),

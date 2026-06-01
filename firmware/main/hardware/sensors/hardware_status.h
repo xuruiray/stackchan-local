@@ -45,29 +45,20 @@ struct LocalFaceTrackingTarget {
         float kd = 0.0f;
     };
 
-    struct ServoRange {
-        int yawMin   = -1280;
-        int yawMax   = 1280;
-        int pitchMin = 0;
-        int pitchMax = 900;
-    };
-
     struct Control {
         float deadband       = 0.045f;
-        PidAxis yaw          = {42.0f, 0.0f, 0.0f};
-        PidAxis pitch        = {30.0f, 0.0f, 0.0f};
+        PidAxis yaw          = {42.0f, 0.0f, 8.0f};
+        PidAxis pitch        = {30.0f, 0.0f, 6.0f};
         float integralLimit  = 0.35f;
         float outputLimitDeg = 20.0f;
-        ServoRange servoRange;
     };
 
-    bool reserved       = false;
-    bool detected       = false;
-    bool recenterOnLost = false;
-    float centerX       = 0.5f;
-    float centerY       = 0.5f;
-    float confidence    = 0.0f;
-    int speed           = 420;
+    bool reserved     = false;
+    bool detected     = false;
+    float centerX     = 0.5f;
+    float centerY     = 0.5f;
+    float confidence  = 0.0f;
+    int speed         = 420;
     Control control;
     uint32_t updatedAt = 0;
 };

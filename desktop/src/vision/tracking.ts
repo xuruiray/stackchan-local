@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+
 import type {
   FaceTrackingControl,
   NormalizedFaceBox,
@@ -18,12 +21,6 @@ export interface CameraStreamSettings {
   height: number;
   fps: number;
   quality: number;
-}
-
-export interface FaceDetectorSettings {
-  minDetectionConfidence: number;
-  minPresenceConfidence: number;
-  minTrackingConfidence: number;
 }
 
 export const CAMERA_STREAM_PRESETS: Record<CameraPresetName, CameraStreamSettings> = {
@@ -98,7 +95,6 @@ export interface VisionLatencyStatus {
   deviceToDaemonMs?: number;
   captureToDaemonMs?: number;
   detectorEndToEndMs?: number;
-  trackingCompensationMs?: number;
 }
 
 export interface VisionMediaCreditStatus {
@@ -121,7 +117,6 @@ export type VisionPreviewListener = (snapshot: VisionPreviewSnapshot) => void;
 export interface VisionTrackingSettings {
   speed: number;
   camera: CameraStreamSettings;
-  detector: FaceDetectorSettings;
   control: FaceTrackingControl;
 }
 
@@ -129,12 +124,10 @@ export interface VisionTrackingSettingsPatch {
   speed?: number;
   cameraPreset?: CameraPresetName;
   camera?: Partial<Pick<CameraStreamSettings, "width" | "height" | "fps" | "quality">>;
-  detector?: Partial<FaceDetectorSettings>;
-  control?: Partial<Omit<FaceTrackingControl, "mode" | "yaw" | "pitch" | "servoRange">> & {
+  control?: Partial<Omit<FaceTrackingControl, "mode" | "yaw" | "pitch">> & {
     mode?: "pid";
     yaw?: Partial<FaceTrackingControl["yaw"]>;
     pitch?: Partial<FaceTrackingControl["pitch"]>;
-    servoRange?: Partial<FaceTrackingControl["servoRange"]>;
   };
 }
 
@@ -154,8 +147,12 @@ export interface VisionTrackingOptions {
   adaptiveStableMs?: number;
 }
 
+type TrackFaceDispatch = Parameters<RobotController["trackFace"]>[0] & {
+  target?: NormalizedFaceBox;
+};
+
 const DEFAULT_OPTIONS: Required<VisionTrackingOptions> = {
-  commandMaxHz: 12,
+  commandMaxHz: 15,
   lostTimeoutMs: 1500,
   streamRetryMs: 1000,
   adaptivePressureMs: 5000,
@@ -188,30 +185,7 @@ const RAW_PREVIEW_CAMERA: CameraStreamSettings = {
   fps: 15,
   quality: 14
 };
-const TRACK_TARGET_CENTER_EPSILON = 0.012;
-const TRACK_TARGET_SIZE_EPSILON = 0.025;
-const TRACK_TARGET_REFRESH_MS = 800;
-const TRACK_TARGET_SIZE_ALPHA = 0.35;
-const TRACK_ACTIVE_ERROR_MIN = 0.012;
-const TRACK_ACTIVE_ERROR_DEADBAND_RATIO = 0.75;
 const TRACK_TARGET_STICKINESS_WEIGHT = 0.18;
-const TRACK_REACQUIRE_CONFIRM_FRAMES = 2;
-const TRACK_REACQUIRE_MAX_CENTER_DELTA = 0.18;
-const TRACK_LOST_SEARCH_SPEED = 220;
-const TRACK_TARGET_FILTER_CONFIG: OneEuroFilterOptions = {
-  minCutoff: 1.2,
-  beta: 0.045,
-  dCutoff: 1.0
-};
-const TRACK_LATENCY_COMPENSATION_RATIO = 0.7;
-const TRACK_LATENCY_COMPENSATION_MAX_MS = 160;
-
-const OFFICIAL_SERVO_RANGE: FaceTrackingControl["servoRange"] = {
-  yawMin: -1280,
-  yawMax: 1280,
-  pitchMin: 0,
-  pitchMax: 900
-};
 
 export interface OneEuroFilterOptions {
   minCutoff: number;
@@ -285,13 +259,10 @@ export class VisionTrackingService {
   private lastDetectionAt?: Date;
   private lastFaceAt?: Date;
   private lastTarget?: NormalizedFaceBox;
-  private smoothedTarget?: NormalizedFaceBox;
   private lastSentTrackTarget?: NormalizedFaceBox;
-  private reacquireCandidate?: NormalizedFaceBox;
-  private reacquireConfirmations = 0;
-  private readonly targetFilterX = new OneEuroFilter(TRACK_TARGET_FILTER_CONFIG);
-  private readonly targetFilterY = new OneEuroFilter(TRACK_TARGET_FILTER_CONFIG);
-  private lastTrackingCompensationMs?: number;
+  private commandWindowStartedAt = 0;
+  private commandWindowCount = 0;
+  private commandHz?: number;
   private lastFrame?: VisionFrameSnapshot;
   private lastFaces: NormalizedFaceBox[] = [];
   private lastError?: string;
@@ -325,6 +296,7 @@ export class VisionTrackingService {
   private rawPreviewLastChangedAt = 0;
   private settings: VisionTrackingSettings;
   private readonly previewListeners = new Set<VisionPreviewListener>();
+  private readonly trace?: FaceTrackingTraceLogger;
 
   constructor(
     private readonly controller: RobotController,
@@ -336,15 +308,12 @@ export class VisionTrackingService {
   ) {
     this.detector =
       detector ??
-      new PythonSidecarFaceDetector(config.faceTrackingPython, config.faceTrackingDetectorScript, logger, {
-        env: {
-          STACKCHAN_FACE_LANDMARKER_MODEL: config.faceLandmarkerModel,
-          STACKCHAN_FACE_TRACKING_MAX_FACES: String(config.faceTrackingMaxFaces),
-          ...detectorEnv(detectorSettingsFromConfig(config))
-        }
-      });
+      new PythonSidecarFaceDetector(config.faceTrackingPython, config.faceTrackingDetectorScript, logger);
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.settings = settingsFromConfig(config);
+    if (config.faceTrackingTraceLog) {
+      this.trace = new FaceTrackingTraceLogger(config.faceTrackingTraceLog, logger);
+    }
   }
 
   start(): void {
@@ -380,18 +349,18 @@ export class VisionTrackingService {
     this.resetTrackingTargetState();
     if (enabled) {
       this.lastDetectionInputAt = 0;
+      this.trace?.write("trackingState", { enabled: true, settings: this.settings });
       this.logger.info("face tracking enabled", {
         fps: this.effectiveCameraSettings().fps,
         camera: this.effectiveCameraSettings(),
         mirrorX: this.config.faceTrackingMirrorX
       });
       this.ensureCameraStream(true);
-      setImmediate(() => this.configureTelemetryForTracking(true, "face tracking enabled"));
     } else {
       this.logger.info("face tracking disabled");
+      this.trace?.write("trackingState", { enabled: false, settings: this.settings });
       this.resetAdaptiveState("face tracking disabled");
       this.ensureCameraStream(true);
-      setImmediate(() => this.configureTelemetryForTracking(false, "face tracking disabled"));
       void this.controller.trackFace({
         detected: false,
         reason: "tracking_disabled",
@@ -404,18 +373,8 @@ export class VisionTrackingService {
 
   setControl(patch: VisionTrackingSettingsPatch): VisionTrackingStatus {
     const previousCamera = this.settings.camera;
-    const previousDetector = this.settings.detector;
     this.settings = mergeSettings(this.settings, patch);
     this.logger.info("face tracking control updated", { settings: this.settings });
-    if (!sameDetectorSettings(previousDetector, this.settings.detector)) {
-      this.detector.updateEnv?.(detectorEnv(this.settings.detector));
-      this.detectorAvailable = true;
-      this.detectorLatencyMs = undefined;
-      this.lastDetectionAt = undefined;
-      this.lastDetectionInputAt = 0;
-      this.lastFaces = [];
-      this.resetTrackingTargetState();
-    }
     if (
       this.enabled &&
       (previousCamera.preset !== this.settings.camera.preset ||
@@ -838,14 +797,6 @@ export class VisionTrackingService {
       detectorLatencyMs: this.detectorLatencyMs
     });
     this.ensureCameraStream(true);
-    void this.controller.telemetryConfig(
-      {
-        hardwareStatusHz: level > 0 ? 0.5 : 2,
-        includeI2cScan: level === 0,
-        reason
-      },
-      { waitForAck: false }
-    );
     this.emitPreviewUpdate();
   }
 
@@ -861,53 +812,36 @@ export class VisionTrackingService {
     this.adaptiveWindowDropped = 0;
     this.adaptiveDropRate = 0;
     if (wasAdaptive) {
-      void this.controller.telemetryConfig(
-        {
-          hardwareStatusHz: 2,
-          includeI2cScan: true,
-          reason
-        },
-        { waitForAck: false }
-      );
+      this.emitPreviewUpdate();
     }
   }
 
-  private configureTelemetryForTracking(enabled: boolean, reason: string): void {
-    void this.controller.telemetryConfig(
-      {
-        hardwareStatusHz: enabled ? 1 : 2,
-        includeI2cScan: !enabled,
-        reason
-      },
-      { waitForAck: false }
-    );
-  }
-
   private handleDetection(result: FaceDetectionResult): void {
-    this.lastFaces = result.faces.map(positionOnlyFace);
-    const selected = selectTrackingFace(this.lastFaces, this.smoothedTarget ?? this.lastTarget);
+    this.lastFaces = result.faces;
+    const selected = selectTrackingFace(result.faces, this.lastTarget);
+    const frame = this.lastFrame?.frameId === result.frameId ? this.lastFrame : undefined;
     if (selected) {
-      if (!this.confirmReacquiredTarget(selected)) {
-        this.emitPreviewUpdate();
-        return;
-      }
-      const frame = this.lastFrame?.frameId === result.frameId ? this.lastFrame : undefined;
-      const measurementTimestampMs = trackingMeasurementTimestampMs(frame);
-      const stableTarget = this.stabilizeTrackingTarget(selected, measurementTimestampMs);
-      const compensatedTarget = this.compensateTrackingLatency(stableTarget, frame);
-      const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(compensatedTarget) : compensatedTarget;
+      const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(selected) : selected;
       const centerX = trackingTarget.x + trackingTarget.width / 2;
       const centerY = trackingTarget.y + trackingTarget.height / 2;
+      this.traceFaceDetection(result, {
+        frame,
+        action: "target_ready",
+        selected,
+        trackingTarget,
+        centerX,
+        centerY
+      });
       this.lastFaceAt = new Date();
-      this.lastTarget = stableTarget;
+      this.lastTarget = selected;
       this.lostCommandSent = false;
-      this.clearReacquireCandidate();
       this.sendTrackCommand({
         detected: true,
         centerX,
         centerY,
-        bbox: trackingTarget,
-        confidence: stableTarget.confidence,
+        bbox: selected,
+        confidence: selected.confidence,
+        target: trackingTarget,
         speed: this.settings.speed,
         control: this.settings.control
       });
@@ -916,7 +850,10 @@ export class VisionTrackingService {
     }
 
     this.lastTarget = undefined;
-    this.clearReacquireCandidate();
+    this.traceFaceDetection(result, {
+      frame,
+      action: "no_face"
+    });
     this.emitPreviewUpdate();
 
     if (!this.lastFaceAt || this.lostCommandSent) {
@@ -925,94 +862,89 @@ export class VisionTrackingService {
 
     if (Date.now() - this.lastFaceAt.getTime() >= this.options.lostTimeoutMs) {
       this.lostCommandSent = true;
-      this.resetTrackingTargetState();
       this.sendTrackCommand({
         detected: false,
         reason: "face_lost",
-        speed: Math.min(this.settings.speed, TRACK_LOST_SEARCH_SPEED),
+        speed: this.settings.speed,
         control: this.settings.control
       });
     }
   }
 
-  private confirmReacquiredTarget(target: NormalizedFaceBox): boolean {
-    if (!this.lostCommandSent) {
-      return true;
+  private traceFaceDetection(
+    result: FaceDetectionResult,
+    details: {
+      frame?: VisionFrameSnapshot;
+      action: "target_ready" | "no_face";
+      selected?: NormalizedFaceBox;
+      trackingTarget?: NormalizedFaceBox;
+      centerX?: number;
+      centerY?: number;
     }
-
-    if (!this.reacquireCandidate || faceCenterDistance(target, this.reacquireCandidate) > TRACK_REACQUIRE_MAX_CENTER_DELTA) {
-      this.reacquireCandidate = target;
-      this.reacquireConfirmations = 1;
-      return false;
-    }
-
-    this.reacquireCandidate = target;
-    this.reacquireConfirmations += 1;
-    if (this.reacquireConfirmations < TRACK_REACQUIRE_CONFIRM_FRAMES) {
-      return false;
-    }
-
-    this.clearReacquireCandidate();
-    return true;
-  }
-
-  private stabilizeTrackingTarget(rawTarget: NormalizedFaceBox, timestampMs: number): NormalizedFaceBox {
-    const previous = this.smoothedTarget;
-    if (!previous) {
-      const clamped = clampFace(rawTarget);
-      const center = faceCenter(clamped);
-      this.targetFilterX.filter(center.x, timestampMs);
-      this.targetFilterY.filter(center.y, timestampMs);
-      this.smoothedTarget = clamped;
-      return this.smoothedTarget;
-    }
-
-    const rawCenter = faceCenter(rawTarget);
-    const center = {
-      x: this.targetFilterX.filter(rawCenter.x, timestampMs),
-      y: this.targetFilterY.filter(rawCenter.y, timestampMs)
-    };
-    const width = clampNumber(previous.width + (rawTarget.width - previous.width) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
-    const height = clampNumber(previous.height + (rawTarget.height - previous.height) * TRACK_TARGET_SIZE_ALPHA, 0.01, 1);
-    const stableTarget: NormalizedFaceBox = {
-      ...rawTarget,
-      width,
-      height,
-      x: clampNumber(center.x - width / 2, 0, 1 - width),
-      y: clampNumber(center.y - height / 2, 0, 1 - height)
-    };
-    this.smoothedTarget = stableTarget;
-    return stableTarget;
-  }
-
-  private compensateTrackingLatency(target: NormalizedFaceBox, frame: VisionFrameSnapshot | undefined): NormalizedFaceBox {
-    const center = faceCenter(target);
-    const latencyMs = trackingLatencyMs(frame);
-    const compensationMs = clampNumber(latencyMs * TRACK_LATENCY_COMPENSATION_RATIO, 0, TRACK_LATENCY_COMPENSATION_MAX_MS);
-    this.lastTrackingCompensationMs = compensationMs;
-    if (compensationMs <= 0) {
-      return target;
-    }
-
-    return faceWithCenter(target, {
-      x: clampNumber(center.x + this.targetFilterX.velocity() * (compensationMs / 1000), 0, 1),
-      y: clampNumber(center.y + this.targetFilterY.velocity() * (compensationMs / 1000), 0, 1)
+  ): void {
+    this.trace?.write("faceDetection", {
+      frameId: result.frameId,
+      action: details.action,
+      faces: this.lastFaces.map(traceFace),
+      selected: details.selected ? traceFace(details.selected) : undefined,
+      trackingTarget: details.trackingTarget ? traceFace(details.trackingTarget) : undefined,
+      centerX: details.centerX,
+      centerY: details.centerY,
+      mirrorX: this.config.faceTrackingMirrorX,
+      detectorLatencyMs: this.detectorLatencyMs,
+      latency: this.latencyStatus(),
+      frame: details.frame
+        ? {
+            timestamp: details.frame.timestamp,
+            receivedAt: details.frame.receivedAt,
+            captureTimestamp: details.frame.captureTimestamp,
+            sentAt: details.frame.sentAt,
+            seq: details.frame.seq,
+            width: details.frame.width,
+            height: details.frame.height
+          }
+        : undefined
     });
   }
 
-  private sendTrackCommand(command: Parameters<RobotController["trackFace"]>[0]): void {
+  private sendTrackCommand(command: TrackFaceDispatch): void {
     const now = Date.now();
     const minInterval = 1000 / this.options.commandMaxHz;
-    if (command.detected && !this.shouldSendDetectedTarget(command.bbox, now, minInterval)) {
+    const { target, ...robotCommand } = command;
+    const loggedCommand = { kind: "trackFace", ...robotCommand };
+    if (command.detected && now - this.lastCommandAt < minInterval) {
+      this.trace?.write("trackCommandSkipped", {
+        reason: "rate_gate",
+        command: loggedCommand,
+        target: target ? traceFace(target) : undefined,
+        commandAgeMs: now - this.lastCommandAt,
+        minIntervalMs: minInterval,
+        commandMaxHz: this.options.commandMaxHz
+      });
       return;
     }
     this.lastCommandAt = now;
-    if (command.detected && command.bbox) {
-      this.lastSentTrackTarget = command.bbox;
+    this.recordCommandRate(now);
+    if (command.detected && target) {
+      this.lastSentTrackTarget = target;
     } else {
       this.lastSentTrackTarget = undefined;
     }
-    void this.controller.trackFace(command, { waitForAck: false }).then((result) => {
+    this.trace?.write("trackCommand", {
+      command: loggedCommand,
+      target: target ? traceFace(target) : undefined,
+      lastFaceAgeMs: this.lastFaceAt ? now - this.lastFaceAt.getTime() : undefined,
+      commandHz: this.commandHz,
+      commandMaxHz: this.options.commandMaxHz
+    });
+    void this.controller.trackFace(robotCommand, { waitForAck: false }).then((result) => {
+      this.trace?.write("trackCommandResult", {
+        command: loggedCommand,
+        sent: result.sent,
+        reason: result.reason,
+        ack: result.ack,
+        motion: result.motion
+      });
       if (!result.sent) {
         this.lastError = result.reason ?? "face tracking command was not sent";
       }
@@ -1020,31 +952,16 @@ export class VisionTrackingService {
     });
   }
 
-  private shouldSendDetectedTarget(target: NormalizedFaceBox | undefined, now: number, minIntervalMs: number): boolean {
-    if (now - this.lastCommandAt < minIntervalMs) {
-      return false;
+  private recordCommandRate(now: number): void {
+    if (this.commandWindowStartedAt === 0 || now - this.commandWindowStartedAt >= 1000) {
+      if (this.commandWindowStartedAt > 0) {
+        this.commandHz = (this.commandWindowCount * 1000) / Math.max(1, now - this.commandWindowStartedAt);
+      }
+      this.commandWindowStartedAt = now;
+      this.commandWindowCount = 1;
+      return;
     }
-    if (!target || !this.lastSentTrackTarget) {
-      return true;
-    }
-    const activeTrackingThreshold = Math.max(TRACK_ACTIVE_ERROR_MIN, this.settings.control.deadband * TRACK_ACTIVE_ERROR_DEADBAND_RATIO);
-    if (faceCenterError(target) >= activeTrackingThreshold) {
-      return true;
-    }
-    if (now - this.lastCommandAt >= TRACK_TARGET_REFRESH_MS) {
-      return true;
-    }
-
-    const previousCenterX = this.lastSentTrackTarget.x + this.lastSentTrackTarget.width / 2;
-    const previousCenterY = this.lastSentTrackTarget.y + this.lastSentTrackTarget.height / 2;
-    const centerX = target.x + target.width / 2;
-    const centerY = target.y + target.height / 2;
-    return (
-      Math.abs(centerX - previousCenterX) >= TRACK_TARGET_CENTER_EPSILON ||
-      Math.abs(centerY - previousCenterY) >= TRACK_TARGET_CENTER_EPSILON ||
-      Math.abs(target.width - this.lastSentTrackTarget.width) >= TRACK_TARGET_SIZE_EPSILON ||
-      Math.abs(target.height - this.lastSentTrackTarget.height) >= TRACK_TARGET_SIZE_EPSILON
-    );
+    this.commandWindowCount += 1;
   }
 
   private nextDetectorTimestampMs(timestamp: string): number {
@@ -1059,17 +976,7 @@ export class VisionTrackingService {
 
   private resetTrackingTargetState(): void {
     this.lastTarget = undefined;
-    this.smoothedTarget = undefined;
     this.lastSentTrackTarget = undefined;
-    this.lastTrackingCompensationMs = undefined;
-    this.clearReacquireCandidate();
-    this.targetFilterX.reset();
-    this.targetFilterY.reset();
-  }
-
-  private clearReacquireCandidate(): void {
-    this.reacquireCandidate = undefined;
-    this.reacquireConfirmations = 0;
   }
 
   private emitPreviewUpdate(): void {
@@ -1082,16 +989,13 @@ export class VisionTrackingService {
   private latencyStatus(): VisionLatencyStatus {
     const frame = this.lastFrame;
     if (!frame) {
-      return {
-        trackingCompensationMs: this.lastTrackingCompensationMs
-      };
+      return {};
     }
     return {
       frameAgeMs: this.lastFrameAt ? Date.now() - this.lastFrameAt.getTime() : undefined,
       deviceToDaemonMs: deltaMs(frame.sentAt, frame.receivedAt),
       captureToDaemonMs: deltaMs(frame.captureTimestamp, frame.receivedAt),
-      detectorEndToEndMs: deltaMs(frame.captureTimestamp, frame.trace?.detectorFinishedAt),
-      trackingCompensationMs: this.lastTrackingCompensationMs
+      detectorEndToEndMs: deltaMs(frame.captureTimestamp, frame.trace?.detectorFinishedAt)
     };
   }
 }
@@ -1142,49 +1046,6 @@ function faceCenter(face: NormalizedFaceBox): { x: number; y: number } {
   };
 }
 
-function faceCenterError(face: NormalizedFaceBox): number {
-  const center = faceCenter(face);
-  return Math.hypot(center.x - 0.5, center.y - 0.5);
-}
-
-function faceCenterDistance(left: NormalizedFaceBox, right: NormalizedFaceBox): number {
-  const leftCenter = faceCenter(left);
-  const rightCenter = faceCenter(right);
-  return Math.hypot(leftCenter.x - rightCenter.x, leftCenter.y - rightCenter.y);
-}
-
-function faceWithCenter(face: NormalizedFaceBox, center: { x: number; y: number }): NormalizedFaceBox {
-  const width = clampNumber(face.width, 0.01, 1);
-  const height = clampNumber(face.height, 0.01, 1);
-  return {
-    ...face,
-    width,
-    height,
-    x: clampNumber(center.x - width / 2, 0, 1 - width),
-    y: clampNumber(center.y - height / 2, 0, 1 - height)
-  };
-}
-
-function trackingMeasurementTimestampMs(frame: VisionFrameSnapshot | undefined): number {
-  return parseTimestampMs(frame?.captureTimestamp ?? frame?.timestamp ?? frame?.receivedAt) ?? Date.now();
-}
-
-function trackingLatencyMs(frame: VisionFrameSnapshot | undefined): number {
-  const timestampMs = parseTimestampMs(frame?.captureTimestamp ?? frame?.receivedAt);
-  if (timestampMs === undefined) {
-    return 0;
-  }
-  return Math.max(0, Date.now() - timestampMs);
-}
-
-function parseTimestampMs(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function exponentialSmooth(value: number, previous: number, alpha: number): number {
   return alpha * value + (1 - alpha) * previous;
 }
@@ -1194,44 +1055,8 @@ function smoothingAlpha(cutoff: number, dtSeconds: number): number {
   return 1 / (1 + tau / Math.max(0.001, dtSeconds));
 }
 
-function clampFace(face: NormalizedFaceBox): NormalizedFaceBox {
-  const width = clampNumber(face.width, 0.01, 1);
-  const height = clampNumber(face.height, 0.01, 1);
-  return {
-    ...face,
-    width,
-    height,
-    x: clampNumber(face.x, 0, 1 - width),
-    y: clampNumber(face.y, 0, 1 - height)
-  };
-}
-
 function clampInt(value: number, min: number, max: number): number {
   return Math.round(Math.min(max, Math.max(min, value)));
-}
-
-function detectorSettingsFromConfig(config: DesktopConfig): FaceDetectorSettings {
-  return {
-    minDetectionConfidence: clampNumber(config.faceTrackingMinDetectionConfidence, 0.05, 1),
-    minPresenceConfidence: clampNumber(config.faceTrackingMinPresenceConfidence, 0.05, 1),
-    minTrackingConfidence: clampNumber(config.faceTrackingMinTrackingConfidence, 0.05, 1)
-  };
-}
-
-function detectorEnv(settings: FaceDetectorSettings): NodeJS.ProcessEnv {
-  return {
-    STACKCHAN_FACE_TRACKING_MIN_DETECTION_CONFIDENCE: String(settings.minDetectionConfidence),
-    STACKCHAN_FACE_TRACKING_MIN_PRESENCE_CONFIDENCE: String(settings.minPresenceConfidence),
-    STACKCHAN_FACE_TRACKING_MIN_TRACKING_CONFIDENCE: String(settings.minTrackingConfidence)
-  };
-}
-
-function sameDetectorSettings(left: FaceDetectorSettings, right: FaceDetectorSettings): boolean {
-  return (
-    left.minDetectionConfidence === right.minDetectionConfidence &&
-    left.minPresenceConfidence === right.minPresenceConfidence &&
-    left.minTrackingConfidence === right.minTrackingConfidence
-  );
 }
 
 function sameCameraSettings(left: CameraStreamSettings, right: CameraStreamSettings): boolean {
@@ -1242,23 +1067,21 @@ function settingsFromConfig(config: DesktopConfig): VisionTrackingSettings {
   return {
     speed: clampNumber(config.faceTrackingSpeed, 0, 1000),
     camera: cameraSettingsFromPreset(config.faceTrackingCameraPreset),
-    detector: detectorSettingsFromConfig(config),
     control: {
       mode: "pid",
       deadband: clampNumber(config.faceTrackingDeadband, 0, 0.3),
       yaw: {
         kp: clampNumber(config.faceTrackingYawKp, 0, 150),
         ki: clampNumber(config.faceTrackingYawKi, 0, 50),
-        kd: 0
+        kd: clampNumber(config.faceTrackingYawKd, 0, 80)
       },
       pitch: {
         kp: clampNumber(config.faceTrackingPitchKp, 0, 150),
         ki: clampNumber(config.faceTrackingPitchKi, 0, 50),
-        kd: 0
+        kd: clampNumber(config.faceTrackingPitchKd, 0, 80)
       },
       integralLimit: clampNumber(config.faceTrackingIntegralLimit, 0, 2),
-      outputLimitDeg: clampNumber(config.faceTrackingOutputLimitDeg, 1, 45),
-      servoRange: { ...OFFICIAL_SERVO_RANGE }
+      outputLimitDeg: clampNumber(config.faceTrackingOutputLimitDeg, 1, 45)
     }
   };
 }
@@ -1275,20 +1098,6 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
       fps: cameraPatch?.fps === undefined ? baseCamera.fps : clampInt(cameraPatch.fps, 1, 15),
       quality: cameraPatch?.quality === undefined ? baseCamera.quality : clampInt(cameraPatch.quality, 1, 63)
     },
-    detector: {
-      minDetectionConfidence:
-        patch.detector?.minDetectionConfidence === undefined
-          ? current.detector.minDetectionConfidence
-          : clampNumber(patch.detector.minDetectionConfidence, 0.05, 1),
-      minPresenceConfidence:
-        patch.detector?.minPresenceConfidence === undefined
-          ? current.detector.minPresenceConfidence
-          : clampNumber(patch.detector.minPresenceConfidence, 0.05, 1),
-      minTrackingConfidence:
-        patch.detector?.minTrackingConfidence === undefined
-          ? current.detector.minTrackingConfidence
-          : clampNumber(patch.detector.minTrackingConfidence, 0.05, 1)
-    },
     control: {
       mode: "pid" as const,
       deadband:
@@ -1296,7 +1105,7 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
       yaw: {
         kp: patch.control?.yaw?.kp === undefined ? current.control.yaw.kp : clampNumber(patch.control.yaw.kp, 0, 150),
         ki: patch.control?.yaw?.ki === undefined ? current.control.yaw.ki : clampNumber(patch.control.yaw.ki, 0, 50),
-        kd: 0
+        kd: patch.control?.yaw?.kd === undefined ? current.control.yaw.kd : clampNumber(patch.control.yaw.kd, 0, 80)
       },
       pitch: {
         kp:
@@ -1307,7 +1116,10 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
           patch.control?.pitch?.ki === undefined
             ? current.control.pitch.ki
             : clampNumber(patch.control.pitch.ki, 0, 50),
-        kd: 0
+        kd:
+          patch.control?.pitch?.kd === undefined
+            ? current.control.pitch.kd
+            : clampNumber(patch.control.pitch.kd, 0, 80)
       },
       integralLimit:
         patch.control?.integralLimit === undefined
@@ -1316,39 +1128,9 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
       outputLimitDeg:
         patch.control?.outputLimitDeg === undefined
           ? current.control.outputLimitDeg
-          : clampNumber(patch.control.outputLimitDeg, 1, 45),
-      servoRange: {
-        yawMin:
-          patch.control?.servoRange?.yawMin === undefined
-            ? current.control.servoRange.yawMin
-            : clampNumber(patch.control.servoRange.yawMin, -1800, 0),
-        yawMax:
-          patch.control?.servoRange?.yawMax === undefined
-            ? current.control.servoRange.yawMax
-            : clampNumber(patch.control.servoRange.yawMax, 0, 1800),
-        pitchMin:
-          patch.control?.servoRange?.pitchMin === undefined
-            ? current.control.servoRange.pitchMin
-            : clampNumber(patch.control.servoRange.pitchMin, -900, 1200),
-        pitchMax:
-          patch.control?.servoRange?.pitchMax === undefined
-            ? current.control.servoRange.pitchMax
-            : clampNumber(patch.control.servoRange.pitchMax, -900, 1200)
-      }
+          : clampNumber(patch.control.outputLimitDeg, 1, 45)
     }
   };
-  if (next.control.servoRange.yawMin > next.control.servoRange.yawMax) {
-    [next.control.servoRange.yawMin, next.control.servoRange.yawMax] = [
-      next.control.servoRange.yawMax,
-      next.control.servoRange.yawMin
-    ];
-  }
-  if (next.control.servoRange.pitchMin > next.control.servoRange.pitchMax) {
-    [next.control.servoRange.pitchMin, next.control.servoRange.pitchMax] = [
-      next.control.servoRange.pitchMax,
-      next.control.servoRange.pitchMin
-    ];
-  }
   return next;
 }
 
@@ -1382,6 +1164,67 @@ function adaptiveCameraSettings(base: CameraStreamSettings, level: number): Came
     ...base,
     fps: Math.max(minimumFps, Math.min(base.fps, 4)),
     quality: Math.max(14, Math.min(base.quality, 14))
+  };
+}
+
+class FaceTrackingTraceLogger {
+  private disabled = false;
+
+  constructor(
+    private readonly filePath: string,
+    private readonly logger: Logger
+  ) {
+    try {
+      mkdirSync(path.dirname(filePath), { recursive: true });
+    } catch (error) {
+      this.disabled = true;
+      this.logger.warn("face tracking trace log disabled", {
+        filePath,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return;
+    }
+    this.logger.info("face tracking trace log enabled", { filePath });
+    this.write("traceStart", { pid: process.pid, filePath });
+  }
+
+  write(type: string, payload: Record<string, unknown>): void {
+    if (this.disabled) {
+      return;
+    }
+    try {
+      appendFileSync(
+        this.filePath,
+        `${JSON.stringify({
+          ts: new Date().toISOString(),
+          type,
+          ...payload
+        })}\n`,
+        "utf8"
+      );
+    } catch (error) {
+      this.disabled = true;
+      this.logger.warn("face tracking trace log write failed", {
+        filePath: this.filePath,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+}
+
+function traceFace(face: NormalizedFaceBox): Record<string, unknown> {
+  const center = faceCenter(face);
+  return {
+    x: face.x,
+    y: face.y,
+    width: face.width,
+    height: face.height,
+    centerX: center.x,
+    centerY: center.y,
+    area: face.width * face.height,
+    confidence: face.confidence,
+    trackingId: face.trackingId,
+    detector: face.detector
   };
 }
 

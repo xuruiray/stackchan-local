@@ -126,14 +126,6 @@ export async function captureImage(): Promise<CommandApiResult> {
   return postJson<CommandApiResult>("/api/hardware/capture-image", {});
 }
 
-export async function telemetryConfig(payload: {
-  hardwareStatusHz?: 0 | 0.5 | 1 | 2;
-  includeI2cScan?: boolean;
-  reason?: string;
-}): Promise<CommandApiResult> {
-  return postJson<CommandApiResult>("/api/hardware/telemetry", payload);
-}
-
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { cache: "no-store" });
   if (!response.ok) {

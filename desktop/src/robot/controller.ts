@@ -1,6 +1,5 @@
 import type {
   FaceTrackingControl,
-  NormalizedFaceBox,
   RobotCommand,
   RobotCommandMessage,
   RobotEventMessage,
@@ -122,7 +121,7 @@ export class RobotController {
     detected: boolean;
     centerX?: number;
     centerY?: number;
-    bbox?: NormalizedFaceBox;
+    bbox?: { x: number; y: number; width: number; height: number; confidence?: number };
     confidence?: number;
     speed?: number;
     control?: FaceTrackingControl;
@@ -229,13 +228,6 @@ export class RobotController {
     dispatchOptions?: DispatchOptions
   ): Promise<RobotActionResult> {
     return this.dispatch({ kind: "setRgb", ...options }, dispatchOptions);
-  }
-
-  telemetryConfig(
-    options: { hardwareStatusHz?: 0 | 0.5 | 1 | 2; includeI2cScan?: boolean; reason?: string },
-    dispatchOptions?: DispatchOptions
-  ): Promise<RobotActionResult> {
-    return this.dispatch({ kind: "telemetryConfig", ...options }, dispatchOptions);
   }
 
   mediaFlowControl(
@@ -454,12 +446,6 @@ function summarizeCommand(command: RobotCommand): Record<string, unknown> {
         color: command.color,
         brightness: command.brightness
       };
-    case "telemetryConfig":
-      return {
-        hardwareStatusHz: command.hardwareStatusHz,
-        includeI2cScan: command.includeI2cScan,
-        reason: command.reason
-      };
     case "mediaFlowControl":
       return {
         stream: command.stream,
@@ -515,6 +501,8 @@ function summarizeCommand(command: RobotCommand): Record<string, unknown> {
       return {
         requestId: command.requestId
       };
+    default:
+      return {};
   }
 }
 

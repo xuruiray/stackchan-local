@@ -69,7 +69,7 @@ describe("protocol validation", () => {
     ).toThrow("Invalid local protocol message");
   });
 
-  it("accepts camera stream and face tracking commands with landmarks, pose, and official servo range", () => {
+  it("accepts camera stream and visual servo face tracking commands with landmarks, pose, and official servo range", () => {
     expect(
       validator.parseMessage({
         type: "robot.command",
@@ -95,19 +95,6 @@ describe("protocol validation", () => {
           enabled: true,
           color: "#43D5B0",
           brightness: 0.8
-        }
-      }).type
-    ).toBe("robot.command");
-
-    expect(
-      validator.parseMessage({
-        type: "robot.command",
-        commandId: "cmd-telemetry",
-        command: {
-          kind: "telemetryConfig",
-          hardwareStatusHz: 0.5,
-          includeI2cScan: false,
-          reason: "adaptive backpressure"
         }
       }).type
     ).toBe("robot.command");
@@ -165,60 +152,32 @@ describe("protocol validation", () => {
         command: {
           kind: "trackFace",
           detected: true,
-          centerX: 0.25,
-          centerY: 0.6,
-          bbox: {
-            x: 0.1,
-            y: 0.2,
-            width: 0.3,
-            height: 0.4,
-            confidence: 0.8,
-            trackingId: "face-1",
-            landmarks: {
-              all: [
-                { x: 0.25, y: 0.39, z: -0.02 },
-                { x: 0.18, y: 0.31, z: 0.01 }
-              ],
-              nose: { x: 0.25, y: 0.39, z: -0.02 },
-              leftEye: { x: 0.18, y: 0.31 },
-              rightEye: { x: 0.32, y: 0.31 },
-              mouthCenter: { x: 0.25, y: 0.52 }
-            },
-            pose: {
-              yawDeg: -12.4,
-              pitchDeg: 4.2,
-              rollDeg: 1.1
-            },
-            transformMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 12, 4, -30, 1],
-            expression: {
-              smile: 0.2,
-              leftEyeOpen: 0.93,
-              rightEyeOpen: 0.88,
-              blendshapes: {
-                mouthSmileLeft: 0.21,
-                mouthSmileRight: 0.18,
-                eyeBlinkLeft: 0.07,
-                eyeBlinkRight: 0.12
-              }
-            },
-            detector: "mediapipe_tasks_face_landmarker"
-          },
-          confidence: 0.8,
-          speed: 420,
+          centerX: 0.42,
+          centerY: 0.58,
+          bbox: { x: 0.3, y: 0.4, width: 0.24, height: 0.32, confidence: 0.82 },
+          confidence: 0.82,
+          speed: 520,
           control: {
             mode: "pid",
             deadband: 0.045,
             yaw: { kp: 42, ki: 0, kd: 8 },
             pitch: { kp: 30, ki: 0, kd: 6 },
             integralLimit: 0.35,
-            outputLimitDeg: 20,
-            servoRange: {
-              yawMin: -1280,
-              yawMax: 1280,
-              pitchMin: 0,
-              pitchMax: 900
-            }
+            outputLimitDeg: 20
           }
+        }
+      }).type
+    ).toBe("robot.command");
+
+    expect(
+      validator.parseMessage({
+        type: "robot.command",
+        commandId: "cmd-face-lost",
+        command: {
+          kind: "trackFace",
+          detected: false,
+          reason: "face_lost",
+          speed: 220
         }
       }).type
     ).toBe("robot.command");
@@ -593,8 +552,7 @@ describe("protocol validation", () => {
           },
           camera: {
             available: true,
-            streaming: true,
-            adaptiveLevel: 1
+            streaming: true
           },
           rgb: {
             available: true,
@@ -907,30 +865,12 @@ describe("protocol validation", () => {
     expect(() =>
       validator.parseMessage({
         type: "robot.command",
-        commandId: "cmd-bad-telemetry-rate",
-        command: {
-          kind: "telemetryConfig",
-          hardwareStatusHz: 3,
-          includeI2cScan: false
-        }
-      })
-    ).toThrow("Invalid local protocol message");
-
-    expect(() =>
-      validator.parseMessage({
-        type: "robot.command",
         commandId: "cmd-bad-face",
         command: {
           kind: "trackFace",
           detected: true,
-          centerX: 1.2,
-          centerY: 0.5,
-          bbox: {
-            x: 0.1,
-            y: 0.1,
-            width: 0,
-            height: 0.4
-          }
+          centerX: 1.5,
+          centerY: 0.5
         }
       })
     ).toThrow("Invalid local protocol message");
@@ -938,19 +878,13 @@ describe("protocol validation", () => {
     expect(() =>
       validator.parseMessage({
         type: "robot.command",
-        commandId: "cmd-bad-face-matrix",
+        commandId: "cmd-new-face-angle",
         command: {
           kind: "trackFace",
           detected: true,
-          centerX: 0.5,
-          centerY: 0.5,
-          bbox: {
-            x: 0.1,
-            y: 0.1,
-            width: 0.3,
-            height: 0.4,
-            transformMatrix: [1, 0, 0]
-          }
+          yawErrorDeg: 0,
+          pitchErrorDeg: 0,
+          measurementAgeMs: 0
         }
       })
     ).toThrow("Invalid local protocol message");
@@ -958,23 +892,11 @@ describe("protocol validation", () => {
     expect(() =>
       validator.parseMessage({
         type: "robot.command",
-        commandId: "cmd-bad-blendshape",
+        commandId: "cmd-missing-face-age",
         command: {
           kind: "trackFace",
           detected: true,
-          centerX: 0.5,
-          centerY: 0.5,
-          bbox: {
-            x: 0.1,
-            y: 0.1,
-            width: 0.3,
-            height: 0.4,
-            expression: {
-              blendshapes: {
-                mouthSmileLeft: -0.1
-              }
-            }
-          }
+          centerX: 0.5
         }
       })
     ).toThrow("Invalid local protocol message");
@@ -990,12 +912,12 @@ describe("protocol validation", () => {
           centerY: 0.5,
           speed: 420,
           control: {
-            mode: "pid",
-            deadband: 0.5,
-            yaw: { kp: 42, ki: 0, kd: 8 },
-            pitch: { kp: 30, ki: 0, kd: 6 },
+            mode: "visualServoPid",
+            deadband: 0.045,
+            yaw: { kp: 0.45, ki: 0, kd: 0.04 },
+            pitch: { kp: 0.38, ki: 0, kd: 0.03 },
             integralLimit: 0.35,
-            outputLimitDeg: 20
+            outputLimitDeg: 8
           }
         }
       })

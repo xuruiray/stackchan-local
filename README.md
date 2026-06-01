@@ -60,7 +60,7 @@ The current architecture has three explicit firmware layers:
 - Mirrors Codex activity into hardware states such as idle, thinking, and speaking.
 - Streams camera frames to the desktop for local face-position tracking.
 - Exposes a componentized React console at `http://localhost:8788`.
-- Reports hardware telemetry for power, touch, IMU, magnetometer, camera, servos, audio, RTC, NFC, IR, LTR553, INA226, Wi-Fi, BLE, RGB, and IO expander state.
+- Reports hardware telemetry for power, touch, IMU with BMM150 magnetometer data, camera, servos, audio, RTC, NFC, IR, LTR553, INA226, Wi-Fi, BLE, RGB, and IO expander state.
 - Provides MCP tools so Codex can query status, speak, move the head, capture images, set modes, and control face tracking.
 
 Face tracking uses local position detection only and does not perform identity recognition.
@@ -100,7 +100,7 @@ Face tracking uses local position detection only and does not perform identity r
 flowchart LR
   Codex["Codex / MCP"] --> Desktop["desktop daemon"]
   Browser["React WebUI :8788"] --> Desktop
-  Desktop --> Vision["Python MediaPipe detector"]
+  Desktop --> Vision["Python OpenCV detector"]
   Desktop <-->|"ws://<mac-ip>:8787/stackchan/local"| Firmware["ESP32-S3 firmware"]
   Firmware --> System["system"]
   Firmware --> Services["services"]
@@ -166,7 +166,7 @@ sequenceDiagram
 - Compose drivers into services for display, motion, sensors, power, audio, network, and local companion transport.
 - Connect to the desktop daemon using mDNS or saved fallback WebSocket URL.
 - Send heartbeat, state, hardware status, touch, IMU, battery, Wi-Fi, camera, and audio telemetry.
-- Execute commands for mode, audio playback, camera stream, RGB, servo motion, face tracking, and telemetry configuration.
+- Execute commands for mode, audio playback, camera stream, RGB, servo motion, and face tracking.
 - Keep local avatar rendering, blinking, idle behavior, and power policy on-device.
 
 ## Runtime Endpoints
@@ -233,7 +233,7 @@ The WebUI is served by the desktop daemon at `http://localhost:8788`. It is a Re
 
 The console is designed as the primary hardware validation surface. It has three groups:
 
-- **Modules**: one page per chip or hardware module: Power, INA226, Display, Screen Touch, Head Touch, IMU, Magnetometer, Camera, Servo, IO Expander, RGB LED, RTC, ALS/Proximity, NFC, IR, Audio, Wi-Fi/BLE.
+- **Modules**: one page per chip or hardware module: Power / PMIC, Display, Screen Touch, Head Touch, IMU, Camera, Servo, IO Expander, RGB LED, RTC, ALS/Proximity, NFC, IR, Audio, Wi-Fi/BLE. Power includes AXP2101 and INA226; IMU includes BMI270 and BMM150 magnetometer data.
 - **Applications**: simple app flows built on verified hardware, currently Codex announcer/light alert, hardware expression control, and face-position tracking.
 - **Debug**: system counters, raw public snapshot, and daemon logs.
 
@@ -246,11 +246,11 @@ Camera pages expose separate raw and processed streams:
 
 | Group | Pages or services | Data shown | Safe commands |
 | --- | --- | --- | --- |
-| Power | AXP2101, INA226, backlight policy | Battery, charge state, rail current/power, availability reasons | Telemetry refresh, I2C scan |
-| Touch and motion sensors | FT6336, SI12T, BMI270, BMM150, LTR553 | Touch state, accel/gyro, magnetometer, ALS/proximity | Telemetry refresh, I2C scan |
+| Power | AXP2101, INA226, backlight policy | Battery, charge state, rail current/power, availability reasons | Read-only status |
+| Touch and motion sensors | FT6336, SI12T, BMI270, BMM150, LTR553 | Touch state, accel/gyro, fused attitude, magnetometer, ALS/proximity | Read-only status |
 | Camera and vision | GC0308 raw stream, face-position processed stream | FPS, frame interval, latency, JPEG size, face target | Stream on/off, capture, FPS selection |
-| Actuators | SCS servos, RGB LED, IO expander | Servo pose, limits, RGB state, expander pins | Move head, set RGB color/brightness, telemetry refresh |
-| Audio and time | ES7210, AW88298, RTC | Mic level, codec status, RTC time | TTS/say through MCP, telemetry refresh |
+| Actuators | SCS servos, RGB LED, IO expander | Servo power, RGB state, expander availability | Move head, set RGB color/brightness |
+| Audio and time | ES7210, AW88298, RTC | Mic availability, codec status, RTC time | TTS/say through MCP |
 | Network | Wi-Fi, BLE provisioning, mDNS | Link state, SSID/IP, RSSI, reconnect counters | Provisioning and runtime network commands through services |
 | Applications | Codex announcer/light alert, hardware expression control, face-position tracking | App state, enabled flags, expression capability, tracking target and latency | Send expression presets/avatar JSON, toggle tracking, adjust FPS, companion mode commands |
 | Debug | System, raw snapshot, logs | Heap, counters, command ACKs, public JSON, daemon logs | Read-only diagnostics |
@@ -286,11 +286,10 @@ Default endpoints:
 
 ```bash
 npm run vision:install
-npm run vision:model
 STACKCHAN_FACE_TRACKING=1 npm run dev
 ```
 
-Face tracking uses the local Python sidecar and fixed 320 x 240 camera input. The WebUI exposes FPS options for the active stream.
+Face tracking uses the local Python OpenCV sidecar and fixed 320 x 240 camera input. The WebUI exposes stream options and center-point PID controls.
 
 ### 4. Build And Flash Firmware
 
@@ -325,8 +324,9 @@ Important defaults:
 - `STACKCHAN_PAIRING_TOKEN=dev-local-token`
 - `STACKCHAN_FACE_TRACKING=0`
 - `STACKCHAN_FACE_TRACKING_CAMERA_PRESET=fast`
-- `STACKCHAN_FACE_TRACKING_SPEED=700`
-- `STACKCHAN_FACE_TRACKING_DEADBAND=0.018`
+- `STACKCHAN_FACE_TRACKING_SPEED=420`
+- `STACKCHAN_FACE_TRACKING_DEADBAND=0.045`
+- `STACKCHAN_FACE_TRACKING_TRACE_LOG=logs/face-tracking.ndjson`
 - `STACKCHAN_CODEX_STATUS=1`
 - `STACKCHAN_VOLCENGINE_TTS_ENABLED=0`
 
@@ -362,7 +362,6 @@ Available tools:
 | Run protocol and desktop tests | `npm test` |
 | Build preview UI and desktop TypeScript | `npm run build` |
 | Install local vision dependencies | `npm run vision:install` |
-| Download the face detector model | `npm run vision:model` |
 | Build firmware | `source ~/esp/esp-idf-v5.5.4/export.sh && npm run firmware:build` |
 | Flash firmware | `source ~/esp/esp-idf-v5.5.4/export.sh && npm run firmware:flash` |
 | Check firmware local-only boundaries | `npm run firmware:check-local-only` |
@@ -397,7 +396,7 @@ Hardware acceptance after flashing:
 
 - `http://localhost:8788/`, `/status`, `/debug/snapshot`, and `/debug/logs` return 200.
 - Device shows online in the WebUI.
-- Module pages update for PMIC/battery, touch, head touch, IMU, magnetometer, RTC, mic, camera, RGB/io expander, servos, I2C scan, NFC, IR, LTR553, and INA226.
+- Module pages update for PMIC/battery, INA226 power monitor, touch, head touch, IMU with magnetometer, RTC, mic, camera, RGB/io expander, servos, NFC, IR, and LTR553.
 - Present hardware reports valid non-NaN values and reacts to touch, motion, light, sound, and camera stimuli.
 - Missing or unsupported modules report `available:false` with a clear reason.
 - `/frame.jpg` or `/stream.mjpg` returns a valid JPEG stream when camera streaming is enabled.

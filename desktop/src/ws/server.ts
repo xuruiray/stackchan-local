@@ -324,7 +324,6 @@ export class StackChanWebSocketServer {
         "robotCommand",
         "binaryCameraFrame",
         "adaptiveCameraStream",
-        "telemetryConfig",
         "commandStatus",
         "mediaCredit",
         "qosProfiles"

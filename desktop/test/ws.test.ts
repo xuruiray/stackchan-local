@@ -26,19 +26,14 @@ const baseConfig: DesktopConfig = {
   faceTrackingDeadband: 0.045,
   faceTrackingYawKp: 42,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 0,
+  faceTrackingYawKd: 8,
   faceTrackingPitchKp: 30,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 0,
+  faceTrackingPitchKd: 6,
   faceTrackingIntegralLimit: 0.35,
   faceTrackingOutputLimitDeg: 20,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
-  faceLandmarkerModel: "/tmp/stackchan-local-face-landmarker.task",
-  faceTrackingMaxFaces: 1,
-  faceTrackingMinDetectionConfidence: 0.35,
-  faceTrackingMinPresenceConfidence: 0.35,
-  faceTrackingMinTrackingConfidence: 0.35,
   faceTrackingCameraPreset: "fast",
   volcengineTtsEnabled: false,
   volcengineTtsEndpoint: "https://example.test/tts",
@@ -92,7 +87,6 @@ describe("StackChanWebSocketServer", () => {
     expect(message.type).toBe("daemon.hello");
     expect(message.protocolVersion).toBe("1.2");
     expect(message.featureFlags).toContain("binaryCameraFrame");
-    expect(message.featureFlags).toContain("telemetryConfig");
     expect(message.featureFlags).toContain("mediaCredit");
     expect(message.qosProfiles).toMatchObject({
       robotCommand: "reliable",

@@ -29,17 +29,20 @@ export function FaceTrackingApp({
   const activeSelection = useMemo(
     () =>
       cameraSelectionFromValue({
-        width: control?.camera.width,
-        height: control?.camera.height,
-        fps: control?.camera.fps,
-        quality: control?.camera.quality
+        width: control?.camera?.width,
+        height: control?.camera?.height,
+        fps: control?.camera?.fps,
+        quality: control?.camera?.quality
     }),
-    [control?.camera.fps, control?.camera.height, control?.camera.quality, control?.camera.width]
+    [control?.camera?.fps, control?.camera?.height, control?.camera?.quality, control?.camera?.width]
   );
   const updateTracking = async (payload: unknown): Promise<PreviewSnapshot> => {
     const next = await postTracking(payload);
     setSnapshot?.(next);
     return next;
+  };
+  const updateControl = (patch: unknown): void => {
+    void command.run(() => updateTracking({ control: patch }));
   };
 
   return (
@@ -84,9 +87,126 @@ export function FaceTrackingApp({
           pending={command.pending}
           onChange={(selection) => void command.run(() => updateTracking({ control: { camera: selection } }))}
         />
+        <div className="form-grid">
+          <NumberField
+            label="Speed"
+            value={control?.speed}
+            min={0}
+            max={1000}
+            step={10}
+            onChange={(speed) => updateControl({ speed })}
+          />
+          <NumberField
+            label="Deadband"
+            value={control?.control?.deadband}
+            min={0}
+            max={0.3}
+            step={0.005}
+            onChange={(deadband) => updateControl({ control: { deadband } })}
+          />
+          <NumberField
+            label="Yaw P"
+            value={control?.control?.yaw?.kp}
+            min={0}
+            max={150}
+            step={0.01}
+            onChange={(kp) => updateControl({ control: { yaw: { kp } } })}
+          />
+          <NumberField
+            label="Yaw I"
+            value={control?.control?.yaw?.ki}
+            min={0}
+            max={50}
+            step={0.01}
+            onChange={(ki) => updateControl({ control: { yaw: { ki } } })}
+          />
+          <NumberField
+            label="Yaw D"
+            value={control?.control?.yaw?.kd}
+            min={0}
+            max={80}
+            step={0.01}
+            onChange={(kd) => updateControl({ control: { yaw: { kd } } })}
+          />
+          <NumberField
+            label="Pitch P"
+            value={control?.control?.pitch?.kp}
+            min={0}
+            max={150}
+            step={0.01}
+            onChange={(kp) => updateControl({ control: { pitch: { kp } } })}
+          />
+          <NumberField
+            label="Pitch I"
+            value={control?.control?.pitch?.ki}
+            min={0}
+            max={50}
+            step={0.01}
+            onChange={(ki) => updateControl({ control: { pitch: { ki } } })}
+          />
+          <NumberField
+            label="Pitch D"
+            value={control?.control?.pitch?.kd}
+            min={0}
+            max={80}
+            step={0.01}
+            onChange={(kd) => updateControl({ control: { pitch: { kd } } })}
+          />
+          <NumberField
+            label="Integral"
+            value={control?.control?.integralLimit}
+            min={0}
+            max={2}
+            step={0.01}
+            onChange={(integralLimit) => updateControl({ control: { integralLimit } })}
+          />
+          <NumberField
+            label="Output limit"
+            value={control?.control?.outputLimitDeg}
+            min={1}
+            max={45}
+            step={0.1}
+            onChange={(outputLimitDeg) => updateControl({ control: { outputLimitDeg } })}
+          />
+        </div>
         <CommandStatus status={command.status} />
       </CommandPanel>
       <RawPanel value={status} />
     </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange
+}: {
+  label: string;
+  value: number | undefined;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}): JSX.Element {
+  return (
+    <label className="field">
+      {label}
+      <input
+        type="number"
+        value={value ?? ""}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) {
+            onChange(next);
+          }
+        }}
+      />
+    </label>
   );
 }

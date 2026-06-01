@@ -170,13 +170,6 @@ export type FaceTrackingPidAxis = {
   kd: number;
 };
 
-export type FaceServoRange = {
-  yawMin: number;
-  yawMax: number;
-  pitchMin: number;
-  pitchMax: number;
-};
-
 export type FaceTrackingControl = {
   mode: "pid";
   deadband: number;
@@ -184,7 +177,6 @@ export type FaceTrackingControl = {
   pitch: FaceTrackingPidAxis;
   integralLimit: number;
   outputLimitDeg: number;
-  servoRange: FaceServoRange;
 };
 
 export type TrackFaceCommand = {
@@ -251,13 +243,6 @@ export type SetRgbCommand = {
   brightness?: number;
 };
 
-export type TelemetryConfigCommand = {
-  kind: "telemetryConfig";
-  hardwareStatusHz?: 0 | 0.5 | 1 | 2;
-  includeI2cScan?: boolean;
-  reason?: string;
-};
-
 export type MediaFlowControlCommand = {
   kind: "mediaFlowControl";
   stream: "camera";
@@ -277,7 +262,6 @@ export type RobotCommand =
   | CaptureImageCommand
   | SetModeCommand
   | SetRgbCommand
-  | TelemetryConfigCommand
   | MediaFlowControlCommand;
 
 export interface RobotCommandMessage {
@@ -461,7 +445,6 @@ export type RobotEvent =
         camera?: {
           available: boolean;
           streaming?: boolean;
-          adaptiveLevel?: number;
           reason?: string;
         };
         rgb?: {
