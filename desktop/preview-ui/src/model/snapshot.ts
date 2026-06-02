@@ -47,10 +47,14 @@ export function motion(snapshot: PreviewSnapshot | null | undefined) {
 
 export function interaction(snapshot: PreviewSnapshot | null | undefined) {
   const touch = activeDevice(snapshot)?.sensors.touch;
+  const screenTouchTelemetry = hardwareStatus(snapshot)?.peripherals?.screenTouch;
+  const screenTouchEvent = touch?.surface === "screen" ? touch : undefined;
   const headTouchTelemetry = hardwareStatus(snapshot)?.peripherals?.headTouch;
   const headTouchEvent = touch?.surface === "head" ? touch : undefined;
   return {
-    screenTouch: touch?.surface === "screen" ? touch : undefined,
+    screenTouch: screenTouchTelemetry || screenTouchEvent
+      ? { ...(screenTouchTelemetry ?? {}), ...(screenTouchEvent ?? {}) }
+      : undefined,
     headTouch: headTouchTelemetry || headTouchEvent ? { ...(headTouchTelemetry ?? {}), ...(headTouchEvent ?? {}) } : undefined
   };
 }

@@ -51,7 +51,6 @@ private:
     uint32_t _last_face_tracking_pid_at = 0;
     uint32_t _face_tracking_ack_fail_pause_until = 0;
     uint32_t _face_tracking_consecutive_ack_fail = 0;
-    uint32_t _offline_idle_shutdown_started = 0;
     float _face_tracking_integral_yaw = 0.0f;
     float _face_tracking_integral_pitch = 0.0f;
     float _face_tracking_previous_yaw_error = 0.0f;
@@ -76,7 +75,6 @@ private:
     bool _visual_state_initialized = false;
     bool _face_tracking_pid_ready = false;
     bool _face_tracking_stepper_initialized = false;
-    bool _offline_idle_shutdown_requested = false;
     int _face_tracking_command_yaw = 0;
     int _face_tracking_command_pitch = 260;
 
@@ -92,12 +90,10 @@ private:
     void finish_expression_preset(bool restore_motion, bool restore_rgb);
     void refresh_idle_activity(uint32_t quiet_ms);
     void sync_idle_modifiers();
-    void sync_offline_idle_shutdown();
     void start_idle_modifiers();
     void stop_idle_modifiers();
     bool is_face_tracking_reserved() const;
     bool should_run_idle_modifiers() const;
-    bool should_count_offline_idle_shutdown() const;
     void toggle_pairing_panel();
     void destroy_pairing_panel();
     void destroy_touch_layer();

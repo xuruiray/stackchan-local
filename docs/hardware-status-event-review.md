@@ -33,6 +33,7 @@ type HardwareStatusEvent = {
   };
   peripherals?: {
     headTouch?: Availability;
+    screenTouch?: Availability;
     ioExpander?: Availability;
     camera?: {
       available: boolean;

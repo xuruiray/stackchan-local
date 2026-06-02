@@ -583,6 +583,9 @@ describe("protocol validation", () => {
           headTouch: {
             available: true
           },
+          screenTouch: {
+            available: true
+          },
           ioExpander: {
             available: true
           },

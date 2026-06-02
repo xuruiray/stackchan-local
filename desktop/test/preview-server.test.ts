@@ -243,6 +243,7 @@ class FakeDeviceRegistry {
               }
             },
             peripherals: {
+              screenTouch: { available: true },
               rgb: { available: true, enabled: true },
               nfc: { available: false, reason: "not_detected_i2c_0x50" },
               powerMonitor: { available: true, busVoltage: 3.9, current: 0.11, power: 0.43 },

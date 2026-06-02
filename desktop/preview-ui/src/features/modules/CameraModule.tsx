@@ -3,7 +3,6 @@ import { useEffect, useMemo } from "react";
 import { captureImage, rawPreview } from "../../api/client";
 import { Button } from "../../components/Button";
 import { CameraPreview } from "../../components/CameraPreview";
-import { CameraStreamControls, cameraSelectionFromValue } from "../../components/CameraStreamControls";
 import { CommandPanel } from "../../components/CommandPanel";
 import { CommandStatus } from "../../components/CommandStatus";
 import { ModulePage } from "../../components/ModulePage";
@@ -22,29 +21,7 @@ export function CameraModule({
   const sourceCamera = snapshot?.status.sourceCamera;
   const rawPreviewCamera = snapshot?.status.rawPreview.camera;
   const command = useCommand();
-  const activeSelection = useMemo(
-    () =>
-      cameraSelectionFromValue({
-        width: rawPreviewCamera?.width ?? sourceCamera?.width ?? control?.width,
-        height: rawPreviewCamera?.height ?? sourceCamera?.height ?? control?.height,
-        fps: rawPreviewCamera?.fps ?? sourceCamera?.fps ?? control?.fps,
-        quality: rawPreviewCamera?.quality ?? sourceCamera?.quality ?? control?.quality
-      }),
-    [
-      control?.fps,
-      control?.height,
-      control?.quality,
-      control?.width,
-      rawPreviewCamera?.fps,
-      rawPreviewCamera?.height,
-      rawPreviewCamera?.quality,
-      rawPreviewCamera?.width,
-      sourceCamera?.fps,
-      sourceCamera?.height,
-      sourceCamera?.quality,
-      sourceCamera?.width
-    ]
-  );
+  const rawPreviewSettings = useMemo(() => ({ ...defaultCameraSettings, fps: 15 }), []);
 
   useEffect(() => {
     void applyRawPreview({
@@ -83,11 +60,6 @@ export function CameraModule({
     >
       <CameraPreview snapshot={snapshot} streamKind="raw" showTrackingOverlay={false} />
       <CommandPanel>
-        <CameraStreamControls
-          value={activeSelection}
-          pending={command.pending}
-          onChange={(selection) => void command.run(() => applyRawPreview({ enabled: true, ...selection }))}
-        />
         <div className="button-row">
           <Button
             disabled={command.pending}
@@ -95,7 +67,7 @@ export function CameraModule({
               void command.run(() =>
                 applyRawPreview({
                   enabled: true,
-                  ...activeSelection
+                  ...rawPreviewSettings
                 })
               )
             }

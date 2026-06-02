@@ -391,6 +391,7 @@ describe("StackChanWebSocketServer", () => {
           }
         },
         peripherals: {
+          screenTouch: { available: true },
           ioExpander: { available: true },
           nfc: { available: false, reason: "not_detected_i2c_0x50" },
           powerMonitor: { available: true, busVoltage: 3.9, current: 0.11, power: 0.43 },
@@ -432,6 +433,7 @@ describe("StackChanWebSocketServer", () => {
     expect(snapshot.sensors.hardwareStatus?.power?.batteryLevel).toBe(64);
     expect(snapshot.sensors.hardwareStatus?.network?.wifi?.rssi).toBe(-52);
     expect(snapshot.sensors.hardwareStatus?.power?.speakerVolume).toBe(80);
+    expect(snapshot.sensors.hardwareStatus?.peripherals?.screenTouch?.available).toBe(true);
     expect(snapshot.sensors.hardwareStatus?.peripherals?.ioExpander?.available).toBe(true);
     expect(snapshot.sensors.hardwareStatus?.motion?.servos?.power).toBe(true);
     expect(snapshot.sensors.hardwareStatus?.peripherals?.nfc?.reason).toBe("not_detected_i2c_0x50");

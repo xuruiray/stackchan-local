@@ -1703,6 +1703,12 @@ private:
             doc["event"]["peripherals"]["headTouch"]["reason"] = "driver_unavailable";
         }
 
+        const auto screen_touch_status = stackchan::hal::hardware::GetHardwareRegistry().module_status("touch-ft6336");
+        doc["event"]["peripherals"]["screenTouch"]["available"] = screen_touch_status.available;
+        if (!screen_touch_status.available && !screen_touch_status.reason.empty()) {
+            doc["event"]["peripherals"]["screenTouch"]["reason"] = screen_touch_status.reason.c_str();
+        }
+
         const bool io_expander_available = cache.servo.ioExpanderAvailable;
         doc["event"]["peripherals"]["ioExpander"]["available"] = io_expander_available;
         if (!io_expander_available) {

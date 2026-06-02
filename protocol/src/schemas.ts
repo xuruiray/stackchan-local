@@ -634,6 +634,7 @@ const hardwareStatusSchema = {
             reason: { type: "string" }
           }
         },
+        screenTouch: availabilitySchema,
         ioExpander: availabilitySchema,
         camera: {
           type: "object",

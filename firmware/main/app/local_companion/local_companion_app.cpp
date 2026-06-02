@@ -29,7 +29,6 @@ constexpr uint32_t kFaceTrackingApplyIntervalMs = 45;
 constexpr uint32_t kFaceTrackingTargetStaleMs = 180;
 constexpr uint32_t kFaceTrackingAckFailPauseMs = 300;
 constexpr uint32_t kFaceTrackingMaxConsecutiveAckFail = 3;
-constexpr uint32_t kOfflineIdleShutdownMs = 60000;
 constexpr int kFaceTrackingYawMin = -600;
 constexpr int kFaceTrackingYawMax = 600;
 constexpr int kFaceTrackingPitchMin = 100;
@@ -268,7 +267,6 @@ void AppLocalCompanion::onRunning()
 
     handle_head_long_press();
     sync_idle_modifiers();
-    sync_offline_idle_shutdown();
 }
 
 void AppLocalCompanion::onClose()
@@ -762,42 +760,6 @@ void AppLocalCompanion::sync_idle_modifiers()
     stop_idle_modifiers();
 }
 
-void AppLocalCompanion::sync_offline_idle_shutdown()
-{
-    if (_offline_idle_shutdown_requested) {
-        return;
-    }
-
-    const auto now = GetDeviceRuntime().millis();
-    if (!should_count_offline_idle_shutdown()) {
-        if (_offline_idle_shutdown_started != 0) {
-            mclog::tagInfo(getAppInfo().name, "offline idle shutdown canceled");
-        }
-        _offline_idle_shutdown_started = 0;
-        return;
-    }
-
-    if (_offline_idle_shutdown_started == 0) {
-        _offline_idle_shutdown_started = now;
-        mclog::tagInfo(getAppInfo().name, "desktop offline while idle, power off in {} ms", kOfflineIdleShutdownMs);
-        return;
-    }
-
-    if (now - _offline_idle_shutdown_started < kOfflineIdleShutdownMs) {
-        return;
-    }
-
-    _offline_idle_shutdown_requested = true;
-    stop_idle_modifiers();
-    if (_status_label) {
-        lv_obj_clear_flag(_status_label, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(_status_label, "Powering Off");
-    }
-    GetDeviceRuntime().showRgbColor(16, 0, 0);
-    mclog::tagWarn(getAppInfo().name, "desktop offline idle timeout reached, powering off");
-    GetDeviceRuntime().powerOff();
-}
-
 void AppLocalCompanion::start_idle_modifiers()
 {
     auto& stackchan = GetStackChan();
@@ -833,29 +795,6 @@ bool AppLocalCompanion::should_run_idle_modifiers() const
         case LocalCompanionState::Sleeping:
         case LocalCompanionState::PairingFailed:
         case LocalCompanionState::Error:
-        default:
-            return false;
-    }
-}
-
-bool AppLocalCompanion::should_count_offline_idle_shutdown() const
-{
-    if (_pairing_panel || GetDeviceRuntime().millis() < _idle_suppress_until || is_face_tracking_reserved()) {
-        return false;
-    }
-
-    switch (GetDeviceRuntime().getLocalCompanionState()) {
-        case LocalCompanionState::Connecting:
-        case LocalCompanionState::PairingFailed:
-        case LocalCompanionState::Disconnected:
-        case LocalCompanionState::Error:
-            return true;
-        case LocalCompanionState::Idle:
-        case LocalCompanionState::Connected:
-        case LocalCompanionState::Listening:
-        case LocalCompanionState::Thinking:
-        case LocalCompanionState::Speaking:
-        case LocalCompanionState::Sleeping:
         default:
             return false;
     }

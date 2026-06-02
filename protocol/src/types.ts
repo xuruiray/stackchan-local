@@ -473,6 +473,10 @@ export type RobotEvent =
           available: boolean;
           reason?: string;
         };
+        screenTouch?: {
+          available: boolean;
+          reason?: string;
+        };
         ioExpander?: {
           available: boolean;
           reason?: string;

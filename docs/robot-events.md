@@ -192,6 +192,10 @@ type HardwareStatusEvent = {
       available: boolean;
       reason?: string;
     };
+    screenTouch?: {
+      available: boolean;
+      reason?: string;
+    };
     ioExpander?: Availability;
     camera?: {
       available: boolean;

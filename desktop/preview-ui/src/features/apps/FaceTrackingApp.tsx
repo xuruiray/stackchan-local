@@ -1,9 +1,6 @@
-import { useMemo } from "react";
-
 import { postTracking } from "../../api/client";
 import { Button } from "../../components/Button";
 import { CameraPreview } from "../../components/CameraPreview";
-import { CameraStreamControls, cameraSelectionFromValue } from "../../components/CameraStreamControls";
 import { CommandPanel } from "../../components/CommandPanel";
 import { CommandStatus } from "../../components/CommandStatus";
 import { MetricGrid } from "../../components/MetricGrid";
@@ -33,16 +30,6 @@ export function FaceTrackingApp({
   const firmwarePitch = firmwareControl
     ? `${dash(firmwareControl.currentPitch)} -> ${dash(firmwareControl.nextPitch)} (${dash(firmwareControl.pitchDelta)})`
     : "-";
-  const activeSelection = useMemo(
-    () =>
-      cameraSelectionFromValue({
-        width: control?.camera?.width,
-        height: control?.camera?.height,
-        fps: control?.camera?.fps,
-        quality: control?.camera?.quality
-    }),
-    [control?.camera?.fps, control?.camera?.height, control?.camera?.quality, control?.camera?.width]
-  );
   const updateTracking = async (payload: unknown): Promise<PreviewSnapshot> => {
     const next = await postTracking(payload);
     setSnapshot?.(next);
@@ -93,11 +80,6 @@ export function FaceTrackingApp({
             {status?.enabled ? "Disable tracking" : "Enable tracking"}
           </Button>
         </div>
-        <CameraStreamControls
-          value={activeSelection}
-          pending={command.pending}
-          onChange={(selection) => void command.run(() => updateTracking({ control: { camera: selection } }))}
-        />
         <div className="form-grid">
           <NumberField
             label="Speed"
