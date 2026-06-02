@@ -1,14 +1,16 @@
+import type { Buffer } from "node:buffer";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import type {
   FaceTrackingControl,
   NormalizedFaceBox,
-  ProtocolTrace,
-  RobotEventMessage
+  RobotEvent,
+  ProtocolTrace
 } from "@stackchan-local/protocol";
 
 import type { DesktopConfig, FaceTrackingCameraPreset, Logger } from "../config.js";
+import { cameraFrameBuffer, type DesktopRobotEventMessage } from "../device/events.js";
 import type { DeviceRegistry } from "../device/registry.js";
 import type { RobotController } from "../robot/controller.js";
 import { PythonSidecarFaceDetector, type FaceDetectionResult, type FaceDetector } from "./detector.js";
@@ -49,7 +51,10 @@ export interface VisionTrackingStatus {
   detectorLatencyMs?: number;
   latency: VisionLatencyStatus;
   mediaCredit: VisionMediaCreditStatus;
+  faceTrackingControl?: FaceTrackingControlTelemetry;
 }
+
+export type FaceTrackingControlTelemetry = Extract<RobotEvent, { kind: "faceTrackingControl" }>;
 
 export interface VisionAdaptiveStatus {
   level: number;
@@ -81,7 +86,8 @@ export interface VisionFrameSnapshot {
   mimeType: "image/jpeg";
   width: number;
   height: number;
-  dataBase64: string;
+  jpegBuffer: Buffer;
+  jpegByteLength: number;
   timestamp: string;
   seq?: number;
   receivedAt: string;
@@ -140,8 +146,6 @@ export interface RawPreviewSettingsPatch {
 }
 
 export interface VisionTrackingOptions {
-  commandMaxHz?: number;
-  lostTimeoutMs?: number;
   streamRetryMs?: number;
   adaptivePressureMs?: number;
   adaptiveStableMs?: number;
@@ -151,9 +155,34 @@ type TrackFaceDispatch = Parameters<RobotController["trackFace"]>[0] & {
   target?: NormalizedFaceBox;
 };
 
+interface DetectedTrackCommandSnapshot {
+  timestampMs: number;
+  centerX: number;
+  centerY: number;
+  errorX: number;
+  errorY: number;
+  area?: number;
+  confidence?: number;
+  detector?: string;
+}
+
+interface TrackCommandDeltaDiagnostics {
+  dtMs: number;
+  dx: number;
+  dy: number;
+  distance: number;
+  velocityPerSec?: number;
+  areaRatio?: number;
+  previous: {
+    centerX: number;
+    centerY: number;
+    area?: number;
+    confidence?: number;
+    detector?: string;
+  };
+}
+
 const DEFAULT_OPTIONS: Required<VisionTrackingOptions> = {
-  commandMaxHz: 15,
-  lostTimeoutMs: 1500,
   streamRetryMs: 1000,
   adaptivePressureMs: 5000,
   adaptiveStableMs: 15000
@@ -168,14 +197,14 @@ const ADAPTIVE_DROP_RATE_THRESHOLD = 0.08;
 const ADAPTIVE_LATENCY_FRAME_RATIO = 0.8;
 const ADAPTIVE_WINDOW_MS = 5_000;
 const ADAPTIVE_MAX_LEVEL = 2;
-const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 1;
+const CAMERA_MEDIA_INITIAL_CREDIT_FRAMES = 2;
 const CAMERA_MEDIA_STEADY_CREDIT_FRAMES = 1;
-const CAMERA_MEDIA_MAX_IN_FLIGHT = 1;
-const CAMERA_MEDIA_REFILL_THRESHOLD = 0;
-const RAW_PREVIEW_MEDIA_INITIAL_CREDIT_FRAMES = 1;
+const CAMERA_MEDIA_MAX_IN_FLIGHT = 2;
+const CAMERA_MEDIA_REFILL_THRESHOLD = 1;
+const RAW_PREVIEW_MEDIA_INITIAL_CREDIT_FRAMES = 4;
 const RAW_PREVIEW_MEDIA_STEADY_CREDIT_FRAMES = 1;
-const RAW_PREVIEW_MEDIA_MAX_IN_FLIGHT = 1;
-const RAW_PREVIEW_MEDIA_REFILL_THRESHOLD = 0;
+const RAW_PREVIEW_MEDIA_MAX_IN_FLIGHT = 4;
+const RAW_PREVIEW_MEDIA_REFILL_THRESHOLD = 3;
 const CAMERA_STREAM_WIDTH = 320;
 const CAMERA_STREAM_HEIGHT = 240;
 const RAW_PREVIEW_CAMERA: CameraStreamSettings = {
@@ -183,66 +212,8 @@ const RAW_PREVIEW_CAMERA: CameraStreamSettings = {
   width: CAMERA_STREAM_WIDTH,
   height: CAMERA_STREAM_HEIGHT,
   fps: 15,
-  quality: 14
+  quality: 18
 };
-const TRACK_TARGET_STICKINESS_WEIGHT = 0.18;
-
-export interface OneEuroFilterOptions {
-  minCutoff: number;
-  beta: number;
-  dCutoff: number;
-}
-
-export class OneEuroFilter {
-  private lastTimestampMs?: number;
-  private lastRaw?: number;
-  private lastValue?: number;
-  private lastDerivative?: number;
-
-  constructor(private readonly options: OneEuroFilterOptions) {}
-
-  filter(value: number, timestampMs: number): number {
-    if (
-      this.lastTimestampMs === undefined ||
-      this.lastRaw === undefined ||
-      this.lastValue === undefined ||
-      this.lastDerivative === undefined
-    ) {
-      this.lastTimestampMs = timestampMs;
-      this.lastRaw = value;
-      this.lastValue = value;
-      this.lastDerivative = 0;
-      return value;
-    }
-
-    const dt = Math.max(0.001, (timestampMs - this.lastTimestampMs) / 1000);
-    const derivative = (value - this.lastRaw) / dt;
-    const filteredDerivative = exponentialSmooth(
-      derivative,
-      this.lastDerivative,
-      smoothingAlpha(this.options.dCutoff, dt)
-    );
-    const cutoff = this.options.minCutoff + this.options.beta * Math.abs(filteredDerivative);
-    const filteredValue = exponentialSmooth(value, this.lastValue, smoothingAlpha(cutoff, dt));
-
-    this.lastTimestampMs = timestampMs;
-    this.lastRaw = value;
-    this.lastValue = filteredValue;
-    this.lastDerivative = filteredDerivative;
-    return filteredValue;
-  }
-
-  velocity(): number {
-    return this.lastDerivative ?? 0;
-  }
-
-  reset(): void {
-    this.lastTimestampMs = undefined;
-    this.lastRaw = undefined;
-    this.lastValue = undefined;
-    this.lastDerivative = undefined;
-  }
-}
 
 export class VisionTrackingService {
   private readonly detector: FaceDetector;
@@ -252,7 +223,6 @@ export class VisionTrackingService {
   private enabled = false;
   private detectorAvailable = true;
   private inFlight = false;
-  private lostCommandSent = false;
   private lastStreamCommandAt = 0;
   private lastCommandAt = 0;
   private lastFrameAt?: Date;
@@ -260,6 +230,8 @@ export class VisionTrackingService {
   private lastFaceAt?: Date;
   private lastTarget?: NormalizedFaceBox;
   private lastSentTrackTarget?: NormalizedFaceBox;
+  private previousDetectedCommand?: DetectedTrackCommandSnapshot;
+  private noFaceStreak = 0;
   private commandWindowStartedAt = 0;
   private commandWindowCount = 0;
   private commandHz?: number;
@@ -281,6 +253,7 @@ export class VisionTrackingService {
   private mediaCreditOutstandingFrames = 0;
   private mediaCreditLastGrantedAt = 0;
   private mediaCreditReason?: string;
+  private lastFaceTrackingControl?: FaceTrackingControlTelemetry;
   private mediaCreditSessionId?: string;
   private adaptiveLevel = 0;
   private adaptiveReason?: string;
@@ -308,7 +281,14 @@ export class VisionTrackingService {
   ) {
     this.detector =
       detector ??
-      new PythonSidecarFaceDetector(config.faceTrackingPython, config.faceTrackingDetectorScript, logger);
+      new PythonSidecarFaceDetector(config.faceTrackingPython, config.faceTrackingDetectorScript, logger, {
+        env: {
+          STACKCHAN_FACE_TRACKING_YUNET_MODEL: config.faceTrackingYuNetModel,
+          STACKCHAN_FACE_TRACKING_YUNET_SCORE_THRESHOLD: String(config.faceTrackingYuNetScoreThreshold),
+          STACKCHAN_FACE_TRACKING_YUNET_NMS_THRESHOLD: String(config.faceTrackingYuNetNmsThreshold),
+          STACKCHAN_FACE_TRACKING_YUNET_TOP_K: String(config.faceTrackingYuNetTopK)
+        }
+      });
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.settings = settingsFromConfig(config);
     if (config.faceTrackingTraceLog) {
@@ -344,7 +324,6 @@ export class VisionTrackingService {
     }
 
     this.enabled = enabled;
-    this.lostCommandSent = false;
     this.lastError = undefined;
     this.resetTrackingTargetState();
     if (enabled) {
@@ -447,7 +426,8 @@ export class VisionTrackingService {
         outstandingFrames: this.mediaCreditOutstandingFrames,
         lastGrantedAt: this.mediaCreditLastGrantedAt > 0 ? new Date(this.mediaCreditLastGrantedAt).toISOString() : undefined,
         reason: this.mediaCreditReason
-      }
+      },
+      faceTrackingControl: this.lastFaceTrackingControl
     };
   }
 
@@ -570,10 +550,22 @@ export class VisionTrackingService {
     });
   }
 
-  private async handleEvent(message: RobotEventMessage): Promise<void> {
+  private async handleEvent(message: DesktopRobotEventMessage): Promise<void> {
+    if (message.event.kind === "faceTrackingControl") {
+      this.lastFaceTrackingControl = message.event;
+      this.trace?.write("faceTrackingControl", {
+        deviceId: message.deviceId,
+        eventId: message.eventId,
+        timestamp: message.timestamp,
+        event: message.event
+      });
+      this.emitPreviewUpdate();
+      return;
+    }
     if (message.event.kind !== "cameraFrame" || (!this.enabled && !this.rawPreviewEnabled)) {
       return;
     }
+    const jpegBuffer = cameraFrameBuffer(message.event);
     const receivedAt = new Date();
     const daemonReceivedAt = message.event.trace?.daemonReceivedAt ?? receivedAt.toISOString();
     const trace: ProtocolTrace = {
@@ -592,7 +584,8 @@ export class VisionTrackingService {
       mimeType: message.event.mimeType,
       width: message.event.width,
       height: message.event.height,
-      dataBase64: message.event.dataBase64,
+      jpegBuffer,
+      jpegByteLength: jpegBuffer.byteLength,
       timestamp: message.event.captureTimestamp ?? message.timestamp,
       seq: message.event.seq ?? message.seq,
       receivedAt: receivedAt.toISOString(),
@@ -625,7 +618,7 @@ export class VisionTrackingService {
         frameId: message.event.frameId,
         width: message.event.width,
         height: message.event.height,
-        dataBase64: message.event.dataBase64,
+        dataBase64: jpegBuffer.toString("base64"),
         timestampMs: this.nextDetectorTimestampMs(receivedAt.toISOString())
       });
       this.detectorAvailable = true;
@@ -817,28 +810,31 @@ export class VisionTrackingService {
   }
 
   private handleDetection(result: FaceDetectionResult): void {
+    const now = Date.now();
     this.lastFaces = result.faces;
-    const selected = selectTrackingFace(result.faces, this.lastTarget);
+    const selected = selectTrackingFace(result.faces);
     const frame = this.lastFrame?.frameId === result.frameId ? this.lastFrame : undefined;
     if (selected) {
       const trackingTarget = this.config.faceTrackingMirrorX ? mirrorFace(selected) : selected;
-      const centerX = trackingTarget.x + trackingTarget.width / 2;
-      const centerY = trackingTarget.y + trackingTarget.height / 2;
+      const center = faceCenter(trackingTarget);
+      const lastFaceAgeMs = this.lastFaceAt ? now - this.lastFaceAt.getTime() : undefined;
       this.traceFaceDetection(result, {
         frame,
         action: "target_ready",
         selected,
         trackingTarget,
-        centerX,
-        centerY
+        centerX: center.x,
+        centerY: center.y,
+        noFaceStreakBefore: this.noFaceStreak,
+        lastFaceAgeMs
       });
-      this.lastFaceAt = new Date();
-      this.lastTarget = selected;
-      this.lostCommandSent = false;
+      this.lastFaceAt = new Date(now);
+      this.noFaceStreak = 0;
+      this.lastTarget = trackingTarget;
       this.sendTrackCommand({
         detected: true,
-        centerX,
-        centerY,
+        centerX: center.x,
+        centerY: center.y,
         bbox: selected,
         confidence: selected.confidence,
         target: trackingTarget,
@@ -850,25 +846,14 @@ export class VisionTrackingService {
     }
 
     this.lastTarget = undefined;
+    this.noFaceStreak += 1;
     this.traceFaceDetection(result, {
       frame,
-      action: "no_face"
+      action: "no_face",
+      noFaceStreak: this.noFaceStreak,
+      lastFaceAgeMs: this.lastFaceAt ? now - this.lastFaceAt.getTime() : undefined
     });
     this.emitPreviewUpdate();
-
-    if (!this.lastFaceAt || this.lostCommandSent) {
-      return;
-    }
-
-    if (Date.now() - this.lastFaceAt.getTime() >= this.options.lostTimeoutMs) {
-      this.lostCommandSent = true;
-      this.sendTrackCommand({
-        detected: false,
-        reason: "face_lost",
-        speed: this.settings.speed,
-        control: this.settings.control
-      });
-    }
   }
 
   private traceFaceDetection(
@@ -880,16 +865,25 @@ export class VisionTrackingService {
       trackingTarget?: NormalizedFaceBox;
       centerX?: number;
       centerY?: number;
+      noFaceStreak?: number;
+      noFaceStreakBefore?: number;
+      lastFaceAgeMs?: number;
     }
   ): void {
     this.trace?.write("faceDetection", {
       frameId: result.frameId,
       action: details.action,
       faces: this.lastFaces.map(traceFace),
+      candidateScores: rankTrackingFaces(this.lastFaces)
+        .slice(0, 5)
+        .map(({ face, score }) => ({ ...traceFace(face), score })),
       selected: details.selected ? traceFace(details.selected) : undefined,
       trackingTarget: details.trackingTarget ? traceFace(details.trackingTarget) : undefined,
       centerX: details.centerX,
       centerY: details.centerY,
+      noFaceStreak: details.noFaceStreak,
+      noFaceStreakBefore: details.noFaceStreakBefore,
+      lastFaceAgeMs: details.lastFaceAgeMs,
       mirrorX: this.config.faceTrackingMirrorX,
       detectorLatencyMs: this.detectorLatencyMs,
       latency: this.latencyStatus(),
@@ -909,20 +903,9 @@ export class VisionTrackingService {
 
   private sendTrackCommand(command: TrackFaceDispatch): void {
     const now = Date.now();
-    const minInterval = 1000 / this.options.commandMaxHz;
     const { target, ...robotCommand } = command;
     const loggedCommand = { kind: "trackFace", ...robotCommand };
-    if (command.detected && now - this.lastCommandAt < minInterval) {
-      this.trace?.write("trackCommandSkipped", {
-        reason: "rate_gate",
-        command: loggedCommand,
-        target: target ? traceFace(target) : undefined,
-        commandAgeMs: now - this.lastCommandAt,
-        minIntervalMs: minInterval,
-        commandMaxHz: this.options.commandMaxHz
-      });
-      return;
-    }
+    const diagnostics = this.buildTrackCommandDiagnostics(command, now);
     this.lastCommandAt = now;
     this.recordCommandRate(now);
     if (command.detected && target) {
@@ -935,8 +918,9 @@ export class VisionTrackingService {
       target: target ? traceFace(target) : undefined,
       lastFaceAgeMs: this.lastFaceAt ? now - this.lastFaceAt.getTime() : undefined,
       commandHz: this.commandHz,
-      commandMaxHz: this.options.commandMaxHz
+      diagnostics
     });
+    this.updatePreviousDetectedCommand(command, now);
     void this.controller.trackFace(robotCommand, { waitForAck: false }).then((result) => {
       this.trace?.write("trackCommandResult", {
         command: loggedCommand,
@@ -950,6 +934,60 @@ export class VisionTrackingService {
       }
       this.emitPreviewUpdate();
     });
+  }
+
+  private buildTrackCommandDiagnostics(command: TrackFaceDispatch, now: number): Record<string, unknown> | undefined {
+    if (!command.detected || typeof command.centerX !== "number" || typeof command.centerY !== "number") {
+      return undefined;
+    }
+    const control = command.control ?? this.settings.control;
+    const target = command.target ?? command.bbox;
+    const targetArea = target ? target.width * target.height : undefined;
+    const errorX = command.centerX - 0.5;
+    const errorY = 0.5 - command.centerY;
+    const previous = this.previousDetectedCommand;
+    const delta =
+      previous === undefined
+        ? undefined
+        : commandDeltaDiagnostics(previous, command.centerX, command.centerY, targetArea, now);
+    const dtSeconds = delta === undefined ? undefined : Math.max(0.001, delta.dtMs / 1000);
+    return {
+      target: target
+        ? {
+            width: target.width,
+            height: target.height,
+            area: targetArea,
+            aspectRatio: target.height > 0 ? target.width / target.height : undefined,
+            confidence: command.confidence ?? target.confidence,
+            detector: command.target?.detector
+          }
+        : undefined,
+      errorX,
+      errorY,
+      distanceFromCenter: Math.hypot(errorX, errorY),
+      delta,
+      pidEstimate: {
+        yaw: pidAxisEstimate(control.yaw, errorX, previous?.errorX, dtSeconds, control.outputLimitDeg),
+        pitch: pidAxisEstimate(control.pitch, errorY, previous?.errorY, dtSeconds, control.outputLimitDeg)
+      }
+    };
+  }
+
+  private updatePreviousDetectedCommand(command: TrackFaceDispatch, now: number): void {
+    if (!command.detected || typeof command.centerX !== "number" || typeof command.centerY !== "number") {
+      return;
+    }
+    const target = command.target ?? command.bbox;
+    this.previousDetectedCommand = {
+      timestampMs: now,
+      centerX: command.centerX,
+      centerY: command.centerY,
+      errorX: command.centerX - 0.5,
+      errorY: 0.5 - command.centerY,
+      area: target ? target.width * target.height : undefined,
+      confidence: command.confidence ?? target?.confidence,
+      detector: command.target?.detector
+    };
   }
 
   private recordCommandRate(now: number): void {
@@ -977,6 +1015,8 @@ export class VisionTrackingService {
   private resetTrackingTargetState(): void {
     this.lastTarget = undefined;
     this.lastSentTrackTarget = undefined;
+    this.previousDetectedCommand = undefined;
+    this.noFaceStreak = 0;
   }
 
   private emitPreviewUpdate(): void {
@@ -1001,23 +1041,80 @@ export class VisionTrackingService {
 }
 
 export function selectTrackingFace(
-  faces: NormalizedFaceBox[],
-  previousTarget?: NormalizedFaceBox
+  faces: NormalizedFaceBox[]
 ): NormalizedFaceBox | undefined {
-  return faces
-    .filter((face) => face.width > 0 && face.height > 0)
-    .sort((a, b) => faceScore(b, previousTarget) - faceScore(a, previousTarget))[0];
+  return rankTrackingFaces(faces)[0]?.face;
 }
 
-function faceScore(face: NormalizedFaceBox, previousTarget?: NormalizedFaceBox): number {
+function rankTrackingFaces(faces: NormalizedFaceBox[]): Array<{ face: NormalizedFaceBox; score: number }> {
+  return faces
+    .filter((face) => face.width > 0 && face.height > 0)
+    .map((face) => ({
+      face,
+      score: faceScore(face)
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+function faceScore(face: NormalizedFaceBox): number {
   const area = face.width * face.height;
   const centerX = face.x + face.width / 2;
   const centerY = face.y + face.height / 2;
+  const confidence = face.confidence ?? 0;
   const distanceFromCenter = Math.hypot(centerX - 0.5, centerY - 0.5);
-  const distanceFromPrevious = previousTarget
-    ? Math.hypot(centerX - (previousTarget.x + previousTarget.width / 2), centerY - (previousTarget.y + previousTarget.height / 2))
-    : 0;
-  return area - distanceFromCenter * 0.05 - distanceFromPrevious * TRACK_TARGET_STICKINESS_WEIGHT;
+  return area + confidence * 0.02 - distanceFromCenter * 0.05;
+}
+
+function commandDeltaDiagnostics(
+  previous: DetectedTrackCommandSnapshot,
+  centerX: number,
+  centerY: number,
+  area: number | undefined,
+  now: number
+): TrackCommandDeltaDiagnostics {
+  const dtMs = Math.max(0, now - previous.timestampMs);
+  const dx = centerX - previous.centerX;
+  const dy = centerY - previous.centerY;
+  const distance = Math.hypot(dx, dy);
+  return {
+    dtMs,
+    dx,
+    dy,
+    distance,
+    velocityPerSec: dtMs > 0 ? (distance * 1000) / dtMs : undefined,
+    areaRatio: previous.area && area ? area / previous.area : undefined,
+    previous: {
+      centerX: previous.centerX,
+      centerY: previous.centerY,
+      area: previous.area,
+      confidence: previous.confidence,
+      detector: previous.detector
+    }
+  };
+}
+
+function pidAxisEstimate(
+  axis: FaceTrackingControl["yaw"],
+  error: number,
+  previousError: number | undefined,
+  dtSeconds: number | undefined,
+  outputLimitDeg: number
+): Record<string, number> {
+  const derivative = previousError === undefined || dtSeconds === undefined ? 0 : (error - previousError) / dtSeconds;
+  const pTerm = axis.kp * error;
+  const dTerm = axis.kd * derivative;
+  const rawOutputDeg = pTerm + dTerm;
+  const clampedOutputDeg = clampNumber(rawOutputDeg, -outputLimitDeg, outputLimitDeg);
+  return {
+    error,
+    direction: axis.direction,
+    pTerm,
+    derivative,
+    dTerm,
+    rawOutputDeg,
+    clampedOutputDeg,
+    estimatedServoDelta: clampedOutputDeg * axis.direction * 10
+  };
 }
 
 function mirrorFace(face: NormalizedFaceBox): NormalizedFaceBox {
@@ -1046,15 +1143,6 @@ function faceCenter(face: NormalizedFaceBox): { x: number; y: number } {
   };
 }
 
-function exponentialSmooth(value: number, previous: number, alpha: number): number {
-  return alpha * value + (1 - alpha) * previous;
-}
-
-function smoothingAlpha(cutoff: number, dtSeconds: number): number {
-  const tau = 1 / (2 * Math.PI * Math.max(0.0001, cutoff));
-  return 1 / (1 + tau / Math.max(0.001, dtSeconds));
-}
-
 function clampInt(value: number, min: number, max: number): number {
   return Math.round(Math.min(max, Math.max(min, value)));
 }
@@ -1073,12 +1161,14 @@ function settingsFromConfig(config: DesktopConfig): VisionTrackingSettings {
       yaw: {
         kp: clampNumber(config.faceTrackingYawKp, 0, 150),
         ki: clampNumber(config.faceTrackingYawKi, 0, 50),
-        kd: clampNumber(config.faceTrackingYawKd, 0, 80)
+        kd: clampNumber(config.faceTrackingYawKd, 0, 80),
+        direction: config.faceTrackingYawDirection
       },
       pitch: {
         kp: clampNumber(config.faceTrackingPitchKp, 0, 150),
         ki: clampNumber(config.faceTrackingPitchKi, 0, 50),
-        kd: clampNumber(config.faceTrackingPitchKd, 0, 80)
+        kd: clampNumber(config.faceTrackingPitchKd, 0, 80),
+        direction: config.faceTrackingPitchDirection
       },
       integralLimit: clampNumber(config.faceTrackingIntegralLimit, 0, 2),
       outputLimitDeg: clampNumber(config.faceTrackingOutputLimitDeg, 1, 45)
@@ -1105,7 +1195,11 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
       yaw: {
         kp: patch.control?.yaw?.kp === undefined ? current.control.yaw.kp : clampNumber(patch.control.yaw.kp, 0, 150),
         ki: patch.control?.yaw?.ki === undefined ? current.control.yaw.ki : clampNumber(patch.control.yaw.ki, 0, 50),
-        kd: patch.control?.yaw?.kd === undefined ? current.control.yaw.kd : clampNumber(patch.control.yaw.kd, 0, 80)
+        kd: patch.control?.yaw?.kd === undefined ? current.control.yaw.kd : clampNumber(patch.control.yaw.kd, 0, 80),
+        direction:
+          patch.control?.yaw?.direction === undefined
+            ? current.control.yaw.direction
+            : normalizeDirection(patch.control.yaw.direction)
       },
       pitch: {
         kp:
@@ -1119,7 +1213,11 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
         kd:
           patch.control?.pitch?.kd === undefined
             ? current.control.pitch.kd
-            : clampNumber(patch.control.pitch.kd, 0, 80)
+            : clampNumber(patch.control.pitch.kd, 0, 80),
+        direction:
+          patch.control?.pitch?.direction === undefined
+            ? current.control.pitch.direction
+            : normalizeDirection(patch.control.pitch.direction)
       },
       integralLimit:
         patch.control?.integralLimit === undefined
@@ -1136,6 +1234,10 @@ function mergeSettings(current: VisionTrackingSettings, patch: VisionTrackingSet
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeDirection(value: number): -1 | 1 {
+  return value < 0 ? -1 : 1;
 }
 
 function cameraSettingsFromPreset(

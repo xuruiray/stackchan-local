@@ -94,6 +94,8 @@ struct OutboundMessage {
     int cameraWidth = 0;
     int cameraHeight = 0;
     std::string cameraCaptureTimestamp;
+    std::string cameraCaptureDoneAt;
+    std::string cameraEncodeStartedAt;
     std::string cameraEncodedAt;
     std::string cameraQueuedAt;
     std::string cameraTxStartAt;
@@ -118,12 +120,6 @@ struct NetworkTelemetryCache {
 struct ServoTelemetryCache {
     bool ioExpanderAvailable = false;
     bool servoPower = false;
-    float yawAngle = 0.0f;
-    bool yawMoving = false;
-    bool yawTorque = false;
-    float pitchAngle = 0.0f;
-    bool pitchMoving = false;
-    bool pitchTorque = false;
 };
 
 struct SensorTelemetryCacheCopy {
@@ -174,7 +170,7 @@ static constexpr int kDefaultCameraCreditFrames = 2;
 static constexpr int kMaxCameraCreditFrames = 12;
 static constexpr uint32_t kWorkerTickIntervalMs = 10;
 static constexpr uint32_t kCameraTaskTickIntervalMs = 20;
-static constexpr uint32_t kCameraTaskActiveYieldMs = 20;
+static constexpr uint32_t kCameraTaskActiveYieldMs = 1;
 static constexpr uint32_t kSensorTaskTickIntervalMs = 20;
 static constexpr uint32_t kTxTaskIdleIntervalMs = 20;
 static constexpr size_t kCriticalTxQueueMax = 48;
@@ -270,6 +266,10 @@ public:
             GetDeviceRuntime().onHeadPetGesture.disconnect(_head_touch_connection);
             _head_touch_connection = -1;
         }
+        if (_face_tracking_control_connection >= 0) {
+            GetDeviceRuntime().onFaceTrackingControlEvent.disconnect(_face_tracking_control_connection);
+            _face_tracking_control_connection = -1;
+        }
     }
 
     void init(std::function<void(std::string_view)> onStartLog)
@@ -286,6 +286,10 @@ public:
             _pending_head_touch     = gesture;
             _has_pending_head_touch = true;
         });
+        _face_tracking_control_connection =
+            GetDeviceRuntime().onFaceTrackingControlEvent.connect([this](const LocalFaceTrackingControlEvent& event) {
+                send_face_tracking_control_event(event);
+            });
 
         start_background_tasks();
         connect();
@@ -367,6 +371,7 @@ private:
     NetworkTelemetryCache _network_cache;
     ServoTelemetryCache _servo_cache;
     int _head_touch_connection = -1;
+    int _face_tracking_control_connection = -1;
     bool _use_mdns                   = true;
     bool _last_screen_touch_valid    = false;
     bool _has_pending_head_touch     = false;
@@ -642,6 +647,8 @@ private:
         header_doc["seq"] = message.cameraSeq;
         header_doc["captureTimestamp"] = message.cameraCaptureTimestamp;
         header_doc["sentAt"] = message.cameraTxStartAt;
+        header_doc["deviceCaptureDoneAt"] = message.cameraCaptureDoneAt;
+        header_doc["deviceEncodeStartedAt"] = message.cameraEncodeStartedAt;
         header_doc["deviceEncodedAt"] = message.cameraEncodedAt;
         header_doc["deviceQueuedAt"] = message.cameraQueuedAt;
         header_doc["deviceTxStartAt"] = message.cameraTxStartAt;
@@ -1038,7 +1045,7 @@ private:
         std::lock_guard<std::mutex> lock(_face_tracking_mutex);
         const uint32_t now = GetDeviceRuntime().millis();
         _face_tracking_target.updatedAt = now;
-        _face_tracking_target.speed     = std::max(0, std::min(1000, command["speed"] | 420));
+        _face_tracking_target.speed     = std::max(0, std::min(1000, command["speed"] | 300));
         update_tracking_control(_face_tracking_target.control, command["control"].as<ArduinoJson::JsonObject>());
 
         if (!detected) {
@@ -1239,47 +1246,60 @@ private:
         int frame_width    = 0;
         int frame_height   = 0;
         std::string capture_timestamp;
+        std::string capture_done_at;
+        std::string encode_started_at;
+        struct CameraStreamTiming {
+            uint32_t captureStartMs = 0;
+            uint32_t captureEndMs   = 0;
+            uint32_t encodeEndMs    = 0;
+            std::string captureDoneAt;
+            std::string encodeStartedAt;
+        } timing;
         {
             std::lock_guard<std::mutex> lock(_camera_mutex);
             _last_camera_frame_time = now;
             capture_timestamp = iso_now();
         }
 
-        const uint32_t capture_start_ms = GetDeviceRuntime().millis();
+        timing.captureStartMs = GetDeviceRuntime().millis();
         {
             std::lock_guard<std::mutex> hardware_lock(_camera_hardware_mutex);
             const bool wait_for_fresh_frame = stream_config.intervalMs >= 120;
-            if (!camera->StreamCaptures(wait_for_fresh_frame) || camera->GetFrameData() == nullptr || camera->GetFrameSize() == 0) {
-                std::lock_guard<std::mutex> lock(_camera_mutex);
-                _last_camera_capture_ms = GetDeviceRuntime().millis() - capture_start_ms;
-                return true;
-            }
-            const uint32_t capture_end_ms = GetDeviceRuntime().millis();
-            {
-                std::lock_guard<std::mutex> lock(_camera_mutex);
-                _last_camera_capture_ms = capture_end_ms - capture_start_ms;
-            }
-            frame_width  = camera->GetFrameWidth();
-            frame_height = camera->GetFrameHeight();
-            const uint32_t encode_start_ms = GetDeviceRuntime().millis();
-            if (!image_to_jpeg((uint8_t*)camera->GetFrameData(), camera->GetFrameSize(), frame_width, frame_height,
-                               (v4l2_pix_fmt_t)camera->GetFrameFormat(), stream_config.jpegQuality, &jpeg_data,
-                               &jpeg_len)) {
+            if (!camera->StreamCaptureJpeg(
+                    wait_for_fresh_frame, stream_config.jpegQuality, &jpeg_data, &jpeg_len,
+                    [](void* context) {
+                        auto* marker = static_cast<CameraStreamTiming*>(context);
+                        marker->captureEndMs     = GetDeviceRuntime().millis();
+                        marker->captureDoneAt    = iso_now();
+                        marker->encodeStartedAt  = marker->captureDoneAt;
+                    },
+                    &timing)) {
                 if (jpeg_data) {
                     free(jpeg_data);
                 }
+                const uint32_t failure_ms = GetDeviceRuntime().millis();
                 std::lock_guard<std::mutex> lock(_camera_mutex);
-                _last_camera_encode_ms = GetDeviceRuntime().millis() - encode_start_ms;
+                _last_camera_capture_ms =
+                    timing.captureEndMs > 0 ? timing.captureEndMs - timing.captureStartMs : failure_ms - timing.captureStartMs;
+                _last_camera_encode_ms = timing.captureEndMs > 0 ? failure_ms - timing.captureEndMs : 0;
                 return true;
             }
+            timing.encodeEndMs = GetDeviceRuntime().millis();
             {
                 std::lock_guard<std::mutex> lock(_camera_mutex);
-                _last_camera_encode_ms = GetDeviceRuntime().millis() - encode_start_ms;
+                _last_camera_capture_ms =
+                    timing.captureEndMs > 0 ? timing.captureEndMs - timing.captureStartMs : timing.encodeEndMs - timing.captureStartMs;
+                _last_camera_encode_ms = timing.captureEndMs > 0 ? timing.encodeEndMs - timing.captureEndMs : 0;
             }
+            capture_done_at = timing.captureDoneAt;
+            encode_started_at = timing.encodeStartedAt;
+            frame_width  = camera->GetFrameWidth();
+            frame_height = camera->GetFrameHeight();
         }
 
         const std::string encoded_at = iso_now();
-        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height, capture_timestamp, encoded_at, total_start_ms);
+        send_camera_frame(jpeg_data, jpeg_len, frame_width, frame_height, capture_timestamp, capture_done_at,
+                          encode_started_at, encoded_at, total_start_ms);
         free(jpeg_data);
         return true;
     }
@@ -1424,13 +1444,6 @@ private:
     {
         _servo_cache.ioExpanderAvailable = GetDeviceRuntime().isIoExpanderAvailable();
         _servo_cache.servoPower = GetDeviceRuntime().isServoPowerEnabled();
-        auto& motion = GetStackChan().motion();
-        _servo_cache.yawAngle = motion.yawServo().getCurrentAngle() / 10.0f;
-        _servo_cache.yawMoving = motion.yawServo().isMoving();
-        _servo_cache.yawTorque = motion.yawServo().getTorqueEnabled();
-        _servo_cache.pitchAngle = motion.pitchServo().getCurrentAngle() / 10.0f;
-        _servo_cache.pitchMoving = motion.pitchServo().isMoving();
-        _servo_cache.pitchTorque = motion.pitchServo().getTorqueEnabled();
     }
 
     void refresh_mic_cache()
@@ -1812,7 +1825,9 @@ private:
     }
 
     bool send_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height,
-                           const std::string& capture_timestamp, const std::string& encoded_at, uint32_t total_start_ms)
+                           const std::string& capture_timestamp, const std::string& capture_done_at,
+                           const std::string& encode_started_at, const std::string& encoded_at,
+                           uint32_t total_start_ms)
     {
         const uint32_t frame_id = next_camera_frame_id();
         const uint32_t seq = next_outgoing_seq();
@@ -1823,7 +1838,7 @@ private:
         }
         if (binary_camera_frame_enabled &&
             send_binary_camera_frame(jpeg_data, jpeg_len, width, height, frame_id, seq, capture_timestamp,
-                                     encoded_at, total_start_ms)) {
+                                     capture_done_at, encode_started_at, encoded_at, total_start_ms)) {
             return true;
         }
 
@@ -1853,6 +1868,8 @@ private:
         doc["event"]["captureTimestamp"] = capture_timestamp;
         doc["event"]["sentAt"]     = sent_at;
         doc["event"]["trace"]["deviceCapturedAt"] = capture_timestamp;
+        doc["event"]["trace"]["deviceCaptureDoneAt"] = capture_done_at;
+        doc["event"]["trace"]["deviceEncodeStartedAt"] = encode_started_at;
         doc["event"]["trace"]["deviceEncodedAt"] = encoded_at;
         doc["event"]["trace"]["deviceQueuedAt"] = sent_at;
         doc["event"]["trace"]["deviceSentAt"] = sent_at;
@@ -1861,8 +1878,9 @@ private:
     }
 
     bool send_binary_camera_frame(const uint8_t* jpeg_data, size_t jpeg_len, int width, int height, uint32_t frame_id,
-                                  uint32_t seq, const std::string& capture_timestamp, const std::string& encoded_at,
-                                  uint32_t total_start_ms)
+                                  uint32_t seq, const std::string& capture_timestamp,
+                                  const std::string& capture_done_at, const std::string& encode_started_at,
+                                  const std::string& encoded_at, uint32_t total_start_ms)
     {
         if (jpeg_data == nullptr || jpeg_len == 0) {
             return false;
@@ -1877,6 +1895,8 @@ private:
         message.cameraWidth = width;
         message.cameraHeight = height;
         message.cameraCaptureTimestamp = capture_timestamp;
+        message.cameraCaptureDoneAt = capture_done_at;
+        message.cameraEncodeStartedAt = encode_started_at;
         message.cameraEncodedAt = encoded_at;
         message.cameraQueuedAt = iso_now();
         message.cameraTotalStartMs = total_start_ms;
@@ -1943,6 +1963,59 @@ private:
         doc["event"]["kind"]   = "state";
         doc["event"]["mode"]   = mode;
         doc["event"]["detail"] = detail;
+        send_json(doc);
+    }
+
+    const char* face_tracking_control_action_to_string(LocalFaceTrackingControlAction action)
+    {
+        switch (action) {
+            case LocalFaceTrackingControlAction::Applied:
+                return "applied";
+            case LocalFaceTrackingControlAction::Deadband:
+                return "deadband";
+            case LocalFaceTrackingControlAction::Ignored:
+            default:
+                return "ignored";
+        }
+    }
+
+    void send_face_tracking_control_event(const LocalFaceTrackingControlEvent& control)
+    {
+        ArduinoJson::JsonDocument doc;
+        prepare_event_doc(doc, "faceTrackingControl");
+        auto event = doc["event"].as<ArduinoJson::JsonObject>();
+        event["kind"] = "faceTrackingControl";
+        event["action"] = face_tracking_control_action_to_string(control.action);
+        event["uptimeMs"] = control.uptimeMs;
+        event["targetAgeMs"] = control.targetAgeMs;
+        event["centerX"] = control.centerX;
+        event["centerY"] = control.centerY;
+        event["errorX"] = control.errorX;
+        event["errorY"] = control.errorY;
+        event["currentYaw"] = control.currentYaw;
+        event["currentPitch"] = control.currentPitch;
+        event["commandYaw"] = control.commandYaw;
+        event["commandPitch"] = control.commandPitch;
+        event["nextYaw"] = control.nextYaw;
+        event["nextPitch"] = control.nextPitch;
+        event["yawDelta"] = control.yawDelta;
+        event["pitchDelta"] = control.pitchDelta;
+        event["requestedYawDelta"] = control.requestedYawDelta;
+        event["requestedPitchDelta"] = control.requestedPitchDelta;
+        event["appliedYawStep"] = control.appliedYawStep;
+        event["appliedPitchStep"] = control.appliedPitchStep;
+        event["maxYawStep"] = control.maxYawStep;
+        event["maxPitchStep"] = control.maxPitchStep;
+        event["yawOutputDeg"] = control.yawOutputDeg;
+        event["pitchOutputDeg"] = control.pitchOutputDeg;
+        event["yawDirection"] = control.yawDirection;
+        event["pitchDirection"] = control.pitchDirection;
+        event["speed"] = control.speed;
+        event["ackOk"] = control.ackOk;
+        event["ackFailCount"] = control.ackFailCount;
+        if (control.reason && strlen(control.reason) > 0) {
+            event["reason"] = control.reason;
+        }
         send_json(doc);
     }
 

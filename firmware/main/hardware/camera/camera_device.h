@@ -12,6 +12,9 @@
 #include "esp_video_init.h"
 
 class StackChanCamera : public Camera {
+public:
+    using StreamCaptureReadyCallback = void (*)(void* context);
+
 private:
     struct FrameBuffer {
         uint8_t* data         = nullptr;
@@ -42,6 +45,8 @@ public:
     virtual void SetExplainUrl(const std::string& url, const std::string& token);
     virtual bool Capture() override;
     bool StreamCaptures(bool fresh_frame = false);
+    bool StreamCaptureJpeg(bool fresh_frame, int quality, uint8_t** jpeg_data, size_t* jpeg_len,
+                           StreamCaptureReadyCallback on_capture_ready = nullptr, void* callback_context = nullptr);
     bool SetFrameSize(int width, int height);
 
     // 翻转控制函数

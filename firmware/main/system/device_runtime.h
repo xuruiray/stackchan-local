@@ -170,6 +170,7 @@ public:
     uitk::Signal<const WsReactMessage_t&> onWsReactMessage;
     uitk::Signal<std::string_view> onWsDanceData;
     uitk::Signal<const char*> onLocalCompanionActivity;
+    uitk::Signal<const LocalFaceTrackingControlEvent&> onFaceTrackingControlEvent;
 
     void startLocalCompanionService(std::function<void(std::string_view)> onStartLog);
     LocalCompanionState getLocalCompanionState();

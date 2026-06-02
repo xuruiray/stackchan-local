@@ -168,6 +168,7 @@ export type FaceTrackingPidAxis = {
   kp: number;
   ki: number;
   kd: number;
+  direction: -1 | 1;
 };
 
 export type FaceTrackingControl = {
@@ -273,6 +274,8 @@ export interface RobotCommandMessage {
 
 export type ProtocolTrace = {
   deviceCapturedAt?: string;
+  deviceCaptureDoneAt?: string;
+  deviceEncodeStartedAt?: string;
   deviceEncodedAt?: string;
   deviceQueuedAt?: string;
   deviceSentAt?: string;
@@ -394,6 +397,38 @@ export type RobotEvent =
       requestId: string;
       state: "started" | "finished" | "failed";
       message?: string;
+    }
+  | {
+      kind: "faceTrackingControl";
+      action: "applied" | "deadband" | "ignored";
+      uptimeMs: number;
+      targetAgeMs?: number;
+      centerX?: number;
+      centerY?: number;
+      errorX?: number;
+      errorY?: number;
+      currentYaw?: number;
+      currentPitch?: number;
+      commandYaw?: number;
+      commandPitch?: number;
+      nextYaw?: number;
+      nextPitch?: number;
+      yawDelta?: number;
+      pitchDelta?: number;
+      requestedYawDelta?: number;
+      requestedPitchDelta?: number;
+      appliedYawStep?: number;
+      appliedPitchStep?: number;
+      maxYawStep?: number;
+      maxPitchStep?: number;
+      yawOutputDeg?: number;
+      pitchOutputDeg?: number;
+      yawDirection?: -1 | 1;
+      pitchDirection?: -1 | 1;
+      speed?: number;
+      ackOk?: boolean;
+      ackFailCount?: number;
+      reason?: string;
     }
   | {
       kind: "cameraFrame";

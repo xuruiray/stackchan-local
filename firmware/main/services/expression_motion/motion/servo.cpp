@@ -87,6 +87,18 @@ void Servo::moveWithSpeed(int angle, int speed)
     moveWithSpringParams(angle, spring_options.stiffness, spring_options.damping);
 }
 
+bool Servo::writeStepWithAck(int angle, int speed)
+{
+    angle = uitk::clamp(angle, _angle_limit.x, _angle_limit.y);
+    if (!set_angle_with_ack_impl(angle, speed)) {
+        return false;
+    }
+
+    _angle_anim.teleport(angle);
+    _snap_to_target_on_rest = false;
+    return true;
+}
+
 int Servo::getCurrentAngle()
 {
     return _angle_anim.directValue();
@@ -114,6 +126,13 @@ void Servo::update_angle_anim_target(int angle)
     }
     _angle_anim             = angle;  // Apply new target
     _snap_to_target_on_rest = true;
+}
+
+bool Servo::set_angle_with_ack_impl(int angle, int speed)
+{
+    (void)speed;
+    set_angle_impl(angle);
+    return true;
 }
 
 uitk::SpringOptions_t Servo::map_speed_to_spring_options(int speed)

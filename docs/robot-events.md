@@ -19,6 +19,7 @@
 | `commandAck` | 命令通道 | 命令接受/拒绝 | 命令触发 |
 | `commandStatus` | 命令通道 | 命令执行进度/完成/失败 | 命令触发 |
 | `playback` | 音频播放 | 播放开始/结束/失败 | 播放命令触发 |
+| `faceTrackingControl` | 人脸追踪固件控制器 | PID 实际执行结果、舵机位置和 delta | 追踪 PID 应用时推送，最高约 8.3 Hz |
 | `wakeWord` | 语音唤醒事件 | 唤醒词文本 | 真实语音唤醒时推送 |
 
 ## 数据格式
@@ -128,6 +129,29 @@ type IrEvent = {
   repeat?: boolean;
   requestId?: string;
   carrierHz?: number;
+  reason?: string;
+};
+
+type FaceTrackingControlEvent = {
+  kind: "faceTrackingControl";
+  action: "applied" | "deadband" | "ignored";
+  uptimeMs: number;
+  targetAgeMs?: number;
+  centerX?: number;
+  centerY?: number;
+  errorX?: number;
+  errorY?: number;
+  currentYaw?: number;
+  currentPitch?: number;
+  nextYaw?: number;
+  nextPitch?: number;
+  yawDelta?: number;
+  pitchDelta?: number;
+  yawOutputDeg?: number;
+  pitchOutputDeg?: number;
+  yawDirection?: -1 | 1;
+  pitchDirection?: -1 | 1;
+  speed?: number;
   reason?: string;
 };
 ```

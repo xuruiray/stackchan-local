@@ -5,6 +5,8 @@ export interface MjpegFrame {
   frameId?: string;
   timestamp?: string;
   captureTimestamp?: string;
+  deviceCaptureDoneAt?: string;
+  deviceEncodeStartedAt?: string;
   deviceEncodedAt?: string;
   deviceQueuedAt?: string;
   deviceSentAt?: string;
@@ -63,6 +65,8 @@ export function useMjpegStream(src: string): MjpegStreamState {
             frameId: headers.get("x-frame-id") ?? undefined,
             timestamp: headers.get("x-frame-timestamp") ?? undefined,
             captureTimestamp: headers.get("x-frame-capture-timestamp") ?? headers.get("x-frame-timestamp") ?? undefined,
+            deviceCaptureDoneAt: headers.get("x-frame-device-capture-done-at") ?? undefined,
+            deviceEncodeStartedAt: headers.get("x-frame-device-encode-started-at") ?? undefined,
             deviceEncodedAt: headers.get("x-frame-device-encoded-at") ?? undefined,
             deviceQueuedAt: headers.get("x-frame-device-queued-at") ?? undefined,
             deviceSentAt: headers.get("x-frame-sent-at") ?? undefined,

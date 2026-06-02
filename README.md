@@ -289,7 +289,7 @@ npm run vision:install
 STACKCHAN_FACE_TRACKING=1 npm run dev
 ```
 
-Face tracking uses the local Python OpenCV sidecar and fixed 320 x 240 camera input. The WebUI exposes stream options and center-point PID controls.
+Face tracking uses the local Python OpenCV YuNet sidecar and fixed 320 x 240 camera input. The WebUI exposes stream options and center-point PID controls.
 
 ### 4. Build And Flash Firmware
 

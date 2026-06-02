@@ -90,6 +90,34 @@ static void log_available_video_devices()
 #define CAM_PRINT_FOURCC(pixelformat) (void)0;
 #endif  // CONFIG_XIAOZHI_ENABLE_CAMERA_DEBUG_MODE
 
+static bool stream_direct_jpeg_format(v4l2_pix_fmt_t sensor_format, v4l2_pix_fmt_t& jpeg_format)
+{
+#if defined(CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE) || defined(CONFIG_XIAOZHI_ENABLE_CAMERA_ENDIANNESS_SWAP)
+    return false;
+#else
+    switch (sensor_format) {
+        case V4L2_PIX_FMT_RGB565:
+        case V4L2_PIX_FMT_RGB24:
+        case V4L2_PIX_FMT_YUYV:
+        case V4L2_PIX_FMT_YUV420:
+        case V4L2_PIX_FMT_GREY:
+            jpeg_format = sensor_format;
+            return true;
+        case V4L2_PIX_FMT_YUV422P:
+            // esp_video exposes this as YUV422P, but the DVP data layout is YUYV.
+            jpeg_format = V4L2_PIX_FMT_YUYV;
+            return true;
+#ifdef CONFIG_XIAOZHI_CAMERA_ALLOW_JPEG_INPUT
+        case V4L2_PIX_FMT_JPEG:
+            jpeg_format = sensor_format;
+            return true;
+#endif  // CONFIG_XIAOZHI_CAMERA_ALLOW_JPEG_INPUT
+        default:
+            return false;
+    }
+#endif
+}
+
 StackChanCamera::StackChanCamera(const esp_video_init_config_t& config)
 {
     if (esp_video_init(&config) != ESP_OK) {
@@ -271,7 +299,7 @@ StackChanCamera::StackChanCamera(const esp_video_init_config_t& config)
 
     // 申请缓冲并mmap
     struct v4l2_requestbuffers req = {};
-    req.count                      = strcmp(video_device_name, ESP_VIDEO_MIPI_CSI_DEVICE_NAME) == 0 ? 2 : 1;
+    req.count                      = 2;
     req.type                       = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory                     = V4L2_MEMORY_MMAP;
     if (ioctl(video_fd_, VIDIOC_REQBUFS, &req) != 0) {
@@ -1010,6 +1038,100 @@ bool StackChanCamera::StreamCaptures(bool fresh_frame)
     }
 
     return true;
+}
+
+bool StackChanCamera::StreamCaptureJpeg(bool fresh_frame, int quality, uint8_t** jpeg_data, size_t* jpeg_len,
+                                        StreamCaptureReadyCallback on_capture_ready, void* callback_context)
+{
+    if (jpeg_data == nullptr || jpeg_len == nullptr) {
+        return false;
+    }
+    *jpeg_data = nullptr;
+    *jpeg_len  = 0;
+
+    v4l2_pix_fmt_t jpeg_format = 0;
+    if (!stream_direct_jpeg_format(sensor_format_, jpeg_format)) {
+        if (!StreamCaptures(fresh_frame) || frame_.data == nullptr || frame_.len == 0) {
+            return false;
+        }
+        if (on_capture_ready) {
+            on_capture_ready(callback_context);
+        }
+        return image_to_jpeg(frame_.data, frame_.len, frame_.width, frame_.height, frame_.format, quality, jpeg_data,
+                             jpeg_len);
+    }
+
+    if (encoder_thread_.joinable()) {
+        encoder_thread_.join();
+    }
+
+    if (!streaming_on_ || video_fd_ < 0) {
+        return false;
+    }
+
+    if (fresh_frame) {
+        struct v4l2_buffer stale_buf = {};
+        stale_buf.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        stale_buf.memory             = V4L2_MEMORY_MMAP;
+        if (ioctl(video_fd_, VIDIOC_DQBUF, &stale_buf) == 0) {
+            if (ioctl(video_fd_, VIDIOC_QBUF, &stale_buf) != 0) {
+                ESP_LOGE(TAG, "fresh frame discard VIDIOC_QBUF failed");
+                return false;
+            }
+        } else {
+            ESP_LOGW(TAG, "fresh frame discard VIDIOC_DQBUF failed, errno=%d(%s)", errno, strerror(errno));
+        }
+    }
+
+    struct v4l2_buffer buf = {};
+    buf.type               = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory             = V4L2_MEMORY_MMAP;
+    if (ioctl(video_fd_, VIDIOC_DQBUF, &buf) != 0) {
+        ESP_LOGE(TAG, "VIDIOC_DQBUF failed");
+        return false;
+    }
+
+    if (buf.index >= mmap_buffers_.size() || mmap_buffers_[buf.index].start == nullptr) {
+        ESP_LOGE(TAG, "invalid mmap buffer index: %lu", buf.index);
+        if (ioctl(video_fd_, VIDIOC_QBUF, &buf) != 0) {
+            ESP_LOGE(TAG, "Cleanup: VIDIOC_QBUF failed");
+        }
+        return false;
+    }
+
+    frame_.len    = buf.bytesused;
+    frame_.format = jpeg_format;
+
+#ifdef CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
+    ESP_LOGD(TAG, "direct jpeg disabled by rotation, sensor_width = %d, sensor_height = %d", sensor_width_,
+             sensor_height_);
+#else
+    ESP_LOGD(TAG, "direct jpeg mmap length = %d, bytesused = %lu, frame.width = %d, frame.height = %d",
+             mmap_buffers_[buf.index].length, buf.bytesused, frame_.width, frame_.height);
+#endif  // CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
+    ESP_LOG_BUFFER_HEXDUMP(TAG, mmap_buffers_[buf.index].start, MIN(mmap_buffers_[buf.index].length, 256),
+                           ESP_LOG_DEBUG);
+
+    if (on_capture_ready) {
+        on_capture_ready(callback_context);
+    }
+
+    const size_t src_len = MIN(mmap_buffers_[buf.index].length, buf.bytesused);
+    const bool encoded =
+        image_to_jpeg(static_cast<uint8_t*>(mmap_buffers_[buf.index].start), src_len, frame_.width, frame_.height,
+                      jpeg_format, quality, jpeg_data, jpeg_len);
+
+    if (ioctl(video_fd_, VIDIOC_QBUF, &buf) != 0) {
+        ESP_LOGE(TAG, "VIDIOC_QBUF failed");
+        if (encoded && *jpeg_data != nullptr) {
+            free(*jpeg_data);
+            *jpeg_data = nullptr;
+            *jpeg_len  = 0;
+        }
+        return false;
+    }
+
+    return encoded;
 }
 
 bool StackChanCamera::SetHMirror(bool enabled)

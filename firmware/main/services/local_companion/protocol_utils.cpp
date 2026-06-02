@@ -173,6 +173,8 @@ static void update_pid_axis(LocalFaceTrackingTarget::PidAxis& axis, ArduinoJson:
     axis.kp = clamp_float(source["kp"] | axis.kp, 0.0f, 150.0f);
     axis.ki = clamp_float(source["ki"] | axis.ki, 0.0f, 50.0f);
     axis.kd = clamp_float(source["kd"] | axis.kd, 0.0f, 80.0f);
+    const int direction = source["direction"] | axis.direction;
+    axis.direction = direction < 0 ? -1 : 1;
 }
 
 void update_tracking_control(LocalFaceTrackingTarget::Control& control, ArduinoJson::JsonObject source)

@@ -17,6 +17,8 @@ export interface BinaryCameraFrameHeader {
   seq?: number;
   captureTimestamp?: string;
   sentAt?: string;
+  deviceCaptureDoneAt?: string;
+  deviceEncodeStartedAt?: string;
   deviceEncodedAt?: string;
   deviceQueuedAt?: string;
   deviceTxStartAt?: string;
@@ -130,6 +132,8 @@ function parseCameraFrameHeader(source: string): BinaryCameraFrameHeader {
     seq: isNonNegativeInteger(header.seq) ? header.seq : undefined,
     captureTimestamp: isIsoDateString(header.captureTimestamp) ? header.captureTimestamp : undefined,
     sentAt: isIsoDateString(header.sentAt) ? header.sentAt : undefined,
+    deviceCaptureDoneAt: isIsoDateString(header.deviceCaptureDoneAt) ? header.deviceCaptureDoneAt : undefined,
+    deviceEncodeStartedAt: isIsoDateString(header.deviceEncodeStartedAt) ? header.deviceEncodeStartedAt : undefined,
     deviceEncodedAt: isIsoDateString(header.deviceEncodedAt) ? header.deviceEncodedAt : undefined,
     deviceQueuedAt: isIsoDateString(header.deviceQueuedAt) ? header.deviceQueuedAt : undefined,
     deviceTxStartAt: isIsoDateString(header.deviceTxStartAt) ? header.deviceTxStartAt : undefined

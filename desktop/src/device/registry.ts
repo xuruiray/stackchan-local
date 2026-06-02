@@ -8,6 +8,7 @@ import type {
 } from "@stackchan-local/protocol";
 
 import type { Logger } from "../config.js";
+import type { DesktopCameraFrameEvent, DesktopRobotEventMessage, ProtocolCameraFrameEvent } from "./events.js";
 
 export interface DeviceSession {
   deviceId: string;
@@ -23,7 +24,7 @@ export interface DeviceSession {
   lastHeartbeatAt?: Date;
   lastSeq?: number;
   audioFramesReceived: number;
-  lastEvent?: RobotEventMessage;
+  lastEvent?: DesktopRobotEventMessage;
   lastImageBase64?: string;
   lastImageAt?: Date;
   sensors: DeviceSensorState;
@@ -39,6 +40,7 @@ export type SensorEventKind =
   | "touch"
   | "wakeWord"
   | "state"
+  | "faceTrackingControl"
   | "hardwareStatus";
 
 export type DeviceSensorState = Partial<{
@@ -50,11 +52,10 @@ export type DeviceSensorState = Partial<{
 }>;
 
 type ImageEvent = Extract<RobotEventMessage["event"], { kind: "image" }>;
-type CameraFrameEvent = Extract<RobotEventMessage["event"], { kind: "cameraFrame" }>;
 type SanitizedImageEvent = Omit<ImageEvent, "dataBase64"> & { dataLength: number };
-type SanitizedCameraFrameEvent = Omit<CameraFrameEvent, "dataBase64"> & { dataLength: number };
+type SanitizedCameraFrameEvent = Omit<DesktopCameraFrameEvent, "dataBase64" | "jpegBuffer"> & { dataLength: number };
 type SanitizedRobotEvent =
-  | Exclude<RobotEventMessage["event"], ImageEvent | CameraFrameEvent>
+  | Exclude<RobotEventMessage["event"], ImageEvent | ProtocolCameraFrameEvent>
   | SanitizedImageEvent
   | SanitizedCameraFrameEvent;
 
@@ -85,7 +86,7 @@ export interface CommandDispatchResult {
   reason?: string;
 }
 
-export type DeviceEventListener = (message: RobotEventMessage) => void;
+export type DeviceEventListener = (message: DesktopRobotEventMessage) => void;
 
 export class DeviceRegistry {
   private readonly sessions = new Map<string, DeviceSession>();
@@ -184,7 +185,7 @@ export class DeviceRegistry {
     session.lastSeenAt = new Date();
   }
 
-  recordEvent(message: RobotEventMessage): void {
+  recordEvent(message: DesktopRobotEventMessage): void {
     const session = this.sessions.get(message.deviceId);
     if (!session) {
       return;
@@ -303,21 +304,28 @@ export class DeviceRegistry {
     }
   }
 
-  private sanitizeEvent(event: RobotEventMessage["event"] | undefined): SanitizedRobotEvent | undefined {
+  private sanitizeEvent(event: DesktopRobotEventMessage["event"] | undefined): SanitizedRobotEvent | undefined {
     if (!event) {
       return undefined;
     }
-    if (event.kind === "image" || event.kind === "cameraFrame") {
+    if (event.kind === "image") {
       const { dataBase64, ...rest } = event;
       return {
         ...rest,
         dataLength: dataBase64.length
       };
     }
+    if (event.kind === "cameraFrame") {
+      const { dataBase64, jpegBuffer, ...rest } = event;
+      return {
+        ...rest,
+        dataLength: jpegBuffer?.byteLength ?? dataBase64?.length ?? 0
+      };
+    }
     return event;
   }
 
-  private recordSensorState(session: DeviceSession, message: RobotEventMessage): void {
+  private recordSensorState(session: DeviceSession, message: DesktopRobotEventMessage): void {
     const updatedAt = message.timestamp;
     const receivedAt = new Date().toISOString();
     const eventMeta = { eventId: message.eventId, updatedAt, receivedAt };
@@ -345,6 +353,9 @@ export class DeviceRegistry {
         break;
       case "state":
         session.sensors.state = { ...message.event, ...eventMeta };
+        break;
+      case "faceTrackingControl":
+        session.sensors.faceTrackingControl = { ...message.event, ...eventMeta };
         break;
       case "hardwareStatus":
         session.sensors.hardwareStatus = { ...message.event, ...eventMeta };

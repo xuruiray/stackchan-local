@@ -107,11 +107,12 @@ export const daemonHelloSchema = {
 export const faceTrackingPidAxisSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["kp", "ki", "kd"],
+  required: ["kp", "ki", "kd", "direction"],
   properties: {
     kp: { type: "number", minimum: 0, maximum: 150 },
     ki: { type: "number", minimum: 0, maximum: 50 },
-    kd: { type: "number", minimum: 0, maximum: 80 }
+    kd: { type: "number", minimum: 0, maximum: 80 },
+    direction: { enum: [-1, 1] }
   }
 } as const;
 
@@ -398,6 +399,8 @@ const protocolTraceSchema = {
   additionalProperties: false,
   properties: {
     deviceCapturedAt: { type: "string", format: "date-time" },
+    deviceCaptureDoneAt: { type: "string", format: "date-time" },
+    deviceEncodeStartedAt: { type: "string", format: "date-time" },
     deviceEncodedAt: { type: "string", format: "date-time" },
     deviceQueuedAt: { type: "string", format: "date-time" },
     deviceSentAt: { type: "string", format: "date-time" },
@@ -521,6 +524,44 @@ const irEventSchema = {
     repeat: { type: "boolean" },
     requestId: { type: "string", minLength: 1 },
     carrierHz: { type: "integer", minimum: 1000, maximum: 100000 },
+    reason: { type: "string" }
+  }
+} as const;
+
+const faceTrackingControlEventSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "action", "uptimeMs"],
+  properties: {
+    kind: { const: "faceTrackingControl" },
+    action: { enum: ["applied", "deadband", "ignored"] },
+    uptimeMs: { type: "integer", minimum: 0 },
+    targetAgeMs: { type: "integer", minimum: 0 },
+    centerX: { type: "number", minimum: 0, maximum: 1 },
+    centerY: { type: "number", minimum: 0, maximum: 1 },
+    errorX: { type: "number", minimum: -1, maximum: 1 },
+    errorY: { type: "number", minimum: -1, maximum: 1 },
+    currentYaw: { type: "number", minimum: -1000, maximum: 1000 },
+    currentPitch: { type: "number", minimum: -1000, maximum: 1000 },
+    commandYaw: { type: "number", minimum: -1000, maximum: 1000 },
+    commandPitch: { type: "number", minimum: -1000, maximum: 1000 },
+    nextYaw: { type: "number", minimum: -1000, maximum: 1000 },
+    nextPitch: { type: "number", minimum: -1000, maximum: 1000 },
+    yawDelta: { type: "number", minimum: -1000, maximum: 1000 },
+    pitchDelta: { type: "number", minimum: -1000, maximum: 1000 },
+    requestedYawDelta: { type: "number", minimum: -1000, maximum: 1000 },
+    requestedPitchDelta: { type: "number", minimum: -1000, maximum: 1000 },
+    appliedYawStep: { type: "number", minimum: -1000, maximum: 1000 },
+    appliedPitchStep: { type: "number", minimum: -1000, maximum: 1000 },
+    maxYawStep: { type: "number", minimum: 0, maximum: 1000 },
+    maxPitchStep: { type: "number", minimum: 0, maximum: 1000 },
+    yawOutputDeg: { type: "number", minimum: -45, maximum: 45 },
+    pitchOutputDeg: { type: "number", minimum: -45, maximum: 45 },
+    yawDirection: { enum: [-1, 1] },
+    pitchDirection: { enum: [-1, 1] },
+    speed: { type: "number", minimum: 0, maximum: 1000 },
+    ackOk: { type: "boolean" },
+    ackFailCount: { type: "number", minimum: 0 },
     reason: { type: "string" }
   }
 } as const;
@@ -747,6 +788,7 @@ export const robotEventSchema = {
         ambientLightTelemetrySchema,
         nfcEventSchema,
         irEventSchema,
+        faceTrackingControlEventSchema,
         {
           type: "object",
           additionalProperties: false,
@@ -920,6 +962,7 @@ export const protocolSchemas = {
   ambientLightTelemetrySchema,
   nfcEventSchema,
   irEventSchema,
+  faceTrackingControlEventSchema,
   handshakeSchema,
   daemonHelloSchema,
   robotCommandSchema,

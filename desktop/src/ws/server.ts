@@ -7,11 +7,11 @@ import {
   type HandshakeMessage,
   type LocalProtocolMessage,
   ProtocolValidationError,
-  type ProtocolValidator,
-  type RobotEventMessage
+  type ProtocolValidator
 } from "@stackchan-local/protocol";
 
 import type { DesktopConfig, Logger } from "../config.js";
+import type { DesktopRobotEventMessage } from "../device/events.js";
 import type { DeviceRegistry, DeviceSession } from "../device/registry.js";
 import { parseStackChanBinaryFrame } from "./binary-frame.js";
 
@@ -197,7 +197,7 @@ export class StackChanWebSocketServer {
         return;
       }
       const daemonReceivedAt = new Date().toISOString();
-      const message: RobotEventMessage = {
+      const message: DesktopRobotEventMessage = {
         type: "robot.event",
         seq: parsedBinary.header.seq,
         eventId: `${session.deviceId.replace(/[^a-zA-Z0-9_-]/g, "")}-binary-frame-${parsedBinary.header.frameId}`,
@@ -209,12 +209,14 @@ export class StackChanWebSocketServer {
           mimeType: parsedBinary.header.mimeType,
           width: parsedBinary.header.width,
           height: parsedBinary.header.height,
-          dataBase64: parsedBinary.payload.toString("base64"),
+          jpegBuffer: parsedBinary.payload,
           seq: parsedBinary.header.seq,
           captureTimestamp: parsedBinary.header.captureTimestamp,
           sentAt: parsedBinary.header.sentAt,
           trace: {
             deviceCapturedAt: parsedBinary.header.captureTimestamp,
+            deviceCaptureDoneAt: parsedBinary.header.deviceCaptureDoneAt,
+            deviceEncodeStartedAt: parsedBinary.header.deviceEncodeStartedAt,
             deviceEncodedAt: parsedBinary.header.deviceEncodedAt,
             deviceQueuedAt: parsedBinary.header.deviceQueuedAt,
             deviceSentAt: parsedBinary.header.sentAt,
@@ -223,12 +225,6 @@ export class StackChanWebSocketServer {
           }
         }
       };
-      try {
-        this.validator.parseMessage(message);
-      } catch (error) {
-        this.sendError(session.ws, "invalid_binary_frame", error instanceof Error ? error.message : "invalid camera frame", true);
-        return;
-      }
       this.registry.recordEvent(message);
       this.handleRobotEvent(session, message);
       return;
@@ -283,7 +279,7 @@ export class StackChanWebSocketServer {
     }
   }
 
-  private handleRobotEvent(session: DeviceSession, message: RobotEventMessage): void {
+  private handleRobotEvent(session: DeviceSession, message: DesktopRobotEventMessage): void {
     if (message.event.kind !== "wakeWord") {
       return;
     }

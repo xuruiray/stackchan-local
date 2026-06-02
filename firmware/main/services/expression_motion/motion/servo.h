@@ -55,6 +55,14 @@ public:
     void moveWithSpeed(int angle, int speed);
 
     /**
+     * @brief Write one bounded tracking step and wait for the servo bus ACK.
+     *
+     * This bypasses the spring animation path so high-rate visual tracking can
+     * advance only after the previous bus transaction has been acknowledged.
+     */
+    bool writeStepWithAck(int angle, int speed);
+
+    /**
      * @brief Rotate servo with given velocity
      *
      * @param velocity (-1000, 1000)
@@ -160,6 +168,7 @@ protected:
      * @param angle
      */
     virtual void set_angle_impl(int angle) = 0;
+    virtual bool set_angle_with_ack_impl(int angle, int speed);
     virtual bool is_moving_impl()
     {
         return false;

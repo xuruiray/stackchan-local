@@ -49,6 +49,8 @@ private:
     uint32_t _last_face_tracking_update = 0;
     uint32_t _last_face_tracking_apply = 0;
     uint32_t _last_face_tracking_pid_at = 0;
+    uint32_t _face_tracking_ack_fail_pause_until = 0;
+    uint32_t _face_tracking_consecutive_ack_fail = 0;
     uint32_t _offline_idle_shutdown_started = 0;
     float _face_tracking_integral_yaw = 0.0f;
     float _face_tracking_integral_pitch = 0.0f;
@@ -73,7 +75,10 @@ private:
     bool _long_press_handled = false;
     bool _visual_state_initialized = false;
     bool _face_tracking_pid_ready = false;
+    bool _face_tracking_stepper_initialized = false;
     bool _offline_idle_shutdown_requested = false;
+    int _face_tracking_command_yaw = 0;
+    int _face_tracking_command_pitch = 260;
 
     void update_status_label();
     const char* state_to_text() const;

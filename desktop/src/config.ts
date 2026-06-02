@@ -22,11 +22,17 @@ export interface DesktopConfig {
   faceTrackingYawKp: number;
   faceTrackingYawKi: number;
   faceTrackingYawKd: number;
+  faceTrackingYawDirection: -1 | 1;
   faceTrackingPitchKp: number;
   faceTrackingPitchKi: number;
   faceTrackingPitchKd: number;
+  faceTrackingPitchDirection: -1 | 1;
   faceTrackingIntegralLimit: number;
   faceTrackingOutputLimitDeg: number;
+  faceTrackingYuNetModel: string;
+  faceTrackingYuNetScoreThreshold: number;
+  faceTrackingYuNetNmsThreshold: number;
+  faceTrackingYuNetTopK: number;
   faceTrackingTraceLog?: string;
   faceTrackingPython: string;
   faceTrackingDetectorScript: string;
@@ -121,6 +127,16 @@ function parseCameraPreset(value: string | undefined): FaceTrackingCameraPreset 
   return "fast";
 }
 
+function parseDirection(value: string | undefined, fallback: -1 | 1): -1 | 1 {
+  if (value === "-1") {
+    return -1;
+  }
+  if (value === "1") {
+    return 1;
+  }
+  return fallback;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig {
   const initialProjectRoot = env.STACKCHAN_PROJECT_ROOT ?? defaultProjectRoot(process.cwd());
   loadDotEnv(initialProjectRoot, env);
@@ -139,16 +155,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig 
     faceTrackingEnabled: parseBoolean(env.STACKCHAN_FACE_TRACKING, false),
     faceTrackingFps: Math.min(15, Math.max(1, parseInteger(env.STACKCHAN_FACE_TRACKING_FPS, 4))),
     faceTrackingMirrorX: parseBoolean(env.STACKCHAN_FACE_TRACKING_MIRROR_X, false),
-    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 420), 0, 1000),
-    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.045), 0, 0.3),
-    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 42), 0, 150),
+    faceTrackingSpeed: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_SPEED, 300), 0, 1000),
+    faceTrackingDeadband: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_DEADBAND, 0.08), 0, 0.3),
+    faceTrackingYawKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KP, 36), 0, 150),
     faceTrackingYawKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KI, 0), 0, 50),
-    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 8), 0, 80),
-    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 30), 0, 150),
+    faceTrackingYawKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YAW_KD, 1.2), 0, 80),
+    faceTrackingYawDirection: parseDirection(env.STACKCHAN_FACE_TRACKING_YAW_DIRECTION, 1),
+    faceTrackingPitchKp: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KP, 8), 0, 150),
     faceTrackingPitchKi: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KI, 0), 0, 50),
-    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 6), 0, 80),
+    faceTrackingPitchKd: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_PITCH_KD, 0.15), 0, 80),
+    faceTrackingPitchDirection: parseDirection(env.STACKCHAN_FACE_TRACKING_PITCH_DIRECTION, 1),
     faceTrackingIntegralLimit: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_INTEGRAL_LIMIT, 0.35), 0, 2),
-    faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 20), 1, 45),
+    faceTrackingOutputLimitDeg: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_OUTPUT_LIMIT_DEG, 4), 1, 45),
+    faceTrackingYuNetModel: resolveProjectPath(
+      projectRoot,
+      env.STACKCHAN_FACE_TRACKING_YUNET_MODEL,
+      "desktop/models/face_detection_yunet_2023mar.onnx"
+    ),
+    faceTrackingYuNetScoreThreshold: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YUNET_SCORE_THRESHOLD, 0.85), 0, 1),
+    faceTrackingYuNetNmsThreshold: clampNumber(parseNumber(env.STACKCHAN_FACE_TRACKING_YUNET_NMS_THRESHOLD, 0.3), 0, 1),
+    faceTrackingYuNetTopK: clampNumber(parseInteger(env.STACKCHAN_FACE_TRACKING_YUNET_TOP_K, 500), 1, 5000),
     faceTrackingTraceLog:
       env.STACKCHAN_FACE_TRACKING_TRACE_LOG === "0" || env.STACKCHAN_FACE_TRACKING_TRACE_LOG === "false"
         ? undefined

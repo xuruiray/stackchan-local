@@ -25,14 +25,26 @@ namespace {
 constexpr uint32_t kIdleSettleMs = 2500;
 constexpr uint32_t kCommandQuietMs = 6500;
 constexpr uint32_t kDanceQuietMs = 10000;
-constexpr uint32_t kFaceTrackingApplyIntervalMs = 120;
+constexpr uint32_t kFaceTrackingApplyIntervalMs = 45;
+constexpr uint32_t kFaceTrackingTargetStaleMs = 180;
+constexpr uint32_t kFaceTrackingAckFailPauseMs = 300;
+constexpr uint32_t kFaceTrackingMaxConsecutiveAckFail = 3;
 constexpr uint32_t kOfflineIdleShutdownMs = 60000;
 constexpr int kFaceTrackingYawMin = -600;
 constexpr int kFaceTrackingYawMax = 600;
 constexpr int kFaceTrackingPitchMin = 100;
 constexpr int kFaceTrackingPitchMax = 700;
+constexpr int kFaceTrackingMaxYawStep = 24;
+constexpr int kFaceTrackingMaxPitchStep = 18;
+constexpr float kFaceTrackingYawOutputHardLimitDeg = 8.0f;
+constexpr float kFaceTrackingPitchOutputHardLimitDeg = 6.0f;
 
 float clamp_float(float value, float min_value, float max_value)
+{
+    return std::max(min_value, std::min(max_value, value));
+}
+
+int clamp_int(int value, int min_value, int max_value)
 {
     return std::max(min_value, std::min(max_value, value));
 }
@@ -418,9 +430,26 @@ void AppLocalCompanion::sync_face_tracking()
 {
     auto target = GetDeviceRuntime().getLocalFaceTrackingTarget();
     if (!target.detected) {
+        if (target.updatedAt > 0 && target.updatedAt != _last_face_tracking_update) {
+            LocalFaceTrackingControlEvent event;
+            event.action = LocalFaceTrackingControlAction::Ignored;
+            event.uptimeMs = GetDeviceRuntime().millis();
+            event.targetAgeMs = event.uptimeMs - target.updatedAt;
+            event.centerX = target.centerX;
+            event.centerY = target.centerY;
+            event.yawDirection = target.control.yaw.direction < 0 ? -1 : 1;
+            event.pitchDirection = target.control.pitch.direction < 0 ? -1 : 1;
+            event.speed = target.speed;
+            event.reason = "no_target";
+            GetDeviceRuntime().onFaceTrackingControlEvent.emit(event);
+            _last_face_tracking_update = target.updatedAt;
+        }
         _face_tracking_pid_ready = false;
         _face_tracking_integral_yaw = 0.0f;
         _face_tracking_integral_pitch = 0.0f;
+        _face_tracking_stepper_initialized = false;
+        _face_tracking_consecutive_ack_fail = 0;
+        _face_tracking_ack_fail_pause_until = 0;
         return;
     }
     if (target.updatedAt == 0 || target.updatedAt == _last_face_tracking_update) {
@@ -430,6 +459,66 @@ void AppLocalCompanion::sync_face_tracking()
     const auto now = GetDeviceRuntime().millis();
     if (now - _last_face_tracking_apply < kFaceTrackingApplyIntervalMs) {
         return;
+    }
+
+    const uint32_t target_age_ms = now - target.updatedAt;
+    auto& motion = GetStackChan().motion();
+    const int yaw_direction = target.control.yaw.direction < 0 ? -1 : 1;
+    const int pitch_direction = target.control.pitch.direction < 0 ? -1 : 1;
+    if (target_age_ms > kFaceTrackingTargetStaleMs) {
+        _face_tracking_pid_ready = false;
+        _face_tracking_integral_yaw *= 0.5f;
+        _face_tracking_integral_pitch *= 0.5f;
+        LocalFaceTrackingControlEvent event;
+        event.action = LocalFaceTrackingControlAction::Ignored;
+        event.uptimeMs = now;
+        event.targetAgeMs = target_age_ms;
+        event.centerX = target.centerX;
+        event.centerY = target.centerY;
+        event.currentYaw = _face_tracking_command_yaw;
+        event.currentPitch = _face_tracking_command_pitch;
+        event.commandYaw = _face_tracking_command_yaw;
+        event.commandPitch = _face_tracking_command_pitch;
+        event.nextYaw = _face_tracking_command_yaw;
+        event.nextPitch = _face_tracking_command_pitch;
+        event.yawDirection = yaw_direction;
+        event.pitchDirection = pitch_direction;
+        event.speed = target.speed;
+        event.reason = "stale_target";
+        GetDeviceRuntime().onFaceTrackingControlEvent.emit(event);
+        _last_face_tracking_update = target.updatedAt;
+        return;
+    }
+
+    if (now < _face_tracking_ack_fail_pause_until) {
+        LocalFaceTrackingControlEvent event;
+        event.action = LocalFaceTrackingControlAction::Ignored;
+        event.uptimeMs = now;
+        event.targetAgeMs = target_age_ms;
+        event.centerX = target.centerX;
+        event.centerY = target.centerY;
+        event.currentYaw = _face_tracking_command_yaw;
+        event.currentPitch = _face_tracking_command_pitch;
+        event.commandYaw = _face_tracking_command_yaw;
+        event.commandPitch = _face_tracking_command_pitch;
+        event.nextYaw = _face_tracking_command_yaw;
+        event.nextPitch = _face_tracking_command_pitch;
+        event.yawDirection = yaw_direction;
+        event.pitchDirection = pitch_direction;
+        event.speed = target.speed;
+        event.ackFailCount = static_cast<int>(_face_tracking_consecutive_ack_fail);
+        event.reason = "servo_ack_pause";
+        GetDeviceRuntime().onFaceTrackingControlEvent.emit(event);
+        _last_face_tracking_update = target.updatedAt;
+        return;
+    }
+
+    if (!_face_tracking_stepper_initialized) {
+        const auto measured = motion.getCurrentAngles();
+        _face_tracking_command_yaw = clamp_int(measured.x, kFaceTrackingYawMin, kFaceTrackingYawMax);
+        _face_tracking_command_pitch = clamp_int(measured.y, kFaceTrackingPitchMin, kFaceTrackingPitchMax);
+        _face_tracking_stepper_initialized = true;
+        _face_tracking_consecutive_ack_fail = 0;
     }
 
     const float dt = _face_tracking_pid_ready && _last_face_tracking_pid_at > 0
@@ -445,6 +534,25 @@ void AppLocalCompanion::sync_face_tracking()
         _face_tracking_integral_pitch *= 0.8f;
         _face_tracking_previous_yaw_error = 0.0f;
         _face_tracking_previous_pitch_error = 0.0f;
+        LocalFaceTrackingControlEvent event;
+        event.action = LocalFaceTrackingControlAction::Deadband;
+        event.uptimeMs = now;
+        event.targetAgeMs = target_age_ms;
+        event.centerX = target.centerX;
+        event.centerY = target.centerY;
+        event.errorX = error_x;
+        event.errorY = error_y;
+        event.currentYaw = _face_tracking_command_yaw;
+        event.currentPitch = _face_tracking_command_pitch;
+        event.commandYaw = _face_tracking_command_yaw;
+        event.commandPitch = _face_tracking_command_pitch;
+        event.nextYaw = _face_tracking_command_yaw;
+        event.nextPitch = _face_tracking_command_pitch;
+        event.yawDirection = yaw_direction;
+        event.pitchDirection = pitch_direction;
+        event.speed = target.speed;
+        event.reason = "deadband";
+        GetDeviceRuntime().onFaceTrackingControlEvent.emit(event);
         _last_face_tracking_update = target.updatedAt;
         return;
     }
@@ -458,26 +566,124 @@ void AppLocalCompanion::sync_face_tracking()
     const float pitch_derivative =
         _face_tracking_pid_ready ? (pitch_error - _face_tracking_previous_pitch_error) / dt : 0.0f;
     const float output_limit_deg = clamp_float(target.control.outputLimitDeg, 1.0f, 45.0f);
+    const float yaw_output_limit_deg = std::min(output_limit_deg, kFaceTrackingYawOutputHardLimitDeg);
+    const float pitch_output_limit_deg = std::min(output_limit_deg, kFaceTrackingPitchOutputHardLimitDeg);
     const float yaw_delta_deg = clamp_float(target.control.yaw.kp * yaw_error +
                                                 target.control.yaw.ki * _face_tracking_integral_yaw +
                                                 target.control.yaw.kd * yaw_derivative,
-                                            -output_limit_deg, output_limit_deg);
+                                            -yaw_output_limit_deg, yaw_output_limit_deg);
     const float pitch_delta_deg = clamp_float(target.control.pitch.kp * pitch_error +
                                                   target.control.pitch.ki * _face_tracking_integral_pitch +
                                                   target.control.pitch.kd * pitch_derivative,
-                                              -output_limit_deg, output_limit_deg);
+                                              -pitch_output_limit_deg, pitch_output_limit_deg);
 
-    auto& motion = GetStackChan().motion();
-    auto current = motion.getCurrentAngles();
-    const int yaw_delta = static_cast<int>(yaw_delta_deg * 10.0f);
-    const int pitch_delta = static_cast<int>(pitch_delta_deg * 10.0f);
-    const int next_yaw = std::max(kFaceTrackingYawMin, std::min(kFaceTrackingYawMax, current.x + yaw_delta));
-    const int next_pitch = std::max(kFaceTrackingPitchMin, std::min(kFaceTrackingPitchMax, current.y + pitch_delta));
+    const int requested_yaw_delta = static_cast<int>(yaw_delta_deg * yaw_direction * 10.0f);
+    const int requested_pitch_delta = static_cast<int>(pitch_delta_deg * pitch_direction * 10.0f);
+    const int yaw_step = clamp_int(requested_yaw_delta, -kFaceTrackingMaxYawStep, kFaceTrackingMaxYawStep);
+    const int pitch_step = clamp_int(requested_pitch_delta, -kFaceTrackingMaxPitchStep, kFaceTrackingMaxPitchStep);
+    const int next_yaw =
+        clamp_int(_face_tracking_command_yaw + yaw_step, kFaceTrackingYawMin, kFaceTrackingYawMax);
+    const int next_pitch =
+        clamp_int(_face_tracking_command_pitch + pitch_step, kFaceTrackingPitchMin, kFaceTrackingPitchMax);
+    const int applied_yaw_step = next_yaw - _face_tracking_command_yaw;
+    const int applied_pitch_step = next_pitch - _face_tracking_command_pitch;
     const int speed = std::max(0, std::min(1000, target.speed));
 
-    motion.moveWithSpeed(next_yaw, next_pitch, speed);
+    if (applied_yaw_step == 0 && applied_pitch_step == 0) {
+        _face_tracking_integral_yaw *= 0.8f;
+        _face_tracking_integral_pitch *= 0.8f;
+        LocalFaceTrackingControlEvent event;
+        event.action = LocalFaceTrackingControlAction::Deadband;
+        event.uptimeMs = now;
+        event.targetAgeMs = target_age_ms;
+        event.centerX = target.centerX;
+        event.centerY = target.centerY;
+        event.errorX = error_x;
+        event.errorY = error_y;
+        event.currentYaw = _face_tracking_command_yaw;
+        event.currentPitch = _face_tracking_command_pitch;
+        event.commandYaw = _face_tracking_command_yaw;
+        event.commandPitch = _face_tracking_command_pitch;
+        event.nextYaw = _face_tracking_command_yaw;
+        event.nextPitch = _face_tracking_command_pitch;
+        event.requestedYawDelta = requested_yaw_delta;
+        event.requestedPitchDelta = requested_pitch_delta;
+        event.maxYawStep = kFaceTrackingMaxYawStep;
+        event.maxPitchStep = kFaceTrackingMaxPitchStep;
+        event.yawOutputDeg = yaw_delta_deg;
+        event.pitchOutputDeg = pitch_delta_deg;
+        event.yawDirection = yaw_direction;
+        event.pitchDirection = pitch_direction;
+        event.speed = speed;
+        event.reason = "zero_step";
+        GetDeviceRuntime().onFaceTrackingControlEvent.emit(event);
+        _last_face_tracking_update = target.updatedAt;
+        return;
+    }
+
+    bool yaw_ack = true;
+    bool pitch_ack = true;
+    if (applied_yaw_step != 0) {
+        yaw_ack = motion.yawServo().writeStepWithAck(next_yaw, speed);
+    }
+    if (applied_pitch_step != 0) {
+        pitch_ack = motion.pitchServo().writeStepWithAck(next_pitch, speed);
+    }
+    const bool ack_ok = yaw_ack && pitch_ack;
+    if (yaw_ack) {
+        _face_tracking_command_yaw = next_yaw;
+    }
+    if (pitch_ack) {
+        _face_tracking_command_pitch = next_pitch;
+    }
+
+    if (ack_ok) {
+        _face_tracking_consecutive_ack_fail = 0;
+    } else {
+        _face_tracking_consecutive_ack_fail++;
+        _face_tracking_pid_ready = false;
+        _face_tracking_integral_yaw *= 0.5f;
+        _face_tracking_integral_pitch *= 0.5f;
+        if (_face_tracking_consecutive_ack_fail >= kFaceTrackingMaxConsecutiveAckFail) {
+            _face_tracking_ack_fail_pause_until = now + kFaceTrackingAckFailPauseMs;
+        }
+    }
+
+    LocalFaceTrackingControlEvent event;
+    event.action = ack_ok ? LocalFaceTrackingControlAction::Applied : LocalFaceTrackingControlAction::Ignored;
+    event.uptimeMs = now;
+    event.targetAgeMs = target_age_ms;
+    event.centerX = target.centerX;
+    event.centerY = target.centerY;
+    event.errorX = error_x;
+    event.errorY = error_y;
+    event.currentYaw = _face_tracking_command_yaw - (yaw_ack ? applied_yaw_step : 0);
+    event.currentPitch = _face_tracking_command_pitch - (pitch_ack ? applied_pitch_step : 0);
+    event.commandYaw = _face_tracking_command_yaw;
+    event.commandPitch = _face_tracking_command_pitch;
+    event.nextYaw = _face_tracking_command_yaw;
+    event.nextPitch = _face_tracking_command_pitch;
+    event.yawDelta = yaw_ack ? applied_yaw_step : 0;
+    event.pitchDelta = pitch_ack ? applied_pitch_step : 0;
+    event.requestedYawDelta = requested_yaw_delta;
+    event.requestedPitchDelta = requested_pitch_delta;
+    event.appliedYawStep = yaw_ack ? applied_yaw_step : 0;
+    event.appliedPitchStep = pitch_ack ? applied_pitch_step : 0;
+    event.maxYawStep = kFaceTrackingMaxYawStep;
+    event.maxPitchStep = kFaceTrackingMaxPitchStep;
+    event.yawOutputDeg = yaw_delta_deg;
+    event.pitchOutputDeg = pitch_delta_deg;
+    event.yawDirection = yaw_direction;
+    event.pitchDirection = pitch_direction;
+    event.speed = speed;
+    event.ackOk = ack_ok;
+    event.ackFailCount = static_cast<int>(_face_tracking_consecutive_ack_fail);
+    if (!ack_ok) {
+        event.reason = "servo_ack_failed";
+    }
+    GetDeviceRuntime().onFaceTrackingControlEvent.emit(event);
     _last_face_tracking_pid_at = now;
-    _face_tracking_pid_ready = true;
+    _face_tracking_pid_ready = ack_ok;
     _face_tracking_previous_yaw_error = yaw_error;
     _face_tracking_previous_pitch_error = pitch_error;
     _last_face_tracking_update = target.updatedAt;

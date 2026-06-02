@@ -20,7 +20,7 @@ const VISION_SNAPSHOT_BROADCAST_MIN_MS = 200;
 const HIGH_RATE_DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 100;
 const DEVICE_SNAPSHOT_BROADCAST_MIN_MS = 500;
 const FRAME_STREAM_MAX_BUFFER_BYTES = 512 * 1024;
-const HIGH_RATE_DEVICE_EVENT_KINDS = new Set(["bmi270", "proximity", "ambientLight", "touch"]);
+const HIGH_RATE_DEVICE_EVENT_KINDS = new Set(["bmi270", "proximity", "ambientLight", "touch", "faceTrackingControl"]);
 const previewUiDistDir = new URL("../../preview-ui/dist/", import.meta.url);
 const previewUiIndexFile = new URL("index.html", previewUiDistDir);
 
@@ -575,13 +575,15 @@ export class PreviewServer {
       "x-frame-received-at": frame.receivedAt,
       ...(frame.sentAt ? { "x-frame-sent-at": frame.sentAt } : {}),
       ...(frame.captureTimestamp ? { "x-frame-capture-timestamp": frame.captureTimestamp } : {}),
+      ...(frame.trace?.deviceCaptureDoneAt ? { "x-frame-device-capture-done-at": frame.trace.deviceCaptureDoneAt } : {}),
+      ...(frame.trace?.deviceEncodeStartedAt ? { "x-frame-device-encode-started-at": frame.trace.deviceEncodeStartedAt } : {}),
       ...(frame.trace?.deviceEncodedAt ? { "x-frame-device-encoded-at": frame.trace.deviceEncodedAt } : {}),
       ...(frame.trace?.deviceQueuedAt ? { "x-frame-device-queued-at": frame.trace.deviceQueuedAt } : {}),
       ...(frame.trace?.deviceTxStartAt ? { "x-frame-device-tx-start-at": frame.trace.deviceTxStartAt } : {}),
       "x-frame-stream": kind,
       ...(frame.trace?.detectorFinishedAt ? { "x-detector-finished-at": frame.trace.detectorFinishedAt } : {})
     });
-    response.end(Buffer.from(frame.dataBase64, "base64"));
+    response.end(frame.jpegBuffer);
   }
 
   private handleFrameStream(response: ServerResponse, kind: "raw" | "processed"): void {
@@ -641,6 +643,7 @@ export class PreviewServer {
             mimeType: snapshot.frame.mimeType,
             width: snapshot.frame.width,
             height: snapshot.frame.height,
+            jpegByteLength: snapshot.frame.jpegByteLength,
             timestamp: snapshot.frame.timestamp,
             seq: snapshot.frame.seq,
             receivedAt: snapshot.frame.receivedAt,
@@ -724,12 +727,14 @@ export class PreviewServer {
       return;
     }
 
-    const jpeg = Buffer.from(frame.dataBase64, "base64");
+    const jpeg = frame.jpegBuffer;
     const ok =
       response.write(
       `--stackchanframe\r\ncontent-type: ${frame.mimeType}\r\ncontent-length: ${jpeg.length}\r\nx-frame-id: ${frame.frameId}\r\nx-frame-timestamp: ${frame.timestamp}\r\nx-frame-received-at: ${frame.receivedAt}${
         frame.sentAt ? `\r\nx-frame-sent-at: ${frame.sentAt}` : ""
       }${frame.captureTimestamp ? `\r\nx-frame-capture-timestamp: ${frame.captureTimestamp}` : ""}${
+        frame.trace?.deviceCaptureDoneAt ? `\r\nx-frame-device-capture-done-at: ${frame.trace.deviceCaptureDoneAt}` : ""
+      }${frame.trace?.deviceEncodeStartedAt ? `\r\nx-frame-device-encode-started-at: ${frame.trace.deviceEncodeStartedAt}` : ""}${
         frame.trace?.deviceEncodedAt ? `\r\nx-frame-device-encoded-at: ${frame.trace.deviceEncodedAt}` : ""
       }${frame.trace?.deviceQueuedAt ? `\r\nx-frame-device-queued-at: ${frame.trace.deviceQueuedAt}` : ""}${
         frame.trace?.deviceTxStartAt ? `\r\nx-frame-device-tx-start-at: ${frame.trace.deviceTxStartAt}` : ""

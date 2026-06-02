@@ -70,13 +70,22 @@ function delayText(value: number | undefined, streamKind: CameraStreamKind): str
 }
 
 function breakdownText(displayedFrame: DisplayedFrame | undefined): string {
+  const captureMs = deltaMs(displayedFrame?.captureTimestamp, displayedFrame?.deviceCaptureDoneAt);
+  const encodeMs = deltaMs(
+    displayedFrame?.deviceEncodeStartedAt ?? displayedFrame?.deviceCaptureDoneAt,
+    displayedFrame?.deviceEncodedAt
+  );
   const captureToEncode = deltaMs(displayedFrame?.captureTimestamp, displayedFrame?.deviceEncodedAt);
   const encodeToQueue = deltaMs(displayedFrame?.deviceEncodedAt, displayedFrame?.deviceQueuedAt);
   const queueToTx = deltaMs(displayedFrame?.deviceQueuedAt, displayedFrame?.deviceTxStartAt);
   const txToDaemon = deltaMs(displayedFrame?.deviceTxStartAt ?? displayedFrame?.deviceSentAt, displayedFrame?.daemonReceivedAt);
   const daemonToDisplay = deltaMs(displayedFrame?.daemonReceivedAt, displayedFrame?.displayedAt);
   const parts = [
-    typeof captureToEncode === "number" ? `cap+enc ${Math.round(captureToEncode)} ms` : undefined,
+    typeof captureMs === "number" ? `cap ${Math.round(captureMs)} ms` : undefined,
+    typeof encodeMs === "number" ? `enc ${Math.round(encodeMs)} ms` : undefined,
+    typeof captureMs !== "number" && typeof captureToEncode === "number"
+      ? `cap+enc ${Math.round(captureToEncode)} ms`
+      : undefined,
     typeof encodeToQueue === "number" ? `queue ${Math.round(encodeToQueue)} ms` : undefined,
     typeof queueToTx === "number" ? `tx wait ${Math.round(queueToTx)} ms` : undefined,
     typeof txToDaemon === "number" ? `tx ${Math.round(txToDaemon)} ms` : undefined,

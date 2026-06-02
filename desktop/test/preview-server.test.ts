@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createLogger } from "../src/config.js";
@@ -17,7 +18,7 @@ class FakeVisionTracking {
       mirrorX: false,
       detectorAvailable: true,
       control: {
-        speed: 420,
+        speed: 300,
         camera: {
           preset: "fast",
           width: 320,
@@ -27,11 +28,11 @@ class FakeVisionTracking {
         },
         control: {
           mode: "pid",
-          deadband: 0.045,
-          yaw: { kp: 42, ki: 0, kd: 8 },
-          pitch: { kp: 30, ki: 0, kd: 6 },
+          deadband: 0.08,
+          yaw: { kp: 36, ki: 0, kd: 1.2, direction: 1 },
+          pitch: { kp: 8, ki: 0, kd: 0.15, direction: 1 },
           integralLimit: 0.35,
-          outputLimitDeg: 20
+          outputLimitDeg: 4
         }
       },
       sourceCamera: {
@@ -82,7 +83,8 @@ class FakeVisionTracking {
       mimeType: "image/jpeg",
       width: 2,
       height: 2,
-      dataBase64: "/9j/4AAQSkZJRgABAQAAAQABAAD/2w==",
+      jpegBuffer: Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2w==", "base64"),
+      jpegByteLength: Buffer.byteLength("/9j/4AAQSkZJRgABAQAAAQABAAD/2w==", "base64"),
       timestamp: new Date("2026-05-18T12:00:00.000Z").toISOString(),
       receivedAt: new Date("2026-05-18T12:00:00.020Z").toISOString(),
       captureTimestamp: new Date("2026-05-18T12:00:00.000Z").toISOString(),

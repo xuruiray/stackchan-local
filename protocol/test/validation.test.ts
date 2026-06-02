@@ -160,8 +160,8 @@ describe("protocol validation", () => {
           control: {
             mode: "pid",
             deadband: 0.045,
-            yaw: { kp: 42, ki: 0, kd: 8 },
-            pitch: { kp: 30, ki: 0, kd: 6 },
+            yaw: { kp: 42, ki: 0, kd: 8, direction: 1 },
+            pitch: { kp: 30, ki: 0, kd: 6, direction: -1 },
             integralLimit: 0.35,
             outputLimitDeg: 20
           }
@@ -399,6 +399,8 @@ describe("protocol validation", () => {
         sentAt: timestamp,
         trace: {
           deviceCapturedAt: timestamp,
+          deviceCaptureDoneAt: timestamp,
+          deviceEncodeStartedAt: timestamp,
           deviceEncodedAt: timestamp,
           deviceQueuedAt: timestamp,
           deviceSentAt: timestamp,
@@ -407,6 +409,40 @@ describe("protocol validation", () => {
           detectorStartedAt: timestamp,
           detectorFinishedAt: timestamp
         }
+      }
+    });
+
+    expect(message.type).toBe("robot.event");
+  });
+
+  it("accepts firmware face tracking control diagnostics", () => {
+    const timestamp = new Date().toISOString();
+    const message = validator.parseMessage({
+      type: "robot.event",
+      seq: 43,
+      eventId: "evt-face-control",
+      deviceId: "stackchan-001",
+      timestamp,
+      event: {
+        kind: "faceTrackingControl",
+        action: "applied",
+        uptimeMs: 1000,
+        targetAgeMs: 20,
+        centerX: 0.7,
+        centerY: 0.4,
+        errorX: 0.2,
+        errorY: 0.1,
+        currentYaw: 10,
+        currentPitch: 260,
+        nextYaw: 30,
+        nextPitch: 250,
+        yawDelta: 20,
+        pitchDelta: -10,
+        yawOutputDeg: 2,
+        pitchOutputDeg: -1,
+        yawDirection: 1,
+        pitchDirection: -1,
+        speed: 420
       }
     });
 
@@ -914,8 +950,8 @@ describe("protocol validation", () => {
           control: {
             mode: "visualServoPid",
             deadband: 0.045,
-            yaw: { kp: 0.45, ki: 0, kd: 0.04 },
-            pitch: { kp: 0.38, ki: 0, kd: 0.03 },
+            yaw: { kp: 0.45, ki: 0, kd: 0.04, direction: 1 },
+            pitch: { kp: 0.38, ki: 0, kd: 0.03, direction: 1 },
             integralLimit: 0.35,
             outputLimitDeg: 8
           }

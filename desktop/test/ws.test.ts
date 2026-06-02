@@ -22,16 +22,16 @@ const baseConfig: DesktopConfig = {
   faceTrackingEnabled: false,
   faceTrackingFps: 4,
   faceTrackingMirrorX: false,
-  faceTrackingSpeed: 420,
-  faceTrackingDeadband: 0.045,
-  faceTrackingYawKp: 42,
+  faceTrackingSpeed: 300,
+  faceTrackingDeadband: 0.08,
+  faceTrackingYawKp: 36,
   faceTrackingYawKi: 0,
-  faceTrackingYawKd: 8,
-  faceTrackingPitchKp: 30,
+  faceTrackingYawKd: 1.2,
+  faceTrackingPitchKp: 8,
   faceTrackingPitchKi: 0,
-  faceTrackingPitchKd: 6,
+  faceTrackingPitchKd: 0.15,
   faceTrackingIntegralLimit: 0.35,
-  faceTrackingOutputLimitDeg: 20,
+  faceTrackingOutputLimitDeg: 4,
   faceTrackingPython: "python3",
   faceTrackingDetectorScript: "/tmp/stackchan-local-face-detector.py",
   faceTrackingCameraPreset: "fast",
@@ -138,6 +138,8 @@ describe("StackChanWebSocketServer", () => {
 
   it("normalizes negotiated binary camera frames into cameraFrame events", async () => {
     const registry = new DeviceRegistry(createLogger("error"));
+    const events: unknown[] = [];
+    registry.onEvent((message) => events.push(message));
     server = new StackChanWebSocketServer(baseConfig, registry, createLogger("error"));
     const port = await server.start();
 
@@ -176,6 +178,8 @@ describe("StackChanWebSocketServer", () => {
           seq: 12,
           captureTimestamp: timestamp,
           sentAt: timestamp,
+          deviceCaptureDoneAt: timestamp,
+          deviceEncodeStartedAt: timestamp,
           deviceEncodedAt: timestamp,
           deviceQueuedAt: timestamp,
           deviceTxStartAt: timestamp
@@ -195,6 +199,8 @@ describe("StackChanWebSocketServer", () => {
       seq: 12,
       trace: {
         deviceCapturedAt: timestamp,
+        deviceCaptureDoneAt: timestamp,
+        deviceEncodeStartedAt: timestamp,
         deviceEncodedAt: timestamp,
         deviceQueuedAt: timestamp,
         deviceSentAt: timestamp,
@@ -202,8 +208,17 @@ describe("StackChanWebSocketServer", () => {
       }
     });
     expect(snapshot.lastEvent && "dataLength" in snapshot.lastEvent ? snapshot.lastEvent.dataLength : undefined).toBe(
-      jpeg.toString("base64").length
+      jpeg.byteLength
     );
+    const binaryEvent = events.find(
+      (event): event is { event: { kind: string; jpegBuffer?: Buffer; dataBase64?: string } } =>
+        typeof event === "object" &&
+        event !== null &&
+        "event" in event &&
+        (event as { event?: { kind?: string } }).event?.kind === "cameraFrame"
+    );
+    expect(binaryEvent?.event.jpegBuffer).toEqual(jpeg);
+    expect(binaryEvent?.event.dataBase64).toBeUndefined();
     expect(snapshot.audioFramesReceived).toBe(0);
     ws.close();
   });

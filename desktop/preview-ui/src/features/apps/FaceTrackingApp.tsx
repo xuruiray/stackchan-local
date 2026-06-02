@@ -26,6 +26,13 @@ export function FaceTrackingApp({
   const target = snapshot?.target;
   const targetCenter = target ? `${numberText(target.x + target.width / 2, 2)}, ${numberText(target.y + target.height / 2, 2)}` : "-";
   const targetSize = target ? `${numberText(target.width, 2)} x ${numberText(target.height, 2)}` : "-";
+  const firmwareControl = status?.faceTrackingControl;
+  const firmwareYaw = firmwareControl
+    ? `${dash(firmwareControl.currentYaw)} -> ${dash(firmwareControl.nextYaw)} (${dash(firmwareControl.yawDelta)})`
+    : "-";
+  const firmwarePitch = firmwareControl
+    ? `${dash(firmwareControl.currentPitch)} -> ${dash(firmwareControl.nextPitch)} (${dash(firmwareControl.pitchDelta)})`
+    : "-";
   const activeSelection = useMemo(
     () =>
       cameraSelectionFromValue({
@@ -67,6 +74,10 @@ export function FaceTrackingApp({
             { label: "Latency", value: latencyText(status?.detectorLatencyMs) },
             { label: "Target center", value: targetCenter },
             { label: "Target size", value: targetSize },
+            { label: "Target detector", value: target?.detector ?? "-" },
+            { label: "FW action", value: firmwareControl?.action ?? "-" },
+            { label: "FW yaw", value: firmwareYaw },
+            { label: "FW pitch", value: firmwarePitch },
             {
               label: "Media credit",
               value: status?.mediaCredit
@@ -128,6 +139,15 @@ export function FaceTrackingApp({
             step={0.01}
             onChange={(kd) => updateControl({ control: { yaw: { kd } } })}
           />
+          <SelectField
+            label="Yaw direction"
+            value={String(control?.control?.yaw?.direction ?? 1)}
+            options={[
+              { value: "1", label: "1" },
+              { value: "-1", label: "-1" }
+            ]}
+            onChange={(direction) => updateControl({ control: { yaw: { direction: Number(direction) } } })}
+          />
           <NumberField
             label="Pitch P"
             value={control?.control?.pitch?.kp}
@@ -152,6 +172,15 @@ export function FaceTrackingApp({
             step={0.01}
             onChange={(kd) => updateControl({ control: { pitch: { kd } } })}
           />
+          <SelectField
+            label="Pitch direction"
+            value={String(control?.control?.pitch?.direction ?? 1)}
+            options={[
+              { value: "1", label: "1" },
+              { value: "-1", label: "-1" }
+            ]}
+            onChange={(direction) => updateControl({ control: { pitch: { direction: Number(direction) } } })}
+          />
           <NumberField
             label="Integral"
             value={control?.control?.integralLimit}
@@ -173,6 +202,31 @@ export function FaceTrackingApp({
       </CommandPanel>
       <RawPanel value={status} />
     </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}): JSX.Element {
+  return (
+    <label className="field">
+      {label}
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

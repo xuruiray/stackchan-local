@@ -422,8 +422,8 @@ type TrackFaceCommand = {
 type FaceTrackingControl = {
   mode: "pid";
   deadband: number;             // 0..0.3
-  yaw: { kp: number; ki: number; kd: number };
-  pitch: { kp: number; ki: number; kd: number };
+  yaw: { kp: number; ki: number; kd: number; direction: -1 | 1 };
+  pitch: { kp: number; ki: number; kd: number; direction: -1 | 1 };
   integralLimit: number;        // 0..2
   outputLimitDeg: number;       // 1..45
 };
@@ -433,8 +433,8 @@ type FaceTrackingControl = {
 
 | 入口 | 代码路径 | 说明 |
 | --- | --- | --- |
-| Face Tracking loop | `desktop/src/vision/tracking.ts` | 最多 `commandMaxHz=15`，按最小发送间隔节流 |
-| Tracking disabled/lost | `desktop/src/vision/tracking.ts` | 发送 `detected=false` |
+| Face Tracking loop | `desktop/src/vision/tracking.ts` | 每次 detector 产出目标都会尝试发送，不再做 desktop 命令限频 |
+| Tracking disabled | `desktop/src/vision/tracking.ts` | 显式关闭追踪时发送 `detected=false` |
 | `moveHead/playAnimation/playAudio` 前置暂停 | `desktop/src/robot/controller.ts` | 自动发送 `detected=false`，释放追踪控制 |
 
 desktop 行为：
@@ -443,15 +443,18 @@ desktop 行为：
 - motion gate 会阻止 face tracking 覆盖手动移动、动画、音频等动作。
 - `detected=true` 时会 reserve owner=`faceTracking`，hold=900 ms。
 - OpenCV detector 输出 bbox，desktop 选择目标后直接下发 `centerX/centerY`。
+- `yaw.direction` / `pitch.direction` 由 desktop 下发给固件，用于现场校准舵机安装方向。
 - 当前协议不下发 landmarks、pose、expression、角度误差或 measurement age。
 
 固件行为：
 
 - 不返回 ACK/Status。
-- `speed` clamp 到 `0..1000`，默认 420。
+- `speed` clamp 到 `0..1000`，默认 300。
 - 更新 `_face_tracking_target.control`。
 - `detected=false` 时设置 target 为未检测到，进入 reserved 状态并设置 hold 3500 ms。
 - `detected=true` 时要求 `centerX`、`centerY`，并将中心点 clamp 到 `0..1`。
+- PID 轴参数会 clamp；`direction < 0` 作为 `-1`，其他值作为 `1`。
+- 固件执行 PID 后会发送 `robot.event faceTrackingControl` 诊断事件，报告本轮 action、当前舵机位置、下一步位置和 delta。
 
 字段使用情况：
 

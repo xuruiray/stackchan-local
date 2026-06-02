@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import base64
 import json
+import os
+from pathlib import Path
 import sys
 
 try:
@@ -11,21 +13,110 @@ except Exception as exc:
     raise SystemExit(2)
 
 
-FRONTAL_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-PROFILE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "face_detection_yunet_2023mar.onnx"
 
 
-def iou(a, b):
-    ax1, ay1, aw, ah = a
-    bx1, by1, bw, bh = b
-    ax2, ay2 = ax1 + aw, ay1 + ah
-    bx2, by2 = bx1 + bw, by1 + bh
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
-    intersection = iw * ih
-    union = aw * ah + bw * bh - intersection
-    return intersection / union if union > 0 else 0
+def clamp01(value):
+    return max(0.0, min(1.0, float(value)))
+
+
+def parse_float_env(name, fallback, min_value, max_value):
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return fallback
+    try:
+        value = float(raw)
+    except ValueError:
+        return fallback
+    return max(min_value, min(max_value, value))
+
+
+def parse_int_env(name, fallback, min_value, max_value):
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return fallback
+    try:
+        value = int(raw)
+    except ValueError:
+        return fallback
+    return max(min_value, min(max_value, value))
+
+
+class YuNetFaceDetector:
+    def __init__(self):
+        self.model_path = Path(os.environ.get("STACKCHAN_FACE_TRACKING_YUNET_MODEL", str(DEFAULT_MODEL_PATH)))
+        self.score_threshold = parse_float_env("STACKCHAN_FACE_TRACKING_YUNET_SCORE_THRESHOLD", 0.85, 0.0, 1.0)
+        self.nms_threshold = parse_float_env("STACKCHAN_FACE_TRACKING_YUNET_NMS_THRESHOLD", 0.3, 0.0, 1.0)
+        self.top_k = parse_int_env("STACKCHAN_FACE_TRACKING_YUNET_TOP_K", 500, 1, 5000)
+        self.detector = None
+        self.input_size = None
+
+    def ensure_ready(self):
+        if not self.model_path.exists():
+            raise RuntimeError(f"YuNet model not found: {self.model_path}")
+        if not hasattr(cv2, "FaceDetectorYN_create"):
+            raise RuntimeError("OpenCV FaceDetectorYN_create is unavailable")
+
+    def set_input_size(self, width, height):
+        input_size = (int(width), int(height))
+        if self.detector is None:
+            self.detector = cv2.FaceDetectorYN_create(
+                str(self.model_path),
+                "",
+                input_size,
+                score_threshold=self.score_threshold,
+                nms_threshold=self.nms_threshold,
+                top_k=self.top_k,
+            )
+            self.input_size = input_size
+            return
+        if input_size != self.input_size:
+            self.detector.setInputSize(input_size)
+            self.input_size = input_size
+
+    def detect(self, image):
+        height, width = image.shape[:2]
+        self.set_input_size(width, height)
+        _, faces = self.detector.detect(image)
+        if faces is None:
+            return []
+        return [normalize_yunet_face(face, width, height) for face in faces]
+
+
+def point(x, y, width, height):
+    return {"x": clamp01(x / width), "y": clamp01(y / height)}
+
+
+def normalize_yunet_face(face, width, height):
+    x, y, w, h = [float(value) for value in face[:4]]
+    right_eye = point(face[4], face[5], width, height)
+    left_eye = point(face[6], face[7], width, height)
+    nose = point(face[8], face[9], width, height)
+    mouth_right = point(face[10], face[11], width, height)
+    mouth_left = point(face[12], face[13], width, height)
+    return {
+        "x": clamp01(x / width),
+        "y": clamp01(y / height),
+        "width": clamp01(w / width),
+        "height": clamp01(h / height),
+        "confidence": clamp01(face[14]),
+        "detector": "yunet",
+        "landmarks": {
+            "all": [right_eye, left_eye, nose, mouth_right, mouth_left],
+            "leftEye": left_eye,
+            "rightEye": right_eye,
+            "nose": nose,
+            "mouthLeft": mouth_left,
+            "mouthRight": mouth_right,
+            "mouthCenter": {
+                "x": clamp01((mouth_left["x"] + mouth_right["x"]) / 2),
+                "y": clamp01((mouth_left["y"] + mouth_right["y"]) / 2),
+            },
+        },
+    }
+
+
+DETECTOR = YuNetFaceDetector()
 
 
 def detect_faces(message):
@@ -35,49 +126,14 @@ def detect_faces(message):
     if image is None:
         return {"frameId": frame_id, "error": "failed to decode jpeg"}
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
-    detections = []
-
-    frontal_faces = FRONTAL_CASCADE.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=3, minSize=(20, 20))
-    for face in frontal_faces:
-        detections.append((tuple(face), 0.82))
-
-    profile_faces = PROFILE_CASCADE.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=3, minSize=(20, 20))
-    for face in profile_faces:
-        detections.append((tuple(face), 0.68))
-
-    flipped = cv2.flip(gray, 1)
-    flipped_profile_faces = PROFILE_CASCADE.detectMultiScale(flipped, scaleFactor=1.08, minNeighbors=3, minSize=(20, 20))
-    height, width = gray.shape[:2]
-    for (x, y, w, h) in flipped_profile_faces:
-        detections.append(((width - x - w, y, w, h), 0.68))
-
-    detections.sort(key=lambda item: item[0][2] * item[0][3], reverse=True)
-    merged = []
-    for box, confidence in detections:
-        if any(iou(box, existing[0]) > 0.35 for existing in merged):
-            continue
-        merged.append((box, confidence))
-
-    normalized = []
-    for ((x, y, w, h), confidence) in merged:
-        normalized.append(
-            {
-                "x": max(0.0, min(1.0, float(x) / width)),
-                "y": max(0.0, min(1.0, float(y) / height)),
-                "width": max(0.0, min(1.0, float(w) / width)),
-                "height": max(0.0, min(1.0, float(h) / height)),
-                "confidence": confidence,
-            }
-        )
-
-    return {"frameId": frame_id, "faces": normalized}
+    return {"frameId": frame_id, "faces": DETECTOR.detect(image)}
 
 
 def main():
-    if FRONTAL_CASCADE.empty() or PROFILE_CASCADE.empty():
-        print("failed to load OpenCV face cascades", file=sys.stderr, flush=True)
+    try:
+        DETECTOR.ensure_ready()
+    except Exception as exc:
+        print(str(exc), file=sys.stderr, flush=True)
         return 2
 
     for line in sys.stdin:

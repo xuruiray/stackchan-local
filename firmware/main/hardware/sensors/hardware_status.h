@@ -43,14 +43,15 @@ struct LocalFaceTrackingTarget {
         float kp = 0.0f;
         float ki = 0.0f;
         float kd = 0.0f;
+        int direction = 1;
     };
 
     struct Control {
-        float deadband       = 0.045f;
-        PidAxis yaw          = {42.0f, 0.0f, 8.0f};
-        PidAxis pitch        = {30.0f, 0.0f, 6.0f};
+        float deadband       = 0.08f;
+        PidAxis yaw          = {36.0f, 0.0f, 1.2f, 1};
+        PidAxis pitch        = {8.0f, 0.0f, 0.15f, 1};
         float integralLimit  = 0.35f;
-        float outputLimitDeg = 20.0f;
+        float outputLimitDeg = 4.0f;
     };
 
     bool reserved     = false;
@@ -58,9 +59,47 @@ struct LocalFaceTrackingTarget {
     float centerX     = 0.5f;
     float centerY     = 0.5f;
     float confidence  = 0.0f;
-    int speed         = 420;
+    int speed         = 300;
     Control control;
     uint32_t updatedAt = 0;
+};
+
+enum class LocalFaceTrackingControlAction {
+    Applied = 0,
+    Deadband,
+    Ignored,
+};
+
+struct LocalFaceTrackingControlEvent {
+    LocalFaceTrackingControlAction action = LocalFaceTrackingControlAction::Ignored;
+    uint32_t uptimeMs = 0;
+    uint32_t targetAgeMs = 0;
+    float centerX = 0.5f;
+    float centerY = 0.5f;
+    float errorX = 0.0f;
+    float errorY = 0.0f;
+    int currentYaw = 0;
+    int currentPitch = 0;
+    int commandYaw = 0;
+    int commandPitch = 0;
+    int nextYaw = 0;
+    int nextPitch = 0;
+    int yawDelta = 0;
+    int pitchDelta = 0;
+    int requestedYawDelta = 0;
+    int requestedPitchDelta = 0;
+    int appliedYawStep = 0;
+    int appliedPitchStep = 0;
+    int maxYawStep = 0;
+    int maxPitchStep = 0;
+    float yawOutputDeg = 0.0f;
+    float pitchOutputDeg = 0.0f;
+    int yawDirection = 1;
+    int pitchDirection = 1;
+    int speed = 0;
+    bool ackOk = true;
+    int ackFailCount = 0;
+    const char* reason = "";
 };
 
 struct LocalImuSnapshot {

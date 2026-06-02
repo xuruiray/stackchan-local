@@ -2,12 +2,12 @@ import type {
   FaceTrackingControl,
   RobotCommand,
   RobotCommandMessage,
-  RobotEventMessage,
   RobotEmotion,
   RobotMode
 } from "@stackchan-local/protocol";
 
 import type { Logger } from "../config.js";
+import type { DesktopRobotEventMessage } from "../device/events.js";
 import type { CommandDispatchResult, DeviceRegistry, DeviceSnapshot } from "../device/registry.js";
 import { MotionArbitrator, type MotionArbitrationSnapshot } from "./motion-arbitrator.js";
 
@@ -352,7 +352,7 @@ export class RobotController {
     this.pendingCompletions.delete(commandId);
   }
 
-  private handleDeviceEvent(message: RobotEventMessage): void {
+  private handleDeviceEvent(message: DesktopRobotEventMessage): void {
     if (message.event.kind === "commandAck") {
       const pending = this.pendingAcks.get(message.event.commandId);
       if (!pending) {

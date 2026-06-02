@@ -19,7 +19,7 @@ export type AvatarExpressionPayload = {
   mouth: AvatarExpressionItem;
 };
 
-export type PublicVisionFrame = Omit<NonNullable<VisionPreviewSnapshot["frame"]>, "dataBase64">;
+export type PublicVisionFrame = Omit<NonNullable<VisionPreviewSnapshot["frame"]>, "jpegBuffer">;
 
 export type CompletionTtsSnapshot = {
   enabled: boolean;

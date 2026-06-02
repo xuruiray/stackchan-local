@@ -16,11 +16,11 @@ export const defaultCameraSettings = {
   width: 320,
   height: 240,
   fps: 15,
-  quality: 14
+  quality: 18
 };
 
 export const cameraProfiles: CameraProfile[] = [
-  { id: "qvga-15fps", label: "320 x 240 · 15 FPS", preset: "fast", width: 320, height: 240, fps: 15, quality: 14 },
+  { id: "qvga-15fps", label: "320 x 240 · 15 FPS", preset: "fast", width: 320, height: 240, fps: 15, quality: 18 },
   { id: "qvga-6fps", label: "320 x 240 · 6 FPS", preset: "accurate", width: 320, height: 240, fps: 6, quality: 28 },
   { id: "qvga-2fps", label: "320 x 240 · 2 FPS", preset: "debug", width: 320, height: 240, fps: 2, quality: 35 }
 ];
